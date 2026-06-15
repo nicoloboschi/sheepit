@@ -3,6 +3,29 @@
   "version": "0.2.0",
   "description": "Your machine, anywhere — a full-featured terminal in your browser. No tmux required.",
   "type": "module",
+  "license": "MIT",
+  "author": "Nicolò Boschi",
+  "homepage": "https://github.com/nicoloboschi/vipershell#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicoloboschi/vipershell.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nicoloboschi/vipershell/issues"
+  },
+  "keywords": [
+    "terminal",
+    "browser",
+    "pty",
+    "shell",
+    "xterm",
+    "tmux",
+    "web-terminal",
+    "remote"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "vipershell": "./dist/index.js"
   },
