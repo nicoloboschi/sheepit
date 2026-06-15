@@ -611,11 +611,60 @@
   50%      { box-shadow: inset 0 0 18px rgba(0, 116, 217, 0.22); border-color: rgba(0, 116, 217, 0.85); }
 }
 
+/* Active pane header — stronger visual presence so the focused pane is
+   unmistakable in multi-pane layouts. The bottom border glow bleeds into
+   the terminal surface just enough to draw the eye. */
+.pane-header-active {
+  box-shadow: 0 2px 16px rgba(0, 116, 217, 0.30), 0 1px 6px rgba(0, 116, 217, 0.20);
+  z-index: 2;
+}
+
 /* Grip handle in pane header — fades in on row hover, cursor swaps while drag. */
 .pane-header-grip { transition: opacity 0.15s, color 0.15s; }
 .pane-header:hover .pane-header-grip { opacity: 0.9; color: var(--foreground); }
 .pane-header-grip:active { cursor: grabbing; }
 .pane-header-grip-dragging { opacity: 0.3; }
+
+/* Session-kind badge in the pane header — mirrors the sidebar .pane-card-badge
+   look (rounded square chip with a subtle dark surface and hairline border),
+   but rendered inline at a larger size so the pane's identity reads at a
+   glance from across the screen. */
+.pane-header-kind-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #141821;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.pane-header-kind-badge-active {
+  color: #ffffff;
+  background: var(--primary-gradient);
+  border-color: color-mix(in srgb, var(--primary-end) 65%, transparent);
+  box-shadow:
+    0 2px 8px rgba(0, 116, 217, 0.45),
+    0 0 0 1px rgba(0, 116, 217, 0.25);
+}
+
+/* Files pane — directory-change transition. Each browse() swaps the whole
+   entry list atomically; remounting this wrapper (via a dir-based key) plays
+   a soft fade/slide so the change doesn't feel jarring. */
+@keyframes file-list-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.file-list-anim {
+  animation: file-list-enter 0.16s ease-out;
+  will-change: opacity, transform;
+}
 
 /* ── Workspace grip (top strip) ────────────────────────────────────────────
  *  Sits on the TOP edge of each .session-item card. Only drag source for
@@ -764,6 +813,20 @@
   flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .session-item.active .session-name-inline { opacity: 1; color: var(--foreground); }
+
+.workspace-title {
+  font-size: 11px; font-weight: 500; color: var(--muted-foreground);
+  padding: 0 2px; margin-bottom: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.session-item.active .workspace-title { color: var(--foreground); }
+
+.workspace-title-input {
+  width: 100%; font-size: 11px; padding: 1px 4px; margin-bottom: 3px;
+  background: var(--input); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--foreground); outline: none;
+}
+.workspace-title-input:focus { border-color: var(--ring); }
 
 .session-pane-badge {
   font-size: 9px; font-weight: 700; font-family: monospace;

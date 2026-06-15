@@ -3,14 +3,16 @@ import { useShallow } from 'zustand/react/shallow';
 import useStore, { refreshAllTerminals } from '../store';
 import SessionStatsBar from './SessionStatsBar';
 import GitDiffPane from './GitDiffPane';
-import FilesPane, { SearchPanel } from './FilesPane';
+import FilesPane from './FilesPane';
 import NotesPane from './NotesPane';
 import TerminalGrid from './TerminalGrid';
 import type { Layout } from './TerminalGrid';
 
 export const NOTES_SESSION_ID = '__notes__';
 
-const TABS = ['terminal', 'diff', 'files', 'search'] as const;
+// Search lives inside the Files tab now (toggleable from its toolbar, scoped
+// to the currently-browsed folder), so it's no longer a top-level tab.
+const TABS = ['terminal', 'diff', 'files'] as const;
 type TabType = typeof TABS[number];
 
 interface PaneTerminalProps {
@@ -219,9 +221,6 @@ export default function PaneTerminal({ sessionId, send, onTabReady }: PaneTermin
       {activeTab === 'diff'   && <GitDiffPane sessionId={activePaneSessionId} onOpenFile={(path: string) => { setActiveTab('files'); setTimeout(() => openFileRef.current?.(path), 50); }} />}
       <div style={{ display: activeTab === 'files' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
         <FilesPane sessionId={activePaneSessionId} openFileRef={openFileRef} onFileSelect={(path: string) => { if (activePaneSessionId) saveLastFile(activePaneSessionId, path); setHighlightQuery(null); setHighlightLine(null); }} highlightQuery={highlightQuery} highlightLine={highlightLine} />
-      </div>
-      <div style={{ display: activeTab === 'search' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0, background: '#0c0c0c' }}>
-        <SearchPanel sessionId={activePaneSessionId} active={activeTab === 'search'} onOpenFile={(path: string, query?: string, line?: number) => { setHighlightQuery(query ?? null); setHighlightLine(line ?? null); setActiveTab('files'); setTimeout(() => openFileRef.current?.(path), 50); }} />
       </div>
     </div>
   );

@@ -1,28 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, X, FileText } from 'lucide-react';
-import {
-  MDXEditor,
-  headingsPlugin,
-  listsPlugin,
-  quotePlugin,
-  thematicBreakPlugin,
-  linkPlugin,
-  linkDialogPlugin,
-  tablePlugin,
-  codeBlockPlugin,
-  markdownShortcutPlugin,
-  toolbarPlugin,
-  BoldItalicUnderlineToggles,
-  BlockTypeSelect,
-  CreateLink,
-  InsertTable,
-  InsertThematicBreak,
-  ListsToggle,
-  CodeToggle,
-  type MDXEditorMethods,
-} from '@mdxeditor/editor';
-import '@mdxeditor/editor/style.css';
-import '../mdxeditor-dark.css';
+import { Plus, X, FileText, Eye, Pencil } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function NotesPane(): JSX.Element {
   const [sheets, setSheets] = useState<string[]>([]);
@@ -31,8 +10,8 @@ export default function NotesPane(): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [preview, setPreview] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const editorRef = useRef<MDXEditorMethods | null>(null);
   const renameRef = useRef<HTMLInputElement | null>(null);
   const contentRef = useRef<string>('');
 
@@ -61,8 +40,6 @@ export default function NotesPane(): JSX.Element {
         const c = d.content ?? '';
         setContent(c);
         contentRef.current = c;
-        // Reset MDXEditor content when switching sheets
-        editorRef.current?.setMarkdown(c);
       })
       .catch(() => {
         setContent('');
@@ -82,11 +59,11 @@ export default function NotesPane(): JSX.Element {
       .catch(() => setSaving(false));
   }, [activeSheet]);
 
-  const handleChange = useCallback((md: string) => {
-    contentRef.current = md;
-    setContent(md);
+  const handleChange = useCallback((text: string) => {
+    contentRef.current = text;
+    setContent(text);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => save(md), 500);
+    timerRef.current = setTimeout(() => save(text), 500);
   }, [save]);
 
   // Save on unmount if pending
@@ -240,48 +217,61 @@ export default function NotesPane(): JSX.Element {
 
         <div style={{ flex: 1 }} />
         {saving && <span style={{ fontSize: 10, color: 'var(--muted-foreground)', marginRight: 8 }}>Saving...</span>}
+        <button
+          onClick={() => setPreview(p => !p)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: preview ? 'var(--primary)' : 'var(--muted-foreground)',
+            padding: '5px 10px', fontSize: 10,
+            fontFamily: '"JetBrains Mono", monospace',
+          }}
+          title={preview ? 'Edit' : 'Preview markdown'}
+        >
+          {preview ? <Pencil size={11} /> : <Eye size={11} />}
+          <span>{preview ? 'Edit' : 'Preview'}</span>
+        </button>
       </div>
 
-      {/* Editor */}
+      {/* Editor / Preview */}
       {content === null ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted-foreground)' }}>
           Loading...
         </div>
-      ) : (
-        <div className="notes-editor-wrapper dark-theme" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-          <MDXEditor
-            ref={editorRef}
-            key={activeSheet}
-            className="dark-theme"
-            markdown={content}
-            onChange={handleChange}
-            contentEditableClassName="notes-editable"
-            plugins={[
-              headingsPlugin(),
-              listsPlugin(),
-              quotePlugin(),
-              thematicBreakPlugin(),
-              linkPlugin(),
-              linkDialogPlugin(),
-              tablePlugin(),
-              codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
-              markdownShortcutPlugin(),
-              toolbarPlugin({
-                toolbarContents: () => (
-                  <>
-                    <BlockTypeSelect />
-                    <BoldItalicUnderlineToggles />
-                    <CodeToggle />
-                    <ListsToggle />
-                    <CreateLink />
-                    <InsertTable />
-                    <InsertThematicBreak />
-                  </>
-                ),
-              }),
-            ]}
-          />
+      ) : preview ? (
+        <div
+          className="notes-preview"
+          style={{
+            flex: 1, minHeight: 0, overflow: 'auto',
+            padding: '16px 20px',
+            color: 'var(--foreground)',
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
+      ) : (
+        <textarea
+          key={activeSheet}
+          value={content}
+          onChange={e => handleChange(e.target.value)}
+          spellCheck={false}
+          style={{
+            flex: 1, minHeight: 0,
+            width: '100%',
+            padding: '16px 20px',
+            background: '#0c0c0c',
+            color: 'var(--foreground)',
+            border: 'none',
+            outline: 'none',
+            resize: 'none',
+            fontFamily: '"JetBrains Mono", monospace',
+            fontSize: 12,
+            lineHeight: 1.6,
+            tabSize: 2,
+          }}
+        />
       )}
     </div>
   );

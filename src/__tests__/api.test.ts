@@ -36,12 +36,8 @@ const mockBridge: DirectBridge = {
 
 const defaultConfig: MemoryConfig = {
   hindsightEnabled: false,
-  hindsightMode: 'embedded',
   hindsightApiUrl: '',
   hindsightApiToken: '',
-  llmProvider: 'mock',
-  llmApiKey: '',
-  llmModel: '',
   retainChunkChars: 3000,
   observationsEnabled: false,
   uiPort: 18765,
@@ -50,7 +46,6 @@ const defaultConfig: MemoryConfig = {
 const mockMemory: MemoryStore = {
   get active() { return false },
   get apiUrl() { return 'http://127.0.0.1:9027' },
-  get mode() { return 'embedded' as const },
   get startedAt() { return null },
   get retainChunkChars() { return 3000 },
   getConfig: vi.fn().mockReturnValue(defaultConfig),
@@ -117,11 +112,12 @@ afterAll(() => {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('GET /api/version', () => {
-  it('returns version 0.1.0', async () => {
+  it('returns a version string', async () => {
     const res = await fetch(`${baseUrl}/version`)
     expect(res.status).toBe(200)
     const body = await res.json() as { version: string }
-    expect(body).toEqual({ version: '0.1.0' })
+    expect(typeof body.version).toBe('string')
+    expect(body.version.length).toBeGreaterThan(0)
   })
 })
 
@@ -217,13 +213,13 @@ describe('GET /api/sessions/:id/scrollback', () => {
 })
 
 describe('GET /api/memory/config', () => {
-  it('has hindsightEnabled, active, llmProvider fields', async () => {
+  it('has hindsightEnabled, active, hindsightApiUrl fields', async () => {
     const res = await fetch(`${baseUrl}/memory/config`)
     expect(res.status).toBe(200)
     const body = await res.json() as Record<string, unknown>
     expect(body).toHaveProperty('hindsightEnabled')
     expect(body).toHaveProperty('active')
-    expect(body).toHaveProperty('llmProvider')
+    expect(body).toHaveProperty('hindsightApiUrl')
   })
 
   it('active is false when memory not active', async () => {

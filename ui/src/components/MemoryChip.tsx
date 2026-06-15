@@ -170,7 +170,7 @@ export default function MemoryChip({ sessionId }: MemoryChipProps) {
                 {!state?.enabled
                   ? 'Hindsight is disabled — enable it in Settings → Memory.'
                   : !state?.active
-                    ? 'Hindsight is starting up — retains and recalls will appear here as soon as Claude/Codex/Hermes talk to the memory bank.'
+                    ? 'Hindsight is starting up — retains and recalls will appear here as soon as Claude/Codex talk to the memory bank.'
                     : 'Retains and recalls triggered by this pane will appear here. If this is a Claude Code session and you expect activity, check that the Hindsight plugin is loaded.'}
               </div>
             </div>

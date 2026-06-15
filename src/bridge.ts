@@ -44,7 +44,6 @@ export interface Session {
   busy: boolean;
   isClaudeCode?: boolean;
   isCodex?: boolean;
-  isHermes?: boolean;
   /** Aggregate CPU % of all child processes */
   cpuPercent?: number;
   /** Aggregate RSS memory in MB of all child processes */
@@ -76,7 +75,7 @@ interface MemBuffer {
   lastText: string;
 }
 
-type SessionType = 'claude' | 'codex' | 'hermes' | null;
+type SessionType = 'claude' | 'codex' | null;
 
 interface SavedSession {
   name: string;
@@ -183,7 +182,7 @@ export class TmuxBridge {
 
     // Detect new sessions and persist them; update type for existing ones
     for (const s of sessions) {
-      const sType: SessionType = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : s.isHermes ? 'hermes' : null;
+      const sType: SessionType = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : null;
       if (!this.knownSessions.has(s.id)) {
         this.knownSessions.add(s.id);
         this._persistSession(s.id, s.name, s.path, sType);
@@ -326,7 +325,6 @@ export class TmuxBridge {
         let busy = recentOutput;
         let isClaudeCode = false;
         let isCodex = false;
-        let isHermes = false;
         let cpuPercent = 0;
         let memMb = 0;
 
@@ -335,7 +333,6 @@ export class TmuxBridge {
             if (!busy && (c.cpu > 5 || c.hasGrandchildren)) busy = true;
             if (/\bclaude\b/i.test(c.comm)) isClaudeCode = true;
             if (/\bcodex\b/i.test(c.comm)) isCodex = true;
-            if (/\bhermes\b/i.test(c.comm)) isHermes = true;
             cpuPercent += c.cpu;
             memMb += c.rss / 1024;
           }
@@ -359,7 +356,6 @@ export class TmuxBridge {
           busy,
           isClaudeCode,
           isCodex,
-          isHermes,
           cpuPercent: Math.round(cpuPercent * 10) / 10,
           memMb: Math.round(memMb),
           ...git,
@@ -655,7 +651,6 @@ export class TmuxBridge {
         const cmdForType: Record<string, string> = {
           claude: 'claude',
           codex: 'codex',
-          hermes: 'hermes',
         };
         const initCmd = sess.sessionType ? cmdForType[sess.sessionType] : undefined;
         const shellCmd = initCmd

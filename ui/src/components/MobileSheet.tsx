@@ -129,7 +129,7 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
 
         <div className="flex items-center justify-between px-4 pb-2 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="logo">Sessions</span>
+            <span className="logo">Workspaces</span>
           </div>
           <div className="flex items-center gap-1">
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>

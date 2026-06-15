@@ -3,7 +3,7 @@ import { Check, Loader, RotateCw, Tag, TerminalSquare } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
 
-type AIProvider = 'claude-code' | 'codex' | 'hermes';
+type AIProvider = 'claude-code' | 'codex';
 
 interface AIConfig {
   aiEnabled: boolean;
@@ -80,7 +80,6 @@ export function AIFeaturesContent() {
                     >
                       <option value="claude-code">Claude Code (claude CLI)</option>
                       <option value="codex">Codex (codex CLI)</option>
-                      <option value="hermes">Hermes Agent (hermes CLI)</option>
                     </select>
                     <p className="text-xs text-muted-foreground">
                       Uses the local <code className="bg-muted px-1 rounded">{cfg.aiProvider === 'claude-code' ? 'claude' : 'codex'}</code> CLI for one-shot prompts.

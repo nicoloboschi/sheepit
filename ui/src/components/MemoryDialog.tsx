@@ -4,28 +4,17 @@ import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
-import HermesIcon from './HermesIcon';
 
-const TABS = ['Overview', 'API Server', 'Claude Code', 'Codex', 'Hermes', 'Logs'] as const;
+const TABS = ['Overview', 'API Server', 'Claude Code', 'Codex', 'Logs'] as const;
 type Tab = typeof TABS[number];
-
-const LLM_PROVIDERS = ['mock', 'openai', 'anthropic', 'groq', 'ollama', 'gemini', 'lmstudio', 'openai-codex'] as const;
-const NO_KEY_PROVIDERS = new Set(['mock', 'ollama', 'lmstudio', 'openai-codex']);
-
-type HindsightMode = 'embedded' | 'external';
 
 interface ServerConfig {
   hindsightEnabled: boolean;
-  hindsightMode: HindsightMode;
   hindsightApiUrl: string;
   hindsightApiToken: string;
-  llmProvider: string;
-  llmApiKey: string;
-  llmModel: string;
   retainChunkChars: number;
   observationsEnabled: boolean;
   active?: boolean;
-  mode?: string;
   controlPlaneActive?: boolean;
 }
 
@@ -94,21 +83,11 @@ export function MemoryContent() {
   const [codexState, setCodexState] = useState<AsyncState>('idle');
   const [codexError, setCodexError] = useState('');
 
-  // Hermes status
-  const [hermesStatus, setHermesStatus] = useState<{
-    hermesInstalled: boolean;
-    configured: boolean;
-    config: Record<string, unknown>;
-  } | null>(null);
-  const [hermesState, setHermesState] = useState<AsyncState>('idle');
-  const [hermesError, setHermesError] = useState('');
-
   useEffect(() => {
     fetch('/api/memory/config').then(r => r.json()).then(setSrv).catch(() => {});
     fetch('/api/memory/plugin-config').then(r => r.json()).then(setPlg).catch(() => {});
     fetch('/api/memory/claude-code-status').then(r => r.json()).then(setCcStatus).catch(() => {});
     fetch('/api/memory/codex-status').then(r => r.json()).then(setCodexStatus).catch(() => {});
-    fetch('/api/memory/hermes-status').then(r => r.json()).then(setHermesStatus).catch(() => {});
   }, []);
 
   /* ── server actions ── */
@@ -232,7 +211,6 @@ export function MemoryContent() {
             >
               {t === 'Claude Code' && <ClaudeIcon size={12} />}
               {t === 'Codex' && <OpenAIIcon size={12} />}
-              {t === 'Hermes' && <HermesIcon size={12} />}
               {t}
             </button>
           ))}
@@ -250,7 +228,7 @@ export function MemoryContent() {
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srv.active ? 'bg-green-500' : srv.hindsightEnabled ? 'bg-yellow-500' : 'bg-muted-foreground'}`} />
                     <span className="text-muted-foreground">
                       API: {srv.active
-                        ? <span className="text-green-500 font-medium">active ({srv.mode ?? srv.hindsightMode})</span>
+                        ? <span className="text-green-500 font-medium">active</span>
                         : srv.hindsightEnabled
                           ? <><span className="text-yellow-500 font-medium">stopped</span>{' '}<button className="text-xs underline text-blue-400 hover:text-blue-300" onClick={() => { fetch('/api/memory/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(srv) }).then(() => setTimeout(() => fetch('/api/memory/config').then(r => r.json()).then(setSrv).catch(() => {}), 3000)); }}>restart</button></>
                           : 'disabled'}
@@ -320,50 +298,17 @@ export function MemoryContent() {
                     <span className="text-xs font-medium text-foreground">Enable Hindsight</span>
                   </label>
 
-                  <Field label="Mode">
-                    <select value={srv.hindsightMode} onChange={e => setSrv({ ...srv, hindsightMode: e.target.value as HindsightMode })} className={INPUT}>
-                      <option value="embedded">Embedded (local daemon)</option>
-                      <option value="external">External API</option>
-                    </select>
+                  <Field label="API URL">
+                    <input type="text" value={srv.hindsightApiUrl} onChange={e => setSrv({ ...srv, hindsightApiUrl: e.target.value })} placeholder="https://hindsight.example.com" className={INPUT} />
                   </Field>
-
-                  {srv.hindsightMode === 'external' && (
-                    <>
-                      <Field label="API URL">
-                        <input type="text" value={srv.hindsightApiUrl} onChange={e => setSrv({ ...srv, hindsightApiUrl: e.target.value })} placeholder="https://hindsight.example.com" className={INPUT} />
-                      </Field>
-                      <Field label="API Token" hint="optional">
-                        <input type="password" value={srv.hindsightApiToken} onChange={e => setSrv({ ...srv, hindsightApiToken: e.target.value })} placeholder="Bearer token" className={INPUT} />
-                      </Field>
-                    </>
-                  )}
-
-                  {srv.hindsightMode === 'embedded' && (
-                    <>
-                      <Field label="LLM Provider">
-                        <select value={srv.llmProvider} onChange={e => setSrv({ ...srv, llmProvider: e.target.value })} className={INPUT}>
-                          {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                        {srv.llmProvider === 'mock' && <p className="text-xs text-muted-foreground">No LLM calls, chunks stored as-is.</p>}
-                        {srv.llmProvider === 'openai-codex' && <p className="text-xs text-muted-foreground">Uses <code className="bg-muted px-1 rounded">~/.codex/auth.json</code>.</p>}
-                      </Field>
-
-                      {!NO_KEY_PROVIDERS.has(srv.llmProvider) && (
-                        <Field label="API Key">
-                          <input type="password" value={srv.llmApiKey} onChange={e => setSrv({ ...srv, llmApiKey: e.target.value })} placeholder="sk-..." className={INPUT} />
-                        </Field>
-                      )}
-
-                      <Field label="Model" hint="optional">
-                        <input type="text" value={srv.llmModel} onChange={e => setSrv({ ...srv, llmModel: e.target.value })} placeholder="default for provider" className={INPUT} />
-                      </Field>
-                    </>
-                  )}
+                  <Field label="API Token" hint="optional">
+                    <input type="password" value={srv.hindsightApiToken} onChange={e => setSrv({ ...srv, hindsightApiToken: e.target.value })} placeholder="Bearer token" className={INPUT} />
+                  </Field>
 
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" checked={srv.observationsEnabled} onChange={e => setSrv({ ...srv, observationsEnabled: e.target.checked })} className="rounded" />
                     <span className="text-xs font-medium text-foreground">Enable observations</span>
-                    <span className="text-xs text-muted-foreground">(requires LLM)</span>
+                    <span className="text-xs text-muted-foreground">(requires LLM on the Hindsight server)</span>
                   </label>
 
                   {srvState === 'error' && <p className="text-xs text-destructive">{srvError}</p>}
@@ -569,105 +514,6 @@ export function MemoryContent() {
                   <div className="flex flex-col gap-2">
                     <span className="text-xs font-semibold text-foreground">Or install manually</span>
                     <pre className="text-[10px] text-muted-foreground bg-muted rounded-md px-3 py-2.5 leading-relaxed font-mono select-all whitespace-pre-wrap">curl -fsSL https://hindsight.vectorize.io/get-codex | bash</pre>
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
-          {/* ════════════════════════ HERMES ════════════════════════ */}
-          {tab === 'Hermes' && (
-            <>
-              <div className="flex items-center gap-3 mb-1">
-                <div className="flex items-center justify-center rounded-lg" style={{ width: 40, height: 40, background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)' }}>
-                  <HermesIcon size={22} className="text-white" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Connect to Hermes Agent</p>
-                  <p className="text-xs text-muted-foreground">Give Nous Research Hermes persistent memory across sessions</p>
-                </div>
-              </div>
-
-              {/* Status */}
-              {hermesStatus && (
-                <div className="rounded-md border border-border px-3 py-2.5 flex flex-col gap-1.5 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hermesStatus.hermesInstalled ? 'bg-green-500' : 'bg-muted-foreground'}`} />
-                    <span className="text-muted-foreground">
-                      Hermes CLI: {hermesStatus.hermesInstalled
-                        ? <span className="text-green-500 font-medium">installed</span>
-                        : 'not found'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hermesStatus.configured ? 'bg-green-500' : 'bg-muted-foreground'}`} />
-                    <span className="text-muted-foreground">
-                      Hindsight: {hermesStatus.configured
-                        ? <span className="text-green-500 font-medium">configured</span>
-                        : 'not configured'}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {hermesError && <p className="text-xs text-destructive break-words">{hermesError}</p>}
-              {hermesState === 'ok' && <p className="text-xs text-green-500">Done.</p>}
-
-              {hermesStatus?.configured ? (
-                <>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    <strong className="text-foreground">Hindsight memory</strong> is configured for Hermes.
-                    Memories are automatically retained after conversations and recalled before each prompt.
-                  </p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Button variant="outline" size="sm" className="flex items-center gap-2" onClick={async () => {
-                      setHermesState('loading'); setHermesError('');
-                      try {
-                        const res = await fetch('/api/memory/hermes-setup', { method: 'POST' });
-                        const { ok, error } = await res.json();
-                        if (ok) { setHermesState('ok'); fetch('/api/memory/hermes-status').then(r => r.json()).then(setHermesStatus).catch(() => {}); }
-                        else { setHermesState('error'); setHermesError(error || 'Unknown error'); }
-                      } catch { setHermesState('error'); setHermesError('Request failed'); }
-                    }} disabled={hermesState === 'loading'}>
-                      {hermesState === 'loading' ? <Loader size={13} className="animate-spin" /> : <ArrowUpCircle size={13} />} Reconfigure
-                    </Button>
-                    <Button variant="outline" size="sm" className="flex items-center gap-2 text-destructive hover:text-destructive" onClick={async () => {
-                      setHermesState('loading'); setHermesError('');
-                      try {
-                        const res = await fetch('/api/memory/hermes-disconnect', { method: 'POST' });
-                        const { ok, error } = await res.json();
-                        if (ok) { setHermesState('ok'); fetch('/api/memory/hermes-status').then(r => r.json()).then(setHermesStatus).catch(() => {}); }
-                        else { setHermesState('error'); setHermesError(error || 'Unknown error'); }
-                      } catch { setHermesState('error'); setHermesError('Request failed'); }
-                    }} disabled={hermesState === 'loading'}>
-                      {hermesState === 'loading' ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />} Disconnect
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Connect <strong className="text-foreground">Hindsight memory</strong> to Hermes Agent using its native integration.
-                    It captures conversations and recalls relevant context &mdash; Hermes gains memory across all sessions.
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    <Button variant="default" size="sm" className="self-start flex items-center gap-2" onClick={async () => {
-                      setHermesState('loading'); setHermesError('');
-                      try {
-                        const res = await fetch('/api/memory/hermes-setup', { method: 'POST' });
-                        const { ok, error } = await res.json();
-                        if (ok) { setHermesState('ok'); fetch('/api/memory/hermes-status').then(r => r.json()).then(setHermesStatus).catch(() => {}); }
-                        else { setHermesState('error'); setHermesError(error || 'Unknown error'); }
-                      } catch { setHermesState('error'); setHermesError('Request failed'); }
-                    }} disabled={hermesState === 'loading' || hermesState === 'ok'}>
-                      {hermesState === 'loading' && <Loader size={13} className="animate-spin" />}
-                      {hermesState === 'ok' && <Check size={13} />}
-                      {hermesState === 'loading' ? 'Configuring\u2026' : hermesState === 'ok' ? 'Configured' : 'Enable Hindsight Memory'}
-                    </Button>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <span className="text-xs font-semibold text-foreground">Or configure manually</span>
-                    <pre className="text-[10px] text-muted-foreground bg-muted rounded-md px-3 py-2.5 leading-relaxed font-mono select-all whitespace-pre-wrap">hermes memory setup    # select "hindsight"</pre>
                   </div>
                 </>
               )}

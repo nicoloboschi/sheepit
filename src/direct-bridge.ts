@@ -505,7 +505,7 @@ export class DirectBridge {
     const isLinux = os.platform() === 'linux';
 
     const pids = [...this.sessions.values()].filter(s => s.pid > 0).map(s => ({ id: s.id, pid: s.pid }));
-    const processInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isHermes: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+    const processInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
 
     await Promise.all(pids.map(async ({ id, pid }) => {
       try {
@@ -513,7 +513,7 @@ export class DirectBridge {
           ? `ps -o pid=,pcpu=,rss=,args= --ppid ${pid} 2>/dev/null`
           : `pgrep -P ${pid} 2>/dev/null | xargs -I{} ps -p {} -o pid=,pcpu=,rss=,args= 2>/dev/null`;
         const { stdout } = await execAsync(cmd, { timeout: 3000 });
-        let isClaudeCode = false, isCodex = false, isHermes = false, cpuPercent = 0, memMb = 0, busy = false;
+        let isClaudeCode = false, isCodex = false, cpuPercent = 0, memMb = 0, busy = false;
         for (const line of stdout.trim().split('\n').filter(Boolean)) {
           const parts = line.trim().split(/\s+/);
           if (parts.length < 4) continue;
@@ -522,11 +522,10 @@ export class DirectBridge {
           const comm = parts.slice(3).join(' ');
           if (/\bclaude\b/i.test(comm)) isClaudeCode = true;
           if (/\bcodex\b/i.test(comm)) isCodex = true;
-          if (/\bhermes\b/i.test(comm)) isHermes = true;
           if (cpu > 5) busy = true;
           cpuPercent += cpu; memMb += rss / 1024;
         }
-        processInfo.set(id, { isClaudeCode, isCodex, isHermes, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        processInfo.set(id, { isClaudeCode, isCodex, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
       } catch {}
     }));
 
@@ -534,14 +533,14 @@ export class DirectBridge {
       const procs = processInfo.get(sess.id);
       const git = this.getGitInfo(sess.path);
       if (procs) {
-        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isHermes ? 'hermes' : null;
+        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : null;
         if (newType && sess.sessionType !== newType) { sess.sessionType = newType; this.persist(); }
       }
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
-        isCodex: procs?.isCodex ?? false, isHermes: procs?.isHermes ?? false,
+        isCodex: procs?.isCodex ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0, ...git,
       };
     });
@@ -604,7 +603,28 @@ export class DirectBridge {
   getScrollbackPath(sessionId: string): string { return join(RING_DIR, `${sessionId}.buf`); }
 
   diagnostics(): object {
-    return { type: 'direct-daemon', sessions: this.sessions.size, ringBufferSize: RING_SIZE, sessionIds: [...this.sessions.keys()] };
+    // Per-session PTY details (PTYs live in the daemon; these are the bridge's view).
+    const managedPtyDetails: { sessionId: string; pid: number; cols: number; rows: number }[] = [];
+    for (const [id, s] of this.sessions) {
+      managedPtyDetails.push({ sessionId: id, pid: s.pid, cols: s.cols, rows: s.rows });
+    }
+
+    // WebSocket client info (injected by server.ts).
+    const wsDiag = (this as any)._wsClientsDiag?.() ?? { totalConnections: 0, clients: [] };
+
+    return {
+      type: 'direct-daemon',
+      ringBufferSize: RING_SIZE,
+      managedPtys: this.sessions.size,
+      managedPtyDetails,
+      scrollbackStreams: this.sessions.size,
+      memBuffers: this.sessions.size,
+      inputBuffers: this.inputBuffers.size,
+      knownSessions: this.knownSessions.size,
+      pubsubChannels: this.pubsub.channelStats(),
+      serverMemory: process.memoryUsage(),
+      websockets: wsDiag,
+    };
   }
 
   // ── Persistence ──────────────────────────────────────────────────────────

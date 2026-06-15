@@ -11,7 +11,6 @@ export interface Session {
   last_activity?: number;
   isClaudeCode?: boolean;
   isCodex?: boolean;
-  isHermes?: boolean;
   cpuPercent?: number;
   memMb?: number;
   gitRoot?: string;
@@ -71,6 +70,8 @@ export interface Workspace {
   layout: GridLayout;
   cells: string[];
   activeCell: number;
+  /** User-assigned title for the workspace, shown in the sidebar. */
+  title?: string;
 }
 
 // ── Layout helpers (grid up/downgrade) ──────────────────────────────────────
@@ -204,6 +205,9 @@ export interface StoreState {
   /** Reorder a workspace within `workspaceOrder`. `toIndex` is the position
    *  the workspace should occupy after the move (0-based). */
   reorderWorkspaces: (workspaceId: string, toIndex: number) => boolean;
+  /** Set or clear the user-assigned title for a workspace. Pass empty string
+   *  or undefined to clear the title. */
+  renameWorkspace: (workspaceId: string, title: string | undefined) => void;
 
   toggleZen: (sessionId: string) => void;
   exitZen: () => void;
@@ -1039,6 +1043,16 @@ const useStore = create<StoreState>((set, get) => ({
     saveWorkspaces(s.workspaces, order);
     set({ workspaceOrder: order });
     return true;
+  },
+
+  renameWorkspace(workspaceId: string, title: string | undefined) {
+    const s = get();
+    const ws = s.workspaces[workspaceId];
+    if (!ws) return;
+    const clean = title?.trim() || undefined;
+    const nextWorkspaces = { ...s.workspaces, [workspaceId]: { ...ws, title: clean } };
+    saveWorkspaces(nextWorkspaces, s.workspaceOrder);
+    set({ workspaces: nextWorkspaces });
   },
 
   toggleZen(sessionId: string) {

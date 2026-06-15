@@ -36,15 +36,12 @@ describe.skipIf(!daemonRunning)('Hindsight integration (daemon at 9027)', () => 
       const { MemoryStore } = await import('../memory.js')
       store = new MemoryStore()
 
-      // Override getConfig so hindsightEnabled=true without touching the real config file
+      // Override getConfig so hindsightEnabled=true without touching the real config file.
+      // Points at the local Hindsight API running at 9027 (external/API mode — the only mode).
       store.getConfig = () => ({
         hindsightEnabled: true,
-        hindsightMode: 'embedded' as const,
-        hindsightApiUrl: '',
+        hindsightApiUrl: DAEMON_URL,
         hindsightApiToken: '',
-        llmProvider: 'mock',
-        llmApiKey: '',
-        llmModel: '',
         retainChunkChars: 3000,
         observationsEnabled: false,
         uiPort: 18765,

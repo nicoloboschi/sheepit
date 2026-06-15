@@ -8,7 +8,6 @@ import StatChips from './StatChips';
 import MemoryChip from './MemoryChip';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
-import HermesIcon from './HermesIcon';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 /** Append U+FE0E (text presentation selector) so browsers don't color-swap symbols as emoji. */
@@ -98,29 +97,32 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
     return <div style={{ height: 42, flexShrink: 0, borderBottom: '1px solid var(--border)', background: '#0a0a0a' }} />;
   }
 
-  const isAi = session.isClaudeCode || session.isCodex || session.isHermes;
+  const isAi = session.isClaudeCode || session.isCodex;
 
   return (
     <div
-      className="pane-header"
+      className={`pane-header${isActive ? ' pane-header-active' : ''}`}
       style={{
         display: 'flex', flexDirection: 'column',
         flexShrink: 0, minWidth: 0,
-        borderBottom: '1px solid var(--border)',
+        borderBottom: isActive
+          ? '2px solid var(--primary)'
+          : '1px solid var(--border)',
         background: isActive
-          ? 'linear-gradient(135deg, rgba(0,116,217,0.12) 0%, rgba(0,146,150,0.12) 100%), #0a0a0a'
+          ? 'linear-gradient(135deg, rgba(0,116,217,0.18) 0%, rgba(0,146,150,0.14) 100%), #0d1117'
           : '#0a0a0a',
-        transition: 'background 0.15s ease',
+        transition: 'background 0.15s ease, border-color 0.15s ease',
         userSelect: 'none',
-        color: 'var(--foreground)',
+        color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
       }}
     >
       {/* Row 1: identity + actions */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        padding: '3px 6px 2px 4px',
-        minHeight: 22, minWidth: 0,
-        fontSize: 11,
+        padding: isActive ? '5px 6px 3px 4px' : '3px 6px 2px 4px',
+        minHeight: isActive ? 28 : 22, minWidth: 0,
+        fontSize: isActive ? 12 : 11,
+        transition: 'padding 0.15s ease, min-height 0.15s ease, font-size 0.15s ease',
       }}>
         {/* Drag handle — hidden entirely on mobile where dnd-kit is off. */}
         {dndEnabled && (
@@ -142,11 +144,10 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           </span>
         )}
         {/* Session kind icon */}
-        <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0, opacity: 0.85 }}>
-          {session.isClaudeCode ? <ClaudeIcon size={12} />
-            : session.isCodex    ? <OpenAIIcon size={12} />
-            : session.isHermes   ? <HermesIcon size={12} />
-            : <SquareTerminal size={12} style={{ opacity: 0.6 }} />}
+        <span className={`pane-header-kind-badge${isActive ? ' pane-header-kind-badge-active' : ''}`}>
+          {session.isClaudeCode ? <ClaudeIcon size={15} />
+            : session.isCodex    ? <OpenAIIcon size={15} />
+            : <SquareTerminal size={15} />}
         </span>
 
         {/* Session name popover — rename + last command */}
@@ -158,9 +159,11 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
                 display: 'flex', alignItems: 'center', gap: 3,
                 background: 'none', border: 'none', cursor: 'pointer',
                 padding: '1px 4px', borderRadius: 3,
-                color: 'var(--foreground)', fontSize: 11,
+                color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
+                fontSize: isActive ? 12 : 11,
                 fontFamily: 'inherit', flexShrink: 0,
                 fontWeight: isActive ? 600 : 400,
+                transition: 'font-size 0.15s ease',
               }}
               className="hover:bg-white/5"
               title="Session info"

@@ -117,25 +117,37 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     termRef.current = term;
     fitAddonRef.current = fit;
 
-    // Intercept PageUp/PageDown and Shift+Up/Down for scrollback navigation
-    // instead of sending them to the shell (most CLIs don't handle them anyway).
+    // Scrollback navigation uses MODIFIER+key (matches gnome-terminal /
+    // Terminal.app convention). Plain PageUp/PageDown/Home/End fall through
+    // to the shell so things like less, vim, btop, and pagers work normally.
+    //   Shift+PageUp / Shift+PageDown   → scroll one page in scrollback
+    //   Cmd+PageUp   / Cmd+PageDown     → jump to top / bottom
+    //   Shift+Up     / Shift+Down       → scroll one line
+    //   Shift+Home   / Shift+End        → jump to top / bottom
+    //
+    // BUT: when the alternate screen buffer is active (full-screen TUIs like
+    // k9s, vim, btop, htop, less), there's no scrollback to scroll — and
+    // those apps want every PgUp/PgDn variant for their own navigation. So
+    // bypass the scrollback hijack entirely in alt-buffer mode.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== 'keydown') return true;
+      const inAltBuffer = term.buffer.active.type === 'alternate';
+      if (inAltBuffer) return true;
       const rows = term.rows || 20;
-      if (e.key === 'PageUp') {
-        if (e.shiftKey) {
-          term.scrollToTop();
-        } else {
-          term.scrollLines(-Math.max(1, rows - 1));
-        }
-        return false; // stop, don't send to shell
+      if (e.key === 'PageUp' && e.shiftKey) {
+        term.scrollLines(-Math.max(1, rows - 1));
+        return false;
       }
-      if (e.key === 'PageDown') {
-        if (e.shiftKey) {
-          term.scrollToBottom();
-        } else {
-          term.scrollLines(Math.max(1, rows - 1));
-        }
+      if (e.key === 'PageDown' && e.shiftKey) {
+        term.scrollLines(Math.max(1, rows - 1));
+        return false;
+      }
+      if (e.key === 'PageUp' && e.metaKey) {
+        term.scrollToTop();
+        return false;
+      }
+      if (e.key === 'PageDown' && e.metaKey) {
+        term.scrollToBottom();
         return false;
       }
       if (e.shiftKey && e.key === 'ArrowUp') {
@@ -570,7 +582,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   }, [isActive]);
 
   // Refit when entering/exiting zen mode — the container dimensions change
-  // dramatically so we need to recalculate cols/rows.
+  // dramatically so we need to recalculate cols/rows and tell the PTY.
+  //
+  // Do NOT re-subscribe / replay the ring-buffer snapshot here. Resizing the
+  // PTY makes the running app redraw its live frame at the new width, so the
+  // ring buffer ends up holding BOTH the old narrow-width rendering and the
+  // new wide-width redraw. Replaying that into a reset terminal renders the
+  // block twice (narrow copy + wide copy) because the old frame's cursor-up/
+  // erase sequences were computed for narrow wrapping and no longer line up.
+  // Instead, let xterm reflow its existing buffer on resize and let the app's
+  // natural SIGWINCH repaint stream in — cursor math lines up at the new width.
   useEffect(() => {
     // Two frames: one for layout, one for fit after xterm's renderer catches up
     const id1 = requestAnimationFrame(() => {
@@ -580,7 +601,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         if (t) {
           sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
           t.focus();
-          t.scrollToBottom();
         }
       });
       (window as any).__zenRafId = id2;
@@ -784,7 +804,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
           display: 'flex', flexDirection: 'column',
           background: isZen ? undefined : '#0c0c0c',
           overflow: 'hidden',
-          outline: (fileDragOver || isPaneDragOver) ? '2px solid var(--primary)' : 'none',
+          outline: (fileDragOver || isPaneDragOver)
+            ? '2px solid var(--primary)'
+            : isMultiPane && isActive
+              ? '1.5px solid var(--primary)'
+              : 'none',
+          boxShadow: !isZen && isMultiPane && isActive && !fileDragOver && !isPaneDragOver
+            ? '0 0 20px rgba(0,116,217,0.25), inset 0 0 20px rgba(0,116,217,0.05)'
+            : 'none',
+          opacity: !isZen && isMultiPane && !isActive ? 0.45 : 1,
+          transition: 'outline 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease',
         }}
         onClick={onActivate}
         // mousedown with capture — runs before xterm's own handler so we

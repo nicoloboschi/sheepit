@@ -6,7 +6,6 @@ import SessionList from './SessionList';
 import { loadCommands } from './CommandsDialog';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
-import HermesIcon from './HermesIcon';
 import NewSessionDialog from './NewSessionDialog';
 import SettingsDialog from './SettingsDialog';
 import ViperIcon from './ViperIcon';
@@ -186,14 +185,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
             onClick={() => setShowNewSession({ initCommand: 'codex', title: 'New Codex Session', icon: <OpenAIIcon size={15} /> })}
           >
             <OpenAIIcon size={14} />
-          </Button>
-        )}
-
-        {aiProvider === 'hermes' && (
-          <Button variant="ghost" size="icon" title="New Hermes session" className="h-7 w-7 text-muted-foreground hover:text-foreground"
-            onClick={() => setShowNewSession({ initCommand: 'hermes', title: 'New Hermes Session', icon: <HermesIcon size={15} /> })}
-          >
-            <HermesIcon size={14} />
           </Button>
         )}
 

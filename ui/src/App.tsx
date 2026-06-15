@@ -45,13 +45,70 @@ import { tildefy } from './utils';
 export default function App() {
   const currentSessionId = useStore(s => s.currentSessionId);
   const tabCycleRef = useRef<((dir: 'left' | 'right') => void) | null>(null);
+  // True while a popstate handler is running — prevents connectSession from
+  // pushing another history entry for the same navigation.
+  const fromPopstateRef = useRef(false);
+
+  /** Build the hash fragment from workspace + zen state.
+   *  Format: `#workspaceId` or `#workspaceId/zen:sessionId` */
+  const buildHash = useCallback((wsId: string, zenId?: string | null) => {
+    return zenId ? `#${wsId}/zen:${zenId}` : `#${wsId}`;
+  }, []);
+
+  /** Parse hash → { workspaceId, zenSessionId } */
+  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null } | null => {
+    const raw = hash.replace(/^#/, '');
+    if (!raw) return null;
+    const [wsId, zenPart] = raw.split('/zen:');
+    return { workspaceId: wsId!, zenSessionId: zenPart ?? null };
+  }, []);
+
+  /** Push current workspace + zen state into the URL hash. */
+  const syncHash = useCallback(() => {
+    if (fromPopstateRef.current) return;
+    const { currentSessionId: wsId, zenSessionId } = useStore.getState();
+    if (!wsId) return;
+    const next = buildHash(wsId, zenSessionId);
+    if (window.location.hash !== next) {
+      history.pushState(null, '', next);
+    }
+  }, [buildHash]);
 
   const connectSession = useCallback((sessionId: string) => {
     useStore.getState().setCurrentSessionId(sessionId);
     localStorage.setItem('vipershell-last-session', sessionId);
+    syncHash();
     // Focus the terminal after session switch
     setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
-  }, []);
+  }, [syncHash]);
+
+  // Sync hash whenever zen mode changes.
+  const zenSessionId = useStore(s => s.zenSessionId);
+  useEffect(() => { syncHash(); }, [zenSessionId, syncHash]);
+
+  // Browser back/forward: read workspace + zen state from hash.
+  useEffect(() => {
+    const onPopState = () => {
+      const parsed = parseHash(window.location.hash);
+      if (!parsed) return;
+      const store = useStore.getState();
+      if (store.workspaces[parsed.workspaceId] || parsed.workspaceId === NOTES_SESSION_ID) {
+        fromPopstateRef.current = true;
+        store.setCurrentSessionId(parsed.workspaceId);
+        localStorage.setItem('vipershell-last-session', parsed.workspaceId);
+        // Restore or clear zen mode
+        if (parsed.zenSessionId && store.zenSessionId !== parsed.zenSessionId) {
+          store.toggleZen(parsed.zenSessionId);
+        } else if (!parsed.zenSessionId && store.zenSessionId) {
+          store.exitZen();
+        }
+        setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
+        fromPopstateRef.current = false;
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [parseHash]);
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const store = useStore.getState();
@@ -59,10 +116,22 @@ export default function App() {
       case 'sessions': {
         store.renderSessions(msg.sessions as any); // eslint-disable-line @typescript-eslint/no-explicit-any
         if (!store.currentSessionId && (msg.sessions as any[]).length > 0) {
+          const stateAfterRender = useStore.getState();
+          // Priority: URL hash > localStorage > first session
+          const parsed = parseHash(window.location.hash);
+          const hashTarget = parsed && (stateAfterRender.workspaces[parsed.workspaceId] || parsed.workspaceId === NOTES_SESSION_ID) ? parsed : null;
           const lastId = localStorage.getItem('vipershell-last-session');
+          const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
           const sessions = msg.sessions as any[];
-          const target = (lastId && sessions.find((s: any) => s.id === lastId)) ?? sessions[0];
-          if (target) connectSession(target.id);
+          const fallbackTarget = sessions[0]?.id;
+          const targetId = hashTarget?.workspaceId ?? lastTarget ?? fallbackTarget;
+          if (targetId) {
+            connectSession(targetId);
+            // Restore zen mode from hash on initial load
+            if (hashTarget?.zenSessionId) {
+              useStore.getState().toggleZen(hashTarget.zenSessionId);
+            }
+          }
         }
         break;
       }
@@ -465,8 +534,9 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const currentSessionId = useStore(s => s.currentSessionId);
   const sessionMap       = useStore(s => s.sessionMap);
   const sessions         = useStore(s => s.sessions);
-  const sessionOrder     = useStore(s => s.sessionOrder);
-  const sessionIdx       = sessionOrder.indexOf(currentSessionId!);
+  const workspaces       = useStore(s => s.workspaces);
+  const workspaceOrder   = useStore(s => s.workspaceOrder);
+  const workspaceIdx     = currentSessionId ? workspaceOrder.indexOf(currentSessionId) : -1;
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -499,7 +569,9 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
     fetch('/api/version').then(r => r.json()).then(d => setVersion(d.version)).catch(() => {});
   }, []);
 
-  const session  = currentSessionId ? sessionMap[currentSessionId] : undefined;
+  const workspace = currentSessionId ? workspaces[currentSessionId] : undefined;
+  const activeSessionId = workspace ? workspace.cells[workspace.activeCell] : currentSessionId;
+  const session  = activeSessionId ? sessionMap[activeSessionId] : undefined;
   const username = sessions.find(s => s.username)?.username;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
@@ -563,14 +635,21 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             className="flex items-center gap-1 flex-1 min-w-0 rounded-md px-2 py-1 hover:bg-accent text-left"
             style={{ background: 'none', border: 'none', cursor: 'pointer' }}
           >
-            {sessionIdx >= 0 && (
+            {workspaceIdx >= 0 && (
               <span style={{ fontSize: 10, color: 'var(--muted-foreground)', fontWeight: 600, flexShrink: 0 }}>
-                #{sessionIdx + 1}
+                #{workspaceIdx + 1}
               </span>
             )}
             <span key={currentSessionId} className="session-name-slide flex-1 min-w-0 truncate" style={{ fontSize: 13 }}>
-              {currentSessionId === NOTES_SESSION_ID ? 'Notes' : session ? session.name : 'No session'}
+              {currentSessionId === NOTES_SESSION_ID ? 'Notes'
+                : workspace?.title ? workspace.title
+                : session ? session.name : 'No session'}
             </span>
+            {workspace && workspace.cells.length > 1 && (
+              <span style={{ fontSize: 9, color: 'var(--muted-foreground)', fontWeight: 600, flexShrink: 0, background: 'rgba(255,255,255,0.08)', borderRadius: 3, padding: '1px 4px' }}>
+                {workspace.cells.length} panes
+              </span>
+            )}
             {session?.path && (
               <span className="session-path shrink-0" style={{ fontSize: 10, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {tildefy(session.path, username)}
@@ -687,17 +766,17 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
           </DropdownMenu>
         </div>
 
-        {sessionOrder.length > 1 && (
+        {workspaceOrder.length > 1 && (
           <div className="flex items-center justify-center gap-1.5 pb-1.5">
-            {sessionOrder.length <= 12
-              ? sessionOrder.map((id, i) => (
+            {workspaceOrder.length <= 12
+              ? workspaceOrder.map((id, i) => (
                   <span key={id} style={{
-                    width: i === sessionIdx ? 16 : 5, height: 5, borderRadius: 3,
-                    background: i === sessionIdx ? 'var(--primary-gradient)' : 'var(--border)',
+                    width: i === workspaceIdx ? 16 : 5, height: 5, borderRadius: 3,
+                    background: i === workspaceIdx ? 'var(--primary-gradient)' : 'var(--border)',
                     transition: 'width 0.25s ease, background 0.25s ease', flexShrink: 0,
                   }} />
                 ))
-              : <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>{sessionIdx + 1} / {sessionOrder.length}</span>
+              : <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>{workspaceIdx + 1} / {workspaceOrder.length}</span>
             }
           </div>
         )}
@@ -716,7 +795,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
           <div className="md:hidden fixed left-0 right-0 z-50 flex flex-col rounded-b-2xl border-b border-x"
             style={{ top: 48, maxHeight: '65vh', background: 'var(--card)', borderColor: 'var(--border)', overflow: 'hidden' }}>
             <div className="px-4 py-3 border-b shrink-0 flex items-center" style={{ borderColor: 'var(--border)' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>Sessions</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>Workspaces</span>
             </div>
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               <SessionList

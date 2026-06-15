@@ -21,12 +21,11 @@ const PKG_VERSION: string = (() => {
 })();
 
 /** Detect which plugin is making a proxy call based on headers, user-agent, or path */
-function _detectPluginSource(req: { headers: Record<string, unknown>; url?: string; originalUrl?: string }): 'claude-code' | 'codex' | 'hermes' | 'plugin' {
+function _detectPluginSource(req: { headers: Record<string, unknown>; url?: string; originalUrl?: string }): 'claude-code' | 'codex' | 'plugin' {
   const ua = String(req.headers['user-agent'] ?? '').toLowerCase();
   const xSource = String(req.headers['x-hindsight-source'] ?? '').toLowerCase();
   if (ua.includes('claude') || xSource.includes('claude')) return 'claude-code';
   if (ua.includes('codex') || xSource.includes('codex')) return 'codex';
-  if (ua.includes('hermes') || xSource.includes('hermes')) return 'hermes';
   // Detect by bank ID in path — read configured bank IDs
   const url = req.originalUrl ?? req.url ?? '';
   try {
@@ -660,10 +659,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
       const { sessionId } = req.params;
       const query = (req.query.q as string | undefined ?? '').trim();
       const glob  = (req.query.glob as string | undefined ?? '').trim();
+      const dir   = (req.query.dir as string | undefined ?? '').trim();
       if (!query) return res.json({ results: [] });
 
-      const cwd = getSessionCwd(sessionId);
-      if (!cwd) return res.status(404).json({ error: 'Session not found' });
+      const sessionCwd = getSessionCwd(sessionId);
+      if (!sessionCwd) return res.status(404).json({ error: 'Session not found' });
+
+      // Scope the ripgrep run to `dir` when provided so users can search from
+      // a subfolder. We resolve and require the dir exists (`statSync.isDirectory`)
+      // — but we DON'T require it to live under sessionCwd: the file browser
+      // can navigate anywhere the user has read access to, and search should
+      // follow. Falling back to sessionCwd otherwise.
+      let cwd = sessionCwd;
+      if (dir) {
+        try {
+          const resolved = nodePath.resolve(dir);
+          if (statSync(resolved).isDirectory()) cwd = resolved;
+        } catch { /* fall through to sessionCwd */ }
+      }
 
       const MAX_RESULTS = 500;
       const args = [
@@ -715,10 +728,21 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     try {
       const { sessionId } = req.params;
       const query = (req.query.q as string | undefined ?? '').trim();
+      const dir   = (req.query.dir as string | undefined ?? '').trim();
       if (!query) return res.json({ results: [] });
 
-      const cwd = getSessionCwd(sessionId);
-      if (!cwd) return res.status(404).json({ error: 'Session not found' });
+      const sessionCwd = getSessionCwd(sessionId);
+      if (!sessionCwd) return res.status(404).json({ error: 'Session not found' });
+
+      // Same scoping rule as /search — when `dir` is supplied, restrict the
+      // filename-walk to that subtree so the user gets folder-local results.
+      let cwd = sessionCwd;
+      if (dir) {
+        try {
+          const resolved = nodePath.resolve(dir);
+          if (statSync(resolved).isDirectory()) cwd = resolved;
+        } catch { /* fall through to sessionCwd */ }
+      }
 
       const MAX_RESULTS = 100;
       const needle = query.toLowerCase();
@@ -1071,7 +1095,6 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     res.json({
       ...cfg,
       active: memory.active,
-      mode: memory.mode,
       started_at: memory.startedAt,
       controlPlaneActive,
     });
@@ -1083,12 +1106,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
 
     memory.saveConfig({
       hindsightEnabled: body.hindsightEnabled !== undefined ? Boolean(body.hindsightEnabled) : cfg.hindsightEnabled,
-      hindsightMode: typeof body.hindsightMode === 'string' && (body.hindsightMode === 'embedded' || body.hindsightMode === 'external') ? body.hindsightMode : cfg.hindsightMode,
       hindsightApiUrl: typeof body.hindsightApiUrl === 'string' ? body.hindsightApiUrl : cfg.hindsightApiUrl,
       hindsightApiToken: typeof body.hindsightApiToken === 'string' ? body.hindsightApiToken : cfg.hindsightApiToken,
-      llmProvider: typeof body.llmProvider === 'string' ? body.llmProvider : cfg.llmProvider,
-      llmApiKey: typeof body.llmApiKey === 'string' ? body.llmApiKey : cfg.llmApiKey,
-      llmModel: typeof body.llmModel === 'string' ? body.llmModel : cfg.llmModel,
       retainChunkChars: typeof body.retainChunkChars === 'number' ? body.retainChunkChars : cfg.retainChunkChars,
       observationsEnabled: body.observationsEnabled !== undefined ? Boolean(body.observationsEnabled) : cfg.observationsEnabled,
     });
@@ -1443,104 +1462,6 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     }
   });
 
-  // ── Hermes Agent native Hindsight integration ─────────────────────────────
-
-  const HERMES_CONFIG_DIR = nodePath.join(os.homedir(), '.hermes', 'hindsight');
-  const HERMES_CONFIG = nodePath.join(HERMES_CONFIG_DIR, 'config.json');
-  const HERMES_ENV_FILE = nodePath.join(os.homedir(), '.hermes', '.env');
-
-  router.get('/memory/hermes-status', async (_req, res) => {
-    // Check if hermes CLI is available
-    let hermesInstalled = false;
-    try {
-      await execAsync('which hermes', { timeout: 3000 });
-      hermesInstalled = true;
-    } catch { /* not found */ }
-
-    // Read native config
-    let config: Record<string, unknown> = {};
-    let configured = false;
-    try {
-      config = JSON.parse(readFileSync(HERMES_CONFIG, 'utf-8'));
-      configured = Boolean(config.api_url || config.mode);
-    } catch { /* no config */ }
-
-    res.json({
-      hermesInstalled,
-      configured,
-      config,
-    });
-  });
-
-  router.post('/memory/hermes-setup', async (req, res) => {
-    try {
-      // Build proxy URL pointing to vipershell's Hindsight proxy
-      const browserHost = req.headers.host?.split(':')[0] ?? '127.0.0.1';
-      const port = (req.headers.host?.split(':')[1]) ?? '4445';
-      const apiUrl = `http://${browserHost}:${port}/api/hindsight`;
-
-      // Read existing config and merge
-      let existing: Record<string, unknown> = {};
-      try { existing = JSON.parse(readFileSync(HERMES_CONFIG, 'utf-8')); } catch { /* fresh */ }
-
-      const config = {
-        ...existing,
-        mode: 'cloud',
-        api_url: apiUrl,
-        api_key: '',
-        bank_id: existing.bank_id ?? 'vipershell',
-        autoRecall: existing.autoRecall ?? true,
-        autoRetain: existing.autoRetain ?? true,
-        recallBudget: existing.recallBudget ?? 'mid',
-        recallMaxTokens: existing.recallMaxTokens ?? 4096,
-      };
-
-      mkdirSync(HERMES_CONFIG_DIR, { recursive: true });
-      writeFileSync(HERMES_CONFIG, JSON.stringify(config, null, 2) + '\n');
-
-      // Set memory.provider to hindsight via hermes CLI if available
-      try {
-        await execAsync('hermes config set memory.provider hindsight', { timeout: 5000 });
-      } catch {
-        // CLI not available — write env var fallback to ~/.hermes/.env
-        const envPath = HERMES_ENV_FILE;
-        let envContent = '';
-        try { envContent = readFileSync(envPath, 'utf-8'); } catch { /* fresh */ }
-
-        // Update or append HINDSIGHT_API_URL
-        if (envContent.includes('HINDSIGHT_API_URL=')) {
-          envContent = envContent.replace(/^HINDSIGHT_API_URL=.*$/m, `HINDSIGHT_API_URL=${apiUrl}`);
-        } else {
-          envContent += `${envContent && !envContent.endsWith('\n') ? '\n' : ''}HINDSIGHT_API_URL=${apiUrl}\n`;
-        }
-        mkdirSync(nodePath.dirname(envPath), { recursive: true });
-        writeFileSync(envPath, envContent);
-      }
-
-      res.json({ ok: true });
-    } catch (e: unknown) {
-      const err = e as { message?: string; stderr?: string };
-      res.json({ ok: false, error: err.stderr || err.message || String(e) });
-    }
-  });
-
-  router.post('/memory/hermes-disconnect', async (_req, res) => {
-    try {
-      // Remove hindsight config
-      try { unlinkSync(HERMES_CONFIG); } catch { /* already gone */ }
-
-      // Unset memory provider via CLI if available
-      try {
-        await execAsync('hermes config set memory.provider none', { timeout: 5000 });
-      } catch { /* CLI not available, config file removal is sufficient */ }
-
-      res.json({ ok: true });
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      res.json({ ok: false, error: err.message || String(e) });
-    }
-  });
-
   router.post('/memory/ui', async (req, res) => {
     if (!memory.active) return res.json({ active: false, url: null });
 
@@ -1567,7 +1488,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
 
     ai.saveConfig({
       aiEnabled: body.aiEnabled !== undefined ? Boolean(body.aiEnabled) : cfg.aiEnabled,
-      aiProvider: typeof body.aiProvider === 'string' && (body.aiProvider === 'claude-code' || body.aiProvider === 'codex' || body.aiProvider === 'hermes')
+      aiProvider: typeof body.aiProvider === 'string' && (body.aiProvider === 'claude-code' || body.aiProvider === 'codex')
         ? body.aiProvider : cfg.aiProvider,
       autoNaming: body.autoNaming !== undefined ? Boolean(body.autoNaming) : cfg.autoNaming,
       autoNamingIntervalSecs: typeof body.autoNamingIntervalSecs === 'number'

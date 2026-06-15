@@ -154,7 +154,7 @@ function cleanTerminalText(raw: string): string {
 
 const CONFIG_PATH = join(homedir(), '.config', 'vipershell', 'config.json');
 
-export type AIProvider = 'claude-code' | 'codex' | 'hermes';
+export type AIProvider = 'claude-code' | 'codex';
 
 export interface AIConfig {
   aiEnabled: boolean;
@@ -358,7 +358,6 @@ export class AIService {
           if (s.prNum) parts.push(`PR: #${s.prNum}${s.prState ? ` (${s.prState})` : ''}`);
           if (s.isClaudeCode) parts.push(`Running: claude code`);
           else if (s.isCodex) parts.push(`Running: codex`);
-          else if (s.isHermes) parts.push(`Running: hermes`);
           if (parts.length > 0) sessionCtx = parts.join('\n');
         }
       } catch { /* best-effort — skip if listSessions fails */ }

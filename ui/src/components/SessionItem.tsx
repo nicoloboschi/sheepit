@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -31,7 +31,6 @@ function compactRelativeTime(ts: number | null | undefined): string {
 }
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
-import HermesIcon from './HermesIcon';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from './ui/dropdown-menu';
@@ -104,17 +103,16 @@ interface SessionItemProps {
 
 // ── Pane layout icons ───────────────────────────────────────────────────────
 // One visual that encodes both (a) the split layout of a session's panes and
-// (b) the type of session running in each pane (Claude/Codex/Hermes/terminal).
+// (b) the type of session running in each pane (Claude/Codex/terminal).
 // Replaces the old "session icon + mini-grid" duo — each pane can now show
 // its own icon because a split grid can mix AI and plain shells.
 
-type PaneKind = 'claude' | 'codex' | 'hermes' | 'terminal';
+type PaneKind = 'claude' | 'codex' | 'terminal';
 
 function getPaneKind(s: Session | undefined): PaneKind {
   if (!s) return 'terminal';
   if (s.isClaudeCode) return 'claude';
   if (s.isCodex) return 'codex';
-  if (s.isHermes) return 'hermes';
   return 'terminal';
 }
 
@@ -122,7 +120,6 @@ function PaneIcon({ kind, size }: { kind: PaneKind; size: number }): React.React
   switch (kind) {
     case 'claude':   return <ClaudeIcon size={size} />;
     case 'codex':    return <OpenAIIcon size={size} />;
-    case 'hermes':   return <HermesIcon size={size} />;
     default:         return <SquareTerminal size={size} />;
   }
 }
@@ -466,7 +463,11 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
 
 export default function SessionItem({ workspace, isActive, onConnect, send, isFavourite, onToggleFavourite }: SessionItemProps) {
   const showConfirm = useStore(s => s.showConfirm);
+  const renameWorkspace = useStore(s => s.renameWorkspace);
   const dndEnabled = useDndEnabled();
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   // dnd-kit sortable: makes the row movable in the SortableContext rendered
   // by SessionList. `listeners`/`attributes` get attached ONLY to the top
@@ -545,6 +546,29 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
     }
   };
 
+  const startRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenameValue(workspace.title ?? '');
+    setRenaming(true);
+    // Focus will be set by the useEffect below once the input renders.
+  };
+
+  const commitRename = () => {
+    renameWorkspace(workspace.id, renameValue);
+    setRenaming(false);
+  };
+
+  const cancelRename = () => {
+    setRenaming(false);
+  };
+
+  useEffect(() => {
+    if (renaming && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renaming]);
+
   const cellIds = workspace.cells;
   const cellCount = cellIds.length;
   const isFull = cellCount >= 4;
@@ -587,23 +611,38 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
           <GripHorizontal size={12} />
         </div>
       )}
-      <PaneGrid
-        gridId={workspace.id}
-        layout={workspace.layout}
-        cellIds={cellIds}
-        activeCell={workspace.activeCell}
-        isRowActive={isActive}
-        unseenCells={unseenCells}
-        // Show the extra preview slot only when a *foreign* pane is hovering
-        // this row AND there's room. `dragOver` is already set up to be true
-        // exactly in this case (see useDroppable + active.kind check above).
-        previewExtraSlot={dragOver && !isFull}
-        onActivate={(cellIdx) => {
-          // Switch to this workspace AND focus the clicked pane inside it.
-          onConnect(workspace.id);
-          useStore.getState().setActivePane(workspace.id, cellIdx);
-        }}
-      />
+      <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') cancelRename();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="Workspace title"
+            className="workspace-title-input"
+          />
+        ) : workspace.title ? (
+          <div className="workspace-title">{workspace.title}</div>
+        ) : null}
+        <PaneGrid
+          gridId={workspace.id}
+          layout={workspace.layout}
+          cellIds={cellIds}
+          activeCell={workspace.activeCell}
+          isRowActive={isActive}
+          unseenCells={unseenCells}
+          previewExtraSlot={dragOver && !isFull}
+          onActivate={(cellIdx) => {
+            onConnect(workspace.id);
+            useStore.getState().setActivePane(workspace.id, cellIdx);
+          }}
+        />
+      </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -623,6 +662,13 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start">
+          <DropdownMenuItem
+            onClick={startRename}
+            style={{ fontSize: 12, cursor: 'pointer' }}
+          >
+            <Pencil size={13} />
+            Rename
+          </DropdownMenuItem>
           {onToggleFavourite && (
             <DropdownMenuItem
               onClick={(e) => { e.stopPropagation(); onToggleFavourite(); }}

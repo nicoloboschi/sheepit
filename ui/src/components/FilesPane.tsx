@@ -21,7 +21,7 @@ import type { Extension } from '@codemirror/state';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw, Save, Eye, Pencil, Copy, Check,
-  Search, X, Filter, Upload, FolderRoot, FilePlus, FolderPlus, Trash2, ClipboardCopy,
+  Search, X, Filter, Upload, FilePlus, FolderPlus, Trash2, ClipboardCopy,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -156,12 +156,14 @@ interface EntryProps {
   index?: number;
   selected: string | null;
   focused?: boolean;
-  onSelect: (path: string) => void;
+  /** Mouse click on a file — pins it as an open tab. Keyboard navigation
+   *  (j/k/arrows) uses onSelect instead to avoid polluting the tab row. */
+  onOpen: (path: string) => void;
   onNavigate: (path: string) => void;
   gitStatus: Record<string, string> | null;
 }
 
-function EntryRow({ entry, index, selected, focused, onSelect, onNavigate, gitStatus }: EntryProps) {
+function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStatus }: EntryProps) {
   const Icon = getIcon(entry.name, entry.isDir);
   const active = selected === entry.path;
   const status = gitStatus?.[entry.path] ?? null;
@@ -178,7 +180,7 @@ function EntryRow({ entry, index, selected, focused, onSelect, onNavigate, gitSt
   return (
     <div
       data-entry-idx={index}
-      onClick={() => entry.isDir ? onNavigate(entry.path) : onSelect(entry.path)}
+      onClick={() => entry.isDir ? onNavigate(entry.path) : onOpen(entry.path)}
       style={{
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '4px 10px', cursor: 'pointer', userSelect: 'none',
@@ -207,6 +209,77 @@ function EntryRow({ entry, index, selected, focused, onSelect, onNavigate, gitSt
       {!entry.isDir && entry.size > 0 && !status && (
         <span style={{ fontSize: 10, color: '#484f58', flexShrink: 0 }}>{fmtSize(entry.size)}</span>
       )}
+    </div>
+  );
+}
+
+// ── Open-file tabs strip ─────────────────────────────────────────────────────
+
+interface TabsBarProps {
+  tabs: string[];
+  activePath: string | null;
+  onSelect: (path: string) => void;
+  onClose: (path: string) => void;
+}
+
+/** Horizontal strip of pinned file tabs rendered above the FileViewer. Each
+ *  tab is keyed by its full path (there can be `index.ts` from two dirs),
+ *  displays the basename, and shows a close X on hover / when active. */
+function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
+  const activeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [activePath]);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'stretch',
+      background: '#0c0c0c', borderBottom: '1px solid #222222',
+      overflowX: 'auto', flexShrink: 0, minHeight: 28,
+    }}>
+      {tabs.map(path => {
+        const name = path.split('/').pop() ?? path;
+        const Icon = getIcon(name, false);
+        const active = path === activePath;
+        return (
+          <div
+            key={path}
+            ref={active ? activeRef : undefined}
+            onClick={() => onSelect(path)}
+            onMouseDown={e => { if (e.button === 1) { e.preventDefault(); onClose(path); } }}
+            title={path}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '0 8px 0 10px',
+              cursor: 'pointer', userSelect: 'none',
+              fontSize: 11, fontFamily: '"JetBrains Mono",monospace',
+              color: active ? '#d4d4d8' : '#737373',
+              background: active ? '#161b22' : 'transparent',
+              borderRight: '1px solid #222222',
+              borderTop: active ? '2px solid #0074d9' : '2px solid transparent',
+              maxWidth: 200, flexShrink: 0,
+            }}
+            onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = '#111111'; }}
+            onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Icon size={12} color={getIconColor(name, false, null)} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+            <button
+              onClick={e => { e.stopPropagation(); onClose(path); }}
+              title="Close tab"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: active ? '#737373' : '#484f58',
+                padding: 2, marginLeft: 2, borderRadius: 3, flexShrink: 0,
+              }}
+              onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = '#222222'; e.currentTarget.style.color = '#d4d4d8'; }}
+              onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = active ? '#737373' : '#484f58'; }}
+            >
+              <X size={11} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -521,9 +594,13 @@ interface SearchPanelProps {
   sessionId: string | null;
   onOpenFile: (path: string, query?: string, line?: number) => void;
   active?: boolean;
+  /** When set, restrict the search root to this directory instead of the
+   *  session's cwd. Lets the user run "search in this folder" from any
+   *  point in the file browser. */
+  scopeDir?: string | null;
 }
 
-export function SearchPanel({ sessionId, onOpenFile, active }: SearchPanelProps) {
+export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchPanelProps) {
   const [query, setQuery]       = useState('');
   const [glob, setGlob]         = useState('');
   const [showGlob, setShowGlob] = useState(false);
@@ -550,12 +627,15 @@ export function SearchPanel({ sessionId, onOpenFile, active }: SearchPanelProps)
     setSearching(true);
     setSearched(true);
     try {
-      const params = new URLSearchParams({ q: q.trim() });
-      if (g.trim()) params.set('glob', g.trim());
+      const contentParams = new URLSearchParams({ q: q.trim() });
+      if (g.trim())  contentParams.set('glob', g.trim());
+      if (scopeDir)  contentParams.set('dir', scopeDir);
+      const fileParams = new URLSearchParams({ q: q.trim() });
+      if (scopeDir)  fileParams.set('dir', scopeDir);
       // Fetch content search and filename search in parallel
       const [contentRes, fileRes] = await Promise.all([
-        fetch(`/api/fs/${encodeURIComponent(sessionId!)}/search?${params}`, { signal: controller.signal }),
-        fetch(`/api/fs/${encodeURIComponent(sessionId!)}/find?q=${encodeURIComponent(q.trim())}`, { signal: controller.signal }),
+        fetch(`/api/fs/${encodeURIComponent(sessionId!)}/search?${contentParams}`, { signal: controller.signal }),
+        fetch(`/api/fs/${encodeURIComponent(sessionId!)}/find?${fileParams}`, { signal: controller.signal }),
       ]);
       const [contentData, fileData] = await Promise.all([contentRes.json(), fileRes.json()]);
       if (!controller.signal.aborted) {
@@ -568,7 +648,7 @@ export function SearchPanel({ sessionId, onOpenFile, active }: SearchPanelProps)
     } finally {
       if (!controller.signal.aborted) setSearching(false);
     }
-  }, [sessionId]);
+  }, [sessionId, scopeDir]);
 
   const [focusedResult, setFocusedResult] = useState(-1);
   const flatResults = results; // already flat
@@ -592,6 +672,12 @@ export function SearchPanel({ sessionId, onOpenFile, active }: SearchPanelProps)
     setQuery(''); setGlob(''); setResults([]); setFileResults([]); setSearched(false);
     inputRef.current?.focus();
   }, [sessionId]);
+
+  // Re-run the current search when the scope folder changes — e.g. user
+  // navigated to a different directory while the search panel was open.
+  useEffect(() => {
+    if (query.trim()) doSearch(query, glob);
+  }, [scopeDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus on mount and when tab becomes active
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -619,7 +705,7 @@ export function SearchPanel({ sessionId, onOpenFile, active }: SearchPanelProps)
                 onOpenFile(cwd ? `${cwd}/${r.file}` : r.file, query, r.line);
               }
             }}
-            placeholder="Search in files…"
+            placeholder={scopeDir ? `Search in ${scopeDir.split('/').pop() ?? ''}/…` : 'Search in files…'}
             spellCheck={false}
             style={{
               flex: 1, border: 'none', outline: 'none', background: 'transparent',
@@ -802,11 +888,28 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const [createName,   setCreateName]   = useState('');
   const [fileFilter,   setFileFilter]   = useState('');
   const [showFileFilter, setShowFileFilter] = useState(false);
+  /** Recursive search mode — replaces the entries list with a SearchPanel
+   *  scoped to the currently-browsed directory. Toggled from the toolbar. */
+  const [searchMode,   setSearchMode]   = useState(false);
   const createInputRef = useRef<HTMLInputElement>(null);
   const fileFilterRef = useRef<HTMLInputElement>(null);
   const draggingRef = useRef(false);
   const [focusedEntry, setFocusedEntry] = useState(-1);
   const fileListRef = useRef<HTMLDivElement>(null);
+  // ── Pinned tabs ───────────────────────────────────────────────────────────
+  // Double-clicking a file in the tree (or opening one via Search / external
+  // openFileRef) promotes it from an ephemeral preview to a pinned tab. Tabs
+  // are per-session and persisted in localStorage so switching away from the
+  // Files view (or to a different session and back) keeps them visible.
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+
+  // Highlight state — seeded from props (terminal file-link clicks, git-diff
+  // jumps), but the integrated search panel can also drive it for in-pane
+  // search-hit navigation. Internal state lets us own the latest value.
+  const [hlQuery, setHlQuery] = useState<string | null>(highlightQuery ?? null);
+  const [hlLine,  setHlLine]  = useState<number | null>(highlightLine  ?? null);
+  useEffect(() => { setHlQuery(highlightQuery ?? null); }, [highlightQuery]);
+  useEffect(() => { setHlLine(highlightLine ?? null); }, [highlightLine]);
 
   const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}) => {
     if (!sessionId) return;
@@ -890,6 +993,22 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   useEffect(() => { if (!sessionId) return; browse(null, { autoReadme: true }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
 
+  // Load pinned tabs whenever the session changes (per-session storage key).
+  useEffect(() => {
+    if (!sessionId) { setOpenTabs([]); return; }
+    try {
+      const raw = localStorage.getItem(`vipershell:files-tabs:${sessionId}`);
+      const arr = raw ? JSON.parse(raw) : [];
+      setOpenTabs(Array.isArray(arr) ? arr.filter((p): p is string => typeof p === 'string') : []);
+    } catch { setOpenTabs([]); }
+  }, [sessionId]);
+
+  // Persist tabs whenever they change.
+  useEffect(() => {
+    if (!sessionId) return;
+    try { localStorage.setItem(`vipershell:files-tabs:${sessionId}`, JSON.stringify(openTabs)); } catch {}
+  }, [openTabs, sessionId]);
+
   // Fetch git status and refresh every 5s
   useEffect(() => {
     if (!sessionId) return;
@@ -915,6 +1034,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       await browse(parentDir);
       setSelectedFile(filePath);
       setMobileView('preview');
+      // External opens (e.g. search-result jump, "open in files") are
+      // intentional enough to pin as a tab.
+      setOpenTabs(tabs => tabs.includes(filePath) ? tabs : [...tabs, filePath]);
       onFileSelect?.(filePath);
     };
   }, [openFileRef, browse, onFileSelect]);
@@ -924,6 +1046,40 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     setMobileView('preview');
     onFileSelect?.(path);
   };
+
+  const openFileTab = useCallback((path: string) => {
+    setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
+    selectFile(path);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Click-handler for SearchPanel results: opens the file as a pinned tab,
+  // sets the highlight so the viewer scrolls to and tints the match line,
+  // and clears the search panel so the user can read the file. The search
+  // query/results stay populated — toggling the search button back on
+  // re-shows the same state.
+  const openSearchHit = useCallback((path: string, query?: string, line?: number) => {
+    setHlQuery(query ?? null);
+    setHlLine(line ?? null);
+    setSearchMode(false);
+    setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
+    selectFile(path);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const closeTab = useCallback((path: string) => {
+    setOpenTabs(tabs => {
+      const idx = tabs.indexOf(path);
+      if (idx === -1) return tabs;
+      const next = tabs.filter(t => t !== path);
+      // If the closed tab was the active file, fall back to an adjacent tab
+      // so the viewer stays populated — matches how editors handle tab close.
+      if (selectedFile === path) {
+        const adjacent = next[idx] ?? next[idx - 1] ?? null;
+        if (adjacent) { setSelectedFile(adjacent); onFileSelect?.(adjacent); }
+        else         { setSelectedFile(null); setMobileView('list'); }
+      }
+      return next;
+    });
+  }, [selectedFile, onFileSelect]);
 
   const startCreate = (type: 'file' | 'folder') => {
     setCreating(type);
@@ -955,6 +1111,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     const deletedFile = selectedFile;
     setSelectedFile(null);
     setMobileView('list');
+    if (deletedFile) setOpenTabs(tabs => tabs.filter(t => t !== deletedFile));
     if (dir) browse(dir);
     if (deletedFile) onFileSelect?.(null as any);
   }, [selectedFile, dir, browse, onFileSelect]);
@@ -1038,12 +1195,40 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     }
   }, [filteredEntries, focusedEntry, browse, dir, cwd, selectFile]);
 
-  const breadcrumbs = dir && cwd
-    ? (dir.startsWith(cwd) ? dir.slice(cwd.length) : dir).split('/').filter(Boolean)
-    : [];
+  // Breadcrumb segments for the current `dir`, with navigation targets.
+  //  - When `dir` is under `cwd` (the common case), we anchor the trail at
+  //    the project root: first crumb is cwd's basename → cwd; remaining
+  //    crumbs are relative subdirectories.
+  //  - When `dir` is outside `cwd` (the user browsed up past the project, or
+  //    into /tmp, etc.), we render absolute path segments instead of
+  //    pretending they live under cwd — otherwise the trail ends up showing
+  //    something like "project/Users/me/other-tree" which is misleading.
+  const { crumbs, absolute: crumbsAbsolute } = (() => {
+    if (!dir) return { crumbs: [] as { label: string; path: string }[], absolute: false };
+    const insideCwd = !!cwd && (dir === cwd || dir.startsWith(cwd + '/'));
+    if (insideCwd) {
+      const rel = dir === cwd ? '' : dir.slice(cwd!.length + 1);
+      const rootLabel = cwd!.split('/').pop() || '/';
+      const out: { label: string; path: string }[] = [{ label: rootLabel, path: cwd! }];
+      if (rel) {
+        const segs = rel.split('/');
+        let cur = cwd!;
+        for (const s of segs) { cur += '/' + s; out.push({ label: s, path: cur }); }
+      }
+      return { crumbs: out, absolute: false };
+    }
+    const out: { label: string; path: string }[] = [];
+    let cur = '';
+    for (const s of dir.split('/').filter(Boolean)) {
+      cur += '/' + s;
+      out.push({ label: s, path: cur });
+    }
+    return { crumbs: out, absolute: true };
+  })();
 
-  const upDir = dir && cwd && dir !== cwd
-    ? dir.split('/').slice(0, -1).join('/') || '/'
+  // "Go up" target: disabled at cwd (when inside cwd) or at filesystem root.
+  const upDir = dir && dir !== cwd && dir !== '/'
+    ? (dir.split('/').slice(0, -1).join('/') || '/')
     : null;
 
   const toolbar = (showBack: boolean = false) => (
@@ -1057,26 +1242,57 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <ChevronLeft size={14} />
         </button>
       ) : null}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
-        <span style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 11, color: '#525252', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {showBack
-            ? (selectedFile?.split('/').pop() ?? '')
-            : `${cwd?.split('/').pop() ?? '~'}${breadcrumbs.length > 0 ? '/' + breadcrumbs.join('/') : ''}`}
-        </span>
-        {!showBack && cwd && dir !== cwd && (
-          <button onClick={() => browse(cwd)} title="Go to project root" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: '#484f58', padding: 0, flexShrink: 0 }}>
-            <FolderRoot size={11} />
-          </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, overflow: 'hidden', fontFamily: '"JetBrains Mono",monospace', fontSize: 11 }}>
+        {showBack ? (
+          <span style={{ color: '#525252', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selectedFile?.split('/').pop() ?? ''}
+          </span>
+        ) : (
+          <>
+            {/* Leading "/" for absolute paths outside cwd so it's clear the
+                trail doesn't start at the project root. */}
+            {crumbsAbsolute && <span style={{ color: '#484f58', flexShrink: 0 }}>/</span>}
+            {crumbs.map((c, i) => {
+              const isLast = i === crumbs.length - 1;
+              return (
+                <React.Fragment key={i}>
+                  {i > 0 && <span style={{ color: '#484f58', flexShrink: 0 }}>/</span>}
+                  <button
+                    onClick={() => browse(c.path)}
+                    title={c.path}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      padding: '0 2px', fontFamily: 'inherit', fontSize: 'inherit',
+                      color: isLast ? '#d4d4d8' : '#525252',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      minWidth: 0, borderRadius: 3,
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.color = '#d4d4d8'}
+                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.color = isLast ? '#d4d4d8' : '#525252'}
+                  >
+                    {c.label}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+          </>
         )}
       </div>
       {!showBack && (
         <>
           <button
-            onClick={() => { setShowFileFilter(f => { if (!f) setTimeout(() => fileFilterRef.current?.focus(), 0); return !f; }); setFileFilter(''); }}
-            title="Filter files"
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showFileFilter ? '#0074d9' : '#525252', flexShrink: 0, padding: 3 }}
+            onClick={() => { setSearchMode(m => !m); setShowFileFilter(false); }}
+            title={searchMode ? 'Exit search' : 'Search in this folder'}
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: searchMode ? '#0074d9' : '#525252', flexShrink: 0, padding: 3 }}
           >
             <Search size={12} />
+          </button>
+          <button
+            onClick={() => { setShowFileFilter(f => { if (!f) setTimeout(() => fileFilterRef.current?.focus(), 0); return !f; }); setFileFilter(''); }}
+            title="Filter visible entries"
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showFileFilter ? '#0074d9' : '#525252', flexShrink: 0, padding: 3 }}
+          >
+            <Filter size={12} />
           </button>
           <button onClick={() => startCreate('file')} title="New file" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: '#525252', flexShrink: 0, padding: 3 }}>
             <FilePlus size={15} />
@@ -1158,22 +1374,38 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const fileList = (
     <>
       {toolbar(false)}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {fileFilterInput}
-        {createInput}
-        {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
-        {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
-        {filteredEntries.map(e => (
-          <EntryRow key={e.path} entry={e} selected={selectedFile} onSelect={selectFile} onNavigate={browse} gitStatus={gitStatus} />
-        ))}
-      </div>
+      {searchMode ? (
+        <SearchPanel
+          sessionId={sessionId}
+          scopeDir={dir}
+          active
+          onOpenFile={openSearchHit}
+        />
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {fileFilterInput}
+          {createInput}
+          {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
+          {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
+          <div key={dir ?? 'root'} className="file-list-anim">
+            {filteredEntries.map(e => (
+              <EntryRow key={e.path} entry={e} selected={selectedFile} onOpen={openFileTab} onNavigate={browse} gitStatus={gitStatus} />
+            ))}
+          </div>
+        </div>
+      )}
     </>
+  );
+
+  const tabsBar = openTabs.length > 0 && (
+    <TabsBar tabs={openTabs} activePath={selectedFile} onSelect={selectFile} onClose={closeTab} />
   );
 
   const preview = (
     <>
       {toolbar(true)}
-      <FileViewer path={selectedFile} cwd={cwd} highlightQuery={highlightQuery} highlightLine={highlightLine} onDelete={handleDelete} />
+      {tabsBar}
+      <FileViewer path={selectedFile} cwd={cwd} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
     </>
   );
 
@@ -1223,16 +1455,29 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <div
             ref={fileListRef}
             tabIndex={0}
-            onKeyDown={handleFileListKeyDown}
-            style={{ width: sidebarWidth, flexShrink: 0, overflowY: 'auto', overflowX: 'hidden', position: 'relative', outline: 'none' }}
+            onKeyDown={searchMode ? undefined : handleFileListKeyDown}
+            style={{ width: sidebarWidth, flexShrink: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
           >
-            {fileFilterInput}
-            {createInput}
-            {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
-            {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
-            {filteredEntries.map((e, i) => (
-              <EntryRow key={e.path} entry={e} index={i} selected={selectedFile} focused={i === focusedEntry} onSelect={setSelectedFile} onNavigate={browse} gitStatus={gitStatus} />
-            ))}
+            {searchMode ? (
+              <SearchPanel
+                sessionId={sessionId}
+                scopeDir={dir}
+                active
+                onOpenFile={openSearchHit}
+              />
+            ) : (
+              <>
+                {fileFilterInput}
+                {createInput}
+                {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
+                {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
+                <div key={dir ?? 'root'} className="file-list-anim">
+                  {filteredEntries.map((e, i) => (
+                    <EntryRow key={e.path} entry={e} index={i} selected={selectedFile} focused={i === focusedEntry} onOpen={openFileTab} onNavigate={browse} gitStatus={gitStatus} />
+                  ))}
+                </div>
+              </>
+            )}
             {/* Resize handle */}
             <div
               onMouseDown={onDragStart}
@@ -1246,7 +1491,8 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
             />
           </div>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-            <FileViewer path={selectedFile} cwd={cwd} highlightQuery={highlightQuery} highlightLine={highlightLine} onDelete={handleDelete} />
+            {tabsBar}
+            <FileViewer path={selectedFile} cwd={cwd} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
           </div>
         </div>
       </div>

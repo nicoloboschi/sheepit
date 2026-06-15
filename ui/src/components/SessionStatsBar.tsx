@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SquareTerminal, GitBranch, FolderOpen, Search, SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RefreshCw, List, RotateCw } from 'lucide-react';
+import { SquareTerminal, GitBranch, FolderOpen, SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RefreshCw, List, RotateCw } from 'lucide-react';
 import { refreshAllTerminals, activeTerminalScrollToLine, getCommandHistory, clearCommandHistory, type CommandEntry, DEFAULT_FONT_SIZE } from '../store';
 import useStore from '../store';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
@@ -26,7 +26,6 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
     { id: 'terminal', icon: <SquareTerminal size={11} />, label: 'Terminal' },
     { id: 'diff',     icon: <GitBranch size={11} />,      label: 'Git' },
     { id: 'files',    icon: <FolderOpen size={11} />,     label: 'Files'    },
-    { id: 'search',   icon: <Search size={11} />,         label: 'Search'   },
   ] : [];
 
   const tabBar = onTabChange && (
@@ -44,7 +43,7 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
             fontSize: 11, padding: '2px 8px',
             background: activeTab === id ? 'var(--accent)' : 'none',
             color: activeTab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
-            border: 'none', borderRight: id !== 'search' ? '1px solid var(--border)' : 'none',
+            border: 'none', borderRight: id !== 'files' ? '1px solid var(--border)' : 'none',
             cursor: 'pointer',
           }}
         >

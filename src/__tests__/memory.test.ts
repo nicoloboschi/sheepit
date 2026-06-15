@@ -10,7 +10,7 @@ describe('MemoryStore', () => {
       const cfg = store.getConfig()
 
       expect(typeof cfg.hindsightEnabled).toBe('boolean')
-      expect(cfg.llmProvider).toBeDefined()
+      expect(cfg.hindsightApiUrl).toBeDefined()
       expect(cfg.retainChunkChars).toBeGreaterThan(0)
       expect(cfg.uiPort).toBeGreaterThan(0)
     })
@@ -20,9 +20,8 @@ describe('MemoryStore', () => {
       const cfg = store.getConfig()
 
       expect(cfg).toHaveProperty('hindsightEnabled')
-      expect(cfg).toHaveProperty('llmProvider')
-      expect(cfg).toHaveProperty('llmApiKey')
-      expect(cfg).toHaveProperty('llmModel')
+      expect(cfg).toHaveProperty('hindsightApiUrl')
+      expect(cfg).toHaveProperty('hindsightApiToken')
       expect(cfg).toHaveProperty('retainChunkChars')
       expect(cfg).toHaveProperty('observationsEnabled')
       expect(cfg).toHaveProperty('uiPort')
