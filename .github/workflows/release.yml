@@ -1,0 +1,40 @@
+name: Release
+
+# Fires when a version tag is pushed (e.g. `v1.2.0`), which `release.sh` does.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      # node-pty compiles from source on Linux; ubuntu-latest already has
+      # python3 + build-essential, so a plain install works.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          # Add this as a repo secret: Settings → Secrets and variables → Actions
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true # auto-changelog from commits/PRs since last tag

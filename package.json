@@ -41,7 +41,8 @@
     "start": "node dist/index.js",
     "postinstall": "sh scripts/postinstall.sh",
     "prepack": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "release": "bash release.sh"
   },
   "dependencies": {
     "@vectorize-io/hindsight-client": "^0.4.21",
