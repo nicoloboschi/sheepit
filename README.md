@@ -2,7 +2,9 @@
 
 Your machine, anywhere. A full-featured terminal in your browser — no tmux required.
 
-<!-- TODO: demo recording goes here -->
+<video src="https://github.com/nicoloboschi/vipershell/raw/main/media/demo.mp4" controls muted width="100%"></video>
+
+> [▶ Watch the demo](https://github.com/nicoloboschi/vipershell/raw/main/media/demo.mp4) if the player above doesn't load.
 
 ## Quick Start
 
