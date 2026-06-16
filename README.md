@@ -2,9 +2,13 @@
 
 Your machine, anywhere. A full-featured terminal in your browser — no tmux required.
 
-<video src="https://github.com/nicoloboschi/vipershell/raw/main/media/demo.mp4" controls muted width="100%"></video>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=kdWoWgU27VA">
+    <img src="https://img.youtube.com/vi/kdWoWgU27VA/maxresdefault.jpg" alt="Watch the vipershell demo" width="100%">
+  </a>
+</p>
 
-> [▶ Watch the demo](https://github.com/nicoloboschi/vipershell/raw/main/media/demo.mp4) if the player above doesn't load.
+<p align="center"><a href="https://www.youtube.com/watch?v=kdWoWgU27VA">▶ Watch the demo on YouTube</a></p>
 
 ## Quick Start
 
