@@ -96,6 +96,10 @@ Example `~/.config/vipershell/config.json`:
 ## Requirements
 
 - **Node.js** 18+
+- **Linux only:** a C/C++ build toolchain for `node-pty`, since it has no Linux
+  prebuilt binaries and compiles from source — `python3`, `make`, and `g++`
+  (e.g. `apt install -y build-essential python3`). macOS and Windows use
+  prebuilt binaries and need nothing extra.
 
 ## Development
 
