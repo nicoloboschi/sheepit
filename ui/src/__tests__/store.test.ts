@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import useStore from '../store'
 import type { Session } from '../store'
-import { addCommandEntry, getCommandHistory, clearCommandHistory } from '../store'
 
 const makeSession = (id: string, name: string, path = '/tmp'): Session => ({
   id,
@@ -24,7 +23,6 @@ describe('useStore', () => {
       sessionOrder: [],
       sessionMap: {},
       sessionUrls: {},
-      sessionLastCommand: {},
       sessionCurrentInput: {},
       workspaces: {},
       workspaceOrder: [],
@@ -149,12 +147,7 @@ describe('useStore', () => {
     })
   })
 
-  describe('last command and current input', () => {
-    it('stores last command per session', () => {
-      useStore.getState().setLastCommand('$0', 'npm test')
-      expect(useStore.getState().sessionLastCommand['$0']).toBe('npm test')
-    })
-
+  describe('current input', () => {
     it('stores current input per session', () => {
       useStore.getState().setCurrentInput('$0', 'git st')
       expect(useStore.getState().sessionCurrentInput['$0']).toBe('git st')
@@ -367,50 +360,3 @@ describe('useStore', () => {
   })
 })
 
-describe('command history', () => {
-  beforeEach(() => {
-    clearCommandHistory('test-session')
-  })
-
-  it('starts empty', () => {
-    expect(getCommandHistory('test-session')).toEqual([])
-  })
-
-  it('adds and retrieves commands', () => {
-    addCommandEntry('test-session', 'ls -la', 10)
-    addCommandEntry('test-session', 'pwd', 15)
-
-    const history = getCommandHistory('test-session')
-    expect(history).toHaveLength(2)
-    expect(history[0]!.cmd).toBe('ls -la')
-    expect(history[0]!.line).toBe(10)
-    expect(history[1]!.cmd).toBe('pwd')
-  })
-
-  it('skips blank commands', () => {
-    addCommandEntry('test-session', '  ', 10)
-    expect(getCommandHistory('test-session')).toEqual([])
-  })
-
-  it('trims commands', () => {
-    addCommandEntry('test-session', '  echo hello  ', 10)
-    expect(getCommandHistory('test-session')[0]!.cmd).toBe('echo hello')
-  })
-
-  it('clears history for session', () => {
-    addCommandEntry('test-session', 'cmd1', 1)
-    addCommandEntry('test-session', 'cmd2', 2)
-    clearCommandHistory('test-session')
-    expect(getCommandHistory('test-session')).toEqual([])
-  })
-
-  it('caps history at MAX_HISTORY', () => {
-    for (let i = 0; i < 210; i++) {
-      addCommandEntry('test-session', `cmd-${i}`, i)
-    }
-    const history = getCommandHistory('test-session')
-    expect(history.length).toBeLessThanOrEqual(200)
-    // Should keep the latest entries
-    expect(history[history.length - 1]!.cmd).toBe('cmd-209')
-  })
-})

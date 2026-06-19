@@ -230,7 +230,7 @@ export function MemoryContent() {
                       API: {srv.active
                         ? <span className="text-green-500 font-medium">active</span>
                         : srv.hindsightEnabled
-                          ? <><span className="text-yellow-500 font-medium">stopped</span>{' '}<button className="text-xs underline text-blue-400 hover:text-blue-300" onClick={() => { fetch('/api/memory/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(srv) }).then(() => setTimeout(() => fetch('/api/memory/config').then(r => r.json()).then(setSrv).catch(() => {}), 3000)); }}>restart</button></>
+                          ? <span className="text-yellow-500 font-medium">inactive</span>
                           : 'disabled'}
                     </span>
                   </div>

@@ -87,7 +87,6 @@ export type BridgeMessage =
   | { type: 'sessions'; sessions: Session[] }
   | { type: 'output'; data: string }
   | { type: 'preview'; session_id: string; preview: string; busy: boolean }
-  | { type: 'last_command'; session_id: string; command: string }
   | { type: 'current_input'; session_id: string; input: string };
 
 
@@ -443,11 +442,7 @@ export class TmuxBridge {
     const stripped = stripEscapeSequences(data);
     for (const ch of stripped) {
       if (ch === '\r' || ch === '\n') {
-        const cmd = (this.inputBuffers.get(sessionId) ?? '').trim();
         this.inputBuffers.set(sessionId, '');
-        if (cmd) {
-          this.pubsub.publish('__sessions__', { type: 'last_command', session_id: sessionId, command: cmd });
-        }
         this.pubsub.publish('__sessions__', { type: 'current_input', session_id: sessionId, input: '' });
       } else if (ch === '\x7f' || ch === '\b') {
         // Backspace

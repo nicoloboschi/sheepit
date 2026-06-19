@@ -1,57 +1,41 @@
 import { useState } from 'react';
-import { SquareTerminal, GitBranch, FolderOpen, SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RefreshCw, List, RotateCw } from 'lucide-react';
-import { refreshAllTerminals, activeTerminalScrollToLine, getCommandHistory, clearCommandHistory, type CommandEntry, DEFAULT_FONT_SIZE } from '../store';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen } from 'lucide-react';
 import useStore from '../store';
-import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
-import { NOTES_SESSION_ID } from './PaneTerminal';
 import type { Layout } from './TerminalGrid';
 
+// Workspace-level toolbar: workspace name (click to rename) + actions (Knowledge)
+// on the left; layout picker + zoom on the right. The terminal/git/files switch
+// lives per-pane (see PaneHeader).
 interface SessionStatsBarProps {
   sessionId: string | null;
-  activeTab: string;
-  onTabChange?: ((tab: string) => void) | null;
   layout?: Layout;
   onLayoutChange?: (layout: Layout) => void;
 }
 
-export default function SessionStatsBar({ sessionId, activeTab, onTabChange, layout, onLayoutChange }: SessionStatsBarProps) {
-  // `sessionId` here is the active workspace id — zoom is keyed per workspace.
-  const sessionZoom  = useStore(s => sessionId ? s.workspaceZooms[sessionId] : undefined);
-  const adjustSessionZoom = useStore(s => s.adjustSessionZoom);
-  const resetSessionZoom  = useStore(s => s.resetSessionZoom);
+export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: SessionStatsBarProps) {
+  // Terminal font size is a single global value shared by every pane.
+  const fontSize          = useStore(s => s.fontSize);
+  const adjustFontSize    = useStore(s => s.adjustFontSize);
+  const resetFontSize     = useStore(s => s.resetFontSize);
+  const renameWorkspace   = useStore(s => s.renameWorkspace);
+  const knowledgeOpen     = useStore(s => s.knowledgeOpen);
+  const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
+  // Display name for the active workspace: its title, else its root pane's name.
+  const workspaceName = useStore(s => {
+    const ws = sessionId ? s.workspaces[sessionId] : undefined;
+    if (!ws) return undefined;
+    const root = ws.cells[0];
+    return ws.title || (root ? s.sessionMap[root]?.name : undefined) || 'Workspace';
+  });
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
 
-  if (!sessionId || sessionId === NOTES_SESSION_ID) return null;
+  if (!sessionId) return null;
 
-  const tabs = onTabChange ? [
-    { id: 'terminal', icon: <SquareTerminal size={11} />, label: 'Terminal' },
-    { id: 'diff',     icon: <GitBranch size={11} />,      label: 'Git' },
-    { id: 'files',    icon: <FolderOpen size={11} />,     label: 'Files'    },
-  ] : [];
-
-  const tabBar = onTabChange && (
-    <div
-      className="flex items-center shrink-0"
-      style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}
-    >
-      {tabs.map(({ id, icon, label }) => (
-        <button
-          key={id}
-          title={label}
-          onClick={() => onTabChange(id)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            fontSize: 11, padding: '2px 8px',
-            background: activeTab === id ? 'var(--accent)' : 'none',
-            color: activeTab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
-            border: 'none', borderRight: id !== 'files' ? '1px solid var(--border)' : 'none',
-            cursor: 'pointer',
-          }}
-        >
-          {icon}{label}
-        </button>
-      ))}
-    </div>
-  );
+  const commitRename = () => {
+    if (sessionId) renameWorkspace(sessionId, renameValue.trim() || undefined);
+    setRenaming(false);
+  };
 
   // All four three-variants are considered the same "button" in the picker —
   // the cycle order lets the user click the same Columns3 icon repeatedly to
@@ -143,7 +127,7 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
     </div>
   );
 
-  const currentZoom = sessionZoom ?? DEFAULT_FONT_SIZE();
+  const currentZoom = fontSize;
   const zoomButtons = sessionId && (
     <div
       className="flex items-center shrink-0"
@@ -151,7 +135,7 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
     >
       <button
         title="Zoom out (\u2318-)"
-        onClick={() => adjustSessionZoom(sessionId, -1)}
+        onClick={() => adjustFontSize(-1)}
         style={{
           display: 'flex', alignItems: 'center', padding: '2px 5px',
           background: 'none', border: 'none',
@@ -163,7 +147,7 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
       </button>
       <button
         title={`Font size ${currentZoom}px — click to reset (\u23180)`}
-        onClick={() => resetSessionZoom(sessionId)}
+        onClick={() => resetFontSize()}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           minWidth: 28, padding: '2px 4px',
@@ -177,7 +161,7 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
       </button>
       <button
         title="Zoom in (\u2318+)"
-        onClick={() => adjustSessionZoom(sessionId, 1)}
+        onClick={() => adjustFontSize(1)}
         style={{
           display: 'flex', alignItems: 'center', padding: '2px 5px',
           background: 'none', border: 'none',
@@ -189,116 +173,72 @@ export default function SessionStatsBar({ sessionId, activeTab, onTabChange, lay
     </div>
   );
 
-  return (
-    <>
-      {/* Desktop: single row — grid-level toolbar only (session identity,
-          path, stats, and close moved into per-pane headers). */}
-      <div
-        className="hidden md:flex items-center gap-2 px-4 py-1.5 shrink-0 border-b"
-        style={{ borderColor: 'var(--border)' }}
+  // Right-side cluster: the active workspace name (click to rename) and a
+  // Notes toggle. Lives in the formerly-empty right half of the bar.
+  const nameControl = workspaceName && (
+    renaming ? (
+      <input
+        autoFocus
+        value={renameValue}
+        onChange={(e) => setRenameValue(e.target.value)}
+        onBlur={commitRename}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitRename();
+          if (e.key === 'Escape') setRenaming(false);
+        }}
+        placeholder="Workspace name"
+        style={{
+          fontSize: 11, padding: '2px 7px', borderRadius: 5,
+          border: '1px solid var(--ring)', background: '#0c0c0c',
+          color: 'var(--foreground)', outline: 'none', width: 140, fontFamily: 'inherit',
+        }}
+      />
+    ) : (
+      <button
+        onClick={() => { setRenameValue(sessionId ? useStore.getState().workspaces[sessionId]?.title ?? '' : ''); setRenaming(true); }}
+        title="Click to rename workspace"
+        className="hover:text-foreground"
+        style={{
+          maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          fontSize: 12, fontWeight: 600, padding: '2px 4px', borderRadius: 4,
+          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--foreground)',
+        }}
       >
-        {layoutButtons && <div>{layoutButtons}</div>}
-        {activeTab === 'terminal' && zoomButtons && <div>{zoomButtons}</div>}
-        <div className="flex-1" />
-        {activeTab === 'terminal' && sessionId && (
-          <CommandHistoryButton sessionId={sessionId} />
-        )}
-        {activeTab === 'terminal' && (
-          <button
-            title="Refresh all terminals"
-            onClick={() => refreshAllTerminals()}
-            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-white/5"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
-          >
-            <RefreshCw size={12} />
-          </button>
-        )}
-        {tabBar && <div>{tabBar}</div>}
-      </div>
-
-      {/* Mobile: tab bar only */}
-      {onTabChange && (
-        <div
-          className="md:hidden flex items-center justify-center border-b shrink-0 py-1.5"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          {tabBar}
-        </div>
-      )}
-    </>
+        {workspaceName}
+      </button>
+    )
   );
-}
 
-// ── Command History TOC ─────────────────────────────────────────────────────
+  const knowledgeButton = (
+    <button
+      onClick={() => setKnowledgeOpen(!knowledgeOpen)}
+      title="Knowledge"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        fontSize: 11, padding: '3px 8px', borderRadius: 6,
+        border: '1px solid var(--border)',
+        background: knowledgeOpen ? 'var(--accent)' : 'none',
+        color: knowledgeOpen ? 'var(--foreground)' : 'var(--muted-foreground)',
+        cursor: 'pointer',
+      }}
+    >
+      <BookOpen size={13} />Knowledge
+    </button>
+  );
 
-function CommandHistoryButton({ sessionId }: { sessionId: string }) {
-  const [entries, setEntries] = useState<CommandEntry[]>([]);
-
-  function refresh() {
-    setEntries(getCommandHistory(sessionId));
-  }
-
+  // Desktop only (hidden on mobile, where splits/zoom aren't shown).
+  // Left: workspace name + actions (Notes). Right: layout picker + zoom.
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          title="Command history"
-          onClick={refresh}
-          className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-white/5"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
-        >
-          <List size={12} />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="end">
-        <div style={{ width: 340, maxHeight: 360, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
-              Command History
-            </span>
-            {entries.length > 0 && (
-              <button
-                onClick={() => { clearCommandHistory(sessionId); setEntries([]); }}
-                style={{ fontSize: 9, color: 'var(--muted-foreground)', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.6, textDecoration: 'underline' }}
-              >
-                clear
-              </button>
-            )}
-          </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            {entries.length === 0 ? (
-              <div style={{ padding: '16px 10px', textAlign: 'center', fontSize: 11, color: 'var(--muted-foreground)', opacity: 0.5 }}>
-                No commands recorded yet
-              </div>
-            ) : (
-              [...entries].reverse().map((entry, i) => (
-                <button
-                  key={`${entry.ts}-${i}`}
-                  onClick={() => activeTerminalScrollToLine.current(entry.line)}
-                  style={{
-                    display: 'flex', alignItems: 'baseline', gap: 8,
-                    width: '100%', textAlign: 'left', padding: '5px 10px',
-                    background: 'none', border: 'none', borderBottom: '1px solid var(--border)',
-                    cursor: 'pointer', fontSize: 11, color: 'var(--foreground)',
-                  }}
-                  className="hover:bg-white/5"
-                >
-                  <span style={{
-                    fontFamily: '"JetBrains Mono",monospace',
-                    fontWeight: 500, flex: 1,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {entry.cmd}
-                  </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-foreground)', flexShrink: 0, opacity: 0.5 }}>
-                    {new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <div
+      className="hidden md:flex items-center gap-2 px-4 py-1.5 shrink-0 border-b"
+      style={{ borderColor: 'var(--border)' }}
+    >
+      {nameControl}
+      {nameControl && <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />}
+      {knowledgeButton}
+      <div style={{ flex: 1 }} />
+      {layoutButtons && <div>{layoutButtons}</div>}
+      {zoomButtons && <div>{zoomButtons}</div>}
+    </div>
   );
 }

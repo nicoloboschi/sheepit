@@ -126,7 +126,6 @@ export interface StoreState {
   sessionOrder: string[];
   sessionMap: Record<string, Session>;
   sessionUrls: Record<string, string[]>;
-  sessionLastCommand: Record<string, string>;
   sessionCurrentInput: Record<string, string>;
   openPaneMap: Record<string, number[]>;
   /** Per-workspace state. Keyed by **synthetic workspace id**. */
@@ -135,14 +134,24 @@ export interface StoreState {
   workspaceOrder: string[];
   /** Session id of the pane currently in zen (fullscreen) mode, or null. */
   zenSessionId: string | null;
-  /** Font size keyed by **workspace id** — applies to every pane in that workspace. */
+  /** Global terminal font size — applies to every pane in every workspace. */
+  fontSize: number;
+  /** @deprecated per-workspace zoom, superseded by the global `fontSize`. Still
+   *  written by drag/move bookkeeping but no longer read for terminal sizing. */
   workspaceZooms: Record<string, number>;
   wsStatus: WsStatus;
   sheetOpen: boolean;
+  /** Knowledge (notes) dialog — opens as an overlay over the active workspace
+   *  rather than replacing it. */
+  knowledgeOpen: boolean;
+  /** Sidebar workspace list filter (Slack-style). */
+  workspaceFilter: 'all' | 'active' | 'favourites';
   confirm: ConfirmState | null;
 
   setWsStatus: (status: WsStatus) => void;
+  setWorkspaceFilter: (filter: 'all' | 'active' | 'favourites') => void;
   setSheetOpen: (open: boolean) => void;
+  setKnowledgeOpen: (open: boolean) => void;
   renderSessions: (sessions: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
   setOpenPaneMap: (panes: (string | null)[]) => void;
@@ -151,7 +160,6 @@ export interface StoreState {
   dismissConfirm: (result: boolean) => void;
   addSessionUrl: (sessionId: string, url: string) => void;
   clearSessionUrls: (sessionId: string) => void;
-  setLastCommand: (sessionId: string, command: string) => void;
   setCurrentInput: (sessionId: string, input: string) => void;
   markUnseen: (sessionId: string) => void;
   clearUnseen: (sessionId: string) => void;
@@ -213,10 +221,10 @@ export interface StoreState {
   exitZen: () => void;
   navigateSession: (direction: 'up' | 'down') => { workspaceId: string; paneIndex?: number } | null;
 
-  // ── Zoom (per workspace) — legacy method names kept for now ──────────────
-  setSessionZoom: (workspaceId: string, fontSize: number) => void;
-  adjustSessionZoom: (workspaceId: string, delta: number) => void;
-  resetSessionZoom: (workspaceId: string) => void;
+  // ── Global terminal font size (applies to every pane) ────────────────────
+  setFontSize: (size: number) => void;
+  adjustFontSize: (delta: number) => void;
+  resetFontSize: () => void;
 }
 
 export const DEFAULT_FONT_SIZE = (): number => 12;
@@ -366,6 +374,30 @@ function saveWorkspaceZooms(zooms: Record<string, number>): void {
   try { localStorage.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(zooms)); } catch { /* quota */ }
 }
 
+// Global terminal font size — one value shared by every workspace/pane.
+const FONT_SIZE_KEY = 'vipershell:font-size';
+function loadFontSize(): number {
+  try {
+    const raw = localStorage.getItem(FONT_SIZE_KEY);
+    if (raw) {
+      const n = parseInt(raw, 10);
+      if (!Number.isNaN(n)) return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, n));
+    }
+  } catch { /* fall through */ }
+  return DEFAULT_FONT_SIZE();
+}
+function saveFontSize(size: number): void {
+  try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
+}
+
+function loadWorkspaceFilter(): 'all' | 'active' | 'favourites' {
+  try {
+    const v = localStorage.getItem('vipershell:ws-filter');
+    if (v === 'active' || v === 'favourites') return v;
+  } catch { /* fall through */ }
+  return 'all';
+}
+
 function loadLastWorkspaceId(): string | null {
   try { return localStorage.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
 }
@@ -376,7 +408,9 @@ const _busyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Active terminal send/refresh/scroll — updated by TerminalCell when it becomes active
 export const activeTerminalSend    = { current: (_msg: Record<string, unknown>) => {} };
 export const activeTerminalRefresh = { current: () => {} };
-export const activeTerminalScrollToLine = { current: (_line: number) => {} };
+// Cycle the active pane's view (terminal → git → files). Registered by the
+// active TerminalCell; driven by the keyboard shortcut in App.
+export const activePaneCycleView = { current: (_dir: 'left' | 'right') => {} };
 
 
 // Registry for sending to a specific terminal cell by session ID
@@ -390,7 +424,7 @@ export function sendToTerminal(id: string, msg: Record<string, unknown>) {
   if (fn) fn(msg);
 }
 
-// Registry for refreshing all terminal cells (including splits)
+// Registry for refreshing all terminal cells (including non-root panes)
 const _terminalRefreshRegistry = new Map<string, () => void>();
 export function registerTerminalRefresh(id: string, fn: () => void) {
   _terminalRefreshRegistry.set(id, fn);
@@ -398,46 +432,6 @@ export function registerTerminalRefresh(id: string, fn: () => void) {
 }
 export function refreshAllTerminals() {
   for (const fn of _terminalRefreshRegistry.values()) fn();
-}
-
-// ── Command history ─────────────────────────────────────────────────────────
-export interface CommandEntry {
-  cmd: string;
-  line: number;   // xterm buffer absolute line (baseY + cursorY)
-  ts: number;     // Date.now()
-}
-
-const CMD_HISTORY_KEY = 'vipershell:cmd-history';
-const MAX_HISTORY = 200;
-
-function loadCommandHistory(): Record<string, CommandEntry[]> {
-  try {
-    return JSON.parse(localStorage.getItem(CMD_HISTORY_KEY) || '{}');
-  } catch { return {}; }
-}
-
-function saveCommandHistory(h: Record<string, CommandEntry[]>) {
-  try { localStorage.setItem(CMD_HISTORY_KEY, JSON.stringify(h)); } catch { /* quota */ }
-}
-
-const _commandHistory: Record<string, CommandEntry[]> = loadCommandHistory();
-
-export function getCommandHistory(sessionId: string): CommandEntry[] {
-  return _commandHistory[sessionId] ?? [];
-}
-
-export function addCommandEntry(sessionId: string, cmd: string, line: number) {
-  if (!cmd.trim()) return;
-  const list = _commandHistory[sessionId] ?? [];
-  list.push({ cmd: cmd.trim(), line, ts: Date.now() });
-  if (list.length > MAX_HISTORY) list.splice(0, list.length - MAX_HISTORY);
-  _commandHistory[sessionId] = list;
-  saveCommandHistory(_commandHistory);
-}
-
-export function clearCommandHistory(sessionId: string) {
-  delete _commandHistory[sessionId];
-  saveCommandHistory(_commandHistory);
 }
 
 // ── Store ───────────────────────────────────────────────────────────────────
@@ -454,23 +448,34 @@ const useStore = create<StoreState>((set, get) => ({
   sessionOrder: [],
   sessionMap: {},
   sessionUrls: {},
-  sessionLastCommand: {},
   sessionCurrentInput: {},
   openPaneMap: {},
   workspaces: _initialWorkspaces.workspaces,
   workspaceOrder: _initialWorkspaces.order,
   zenSessionId: null,
+  fontSize: loadFontSize(),
   workspaceZooms: loadWorkspaceZooms(),
   wsStatus: 'connecting',
   sheetOpen: false,
+  knowledgeOpen: false,
+  workspaceFilter: loadWorkspaceFilter(),
   confirm: null,
 
   setWsStatus(status: WsStatus) {
     set({ wsStatus: status });
   },
 
+  setWorkspaceFilter(filter: 'all' | 'active' | 'favourites') {
+    try { localStorage.setItem('vipershell:ws-filter', filter); } catch { /* quota */ }
+    set({ workspaceFilter: filter });
+  },
+
   setSheetOpen(open: boolean) {
     set({ sheetOpen: open });
+  },
+
+  setKnowledgeOpen(open: boolean) {
+    set({ knowledgeOpen: open });
   },
 
   renderSessions(sessions: Session[]) {
@@ -519,13 +524,16 @@ const useStore = create<StoreState>((set, get) => ({
     // 2) Any session that isn't claimed by a workspace becomes its own
     //    brand-new single-pane workspace. This is how freshly-created sessions
     //    turn into sidebar rows.
+    const freshlyCreated: string[] = [];
     for (const s of sorted) {
       if (claimed.has(s.id)) continue;
       const id = generateWorkspaceId();
       nextWorkspaces[id] = { id, layout: 'single', cells: [s.id], activeCell: 0 };
-      nextWorkspaceOrder.push(id);
+      freshlyCreated.push(id);
       claimed.add(s.id);
     }
+    // Newly-created sessions go to the TOP of the sidebar, not the bottom.
+    if (freshlyCreated.length) nextWorkspaceOrder.unshift(...freshlyCreated);
 
     // 3) Reconcile the "active workspace" pointer. If its workspace vanished,
     //    fall back to the first surviving one (or null if nothing left).
@@ -659,10 +667,6 @@ const useStore = create<StoreState>((set, get) => ({
     const urls = { ...get().sessionUrls };
     delete urls[sessionId];
     set({ sessionUrls: urls });
-  },
-
-  setLastCommand(sessionId: string, command: string) {
-    set(s => ({ sessionLastCommand: { ...s.sessionLastCommand, [sessionId]: command } }));
   },
 
   setCurrentInput(sessionId: string, input: string) {
@@ -1092,23 +1096,19 @@ const useStore = create<StoreState>((set, get) => ({
     return flat[nextIdx] ?? null;
   },
 
-  setSessionZoom(workspaceId: string, fontSize: number) {
-    const clamped = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(fontSize)));
-    const nextZooms = { ...get().workspaceZooms, [workspaceId]: clamped };
-    saveWorkspaceZooms(nextZooms);
-    set({ workspaceZooms: nextZooms });
+  setFontSize(size: number) {
+    const clamped = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(size)));
+    saveFontSize(clamped);
+    set({ fontSize: clamped });
   },
 
-  adjustSessionZoom(workspaceId: string, delta: number) {
-    const cur = get().workspaceZooms[workspaceId] ?? DEFAULT_FONT_SIZE();
-    get().setSessionZoom(workspaceId, cur + delta);
+  adjustFontSize(delta: number) {
+    get().setFontSize(get().fontSize + delta);
   },
 
-  resetSessionZoom(workspaceId: string) {
-    const nextZooms = { ...get().workspaceZooms };
-    delete nextZooms[workspaceId];
-    saveWorkspaceZooms(nextZooms);
-    set({ workspaceZooms: nextZooms });
+  resetFontSize() {
+    saveFontSize(DEFAULT_FONT_SIZE());
+    set({ fontSize: DEFAULT_FONT_SIZE() });
   },
 }));
 

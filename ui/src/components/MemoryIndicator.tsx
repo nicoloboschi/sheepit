@@ -112,7 +112,7 @@ export default function MemoryIndicator({ onOpenSettings }: MemoryIndicatorProps
               background: data.healthy ? 'rgba(74,222,128,0.15)' : data.enabled ? 'rgba(248,113,113,0.15)' : 'rgba(82,82,82,0.15)',
               color: data.healthy ? '#4ADE80' : data.enabled ? '#F87171' : '#737373',
             }}>
-              {data.healthy ? 'healthy' : data.active ? 'unhealthy' : data.enabled ? 'stopped' : 'disabled'}
+              {data.healthy ? 'healthy' : data.active ? 'unhealthy' : data.enabled ? 'inactive' : 'disabled'}
             </span>
           </div>
 

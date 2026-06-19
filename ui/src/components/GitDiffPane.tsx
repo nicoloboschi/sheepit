@@ -1,38 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   RefreshCw, ChevronDown, ChevronRight, FilePlus, FileMinus, FileCode,
-  GitCommitHorizontal, GitBranch, Diff, FolderOpen, Eye, ScrollText,
+  GitCommitHorizontal, FolderOpen,
 } from 'lucide-react';
+import FileView, { parseDiff, type DiffFile } from './FileView';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
-
-interface DiffLine {
-  type: 'add' | 'del' | 'ctx';
-  content: string;
-}
-
-interface DiffHunk {
-  header: string;
-  context: string;
-  oldStart: number;
-  newStart: number;
-  lines: DiffLine[];
-}
-
-interface DiffFile {
-  oldPath: string;
-  newPath: string;
-  hunks: DiffHunk[];
-  additions: number;
-  deletions: number;
-  isNew: boolean;
-  isDeleted: boolean;
-  isBinary: boolean;
-}
+// Diff types + parser live in FileView (the shared single-file component).
 
 interface Commit {
   hash: string;
@@ -42,190 +16,44 @@ interface Commit {
   relDate: string;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const isMd = (name: string): boolean =>
-  ['md', 'markdown', 'mdx'].includes((name ?? '').split('.').pop()?.toLowerCase() ?? '');
-
-const isImg = (name: string): boolean =>
-  ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes((name ?? '').split('.').pop()?.toLowerCase() ?? '');
-
-const EXT_LANG: Record<string, string> = {
-  js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  c: 'c', cpp: 'cpp', h: 'c', cs: 'csharp',
-  sh: 'bash', bash: 'bash', zsh: 'bash',
-  css: 'css', scss: 'scss', html: 'html', xml: 'xml',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  sql: 'sql', swift: 'swift', kt: 'kotlin', php: 'php', dart: 'dart',
-  md: 'markdown', mdx: 'markdown',
-};
-const getLang = (name: string) => EXT_LANG[(name ?? '').split('.').pop()?.toLowerCase() ?? ''] ?? 'text';
-
-// ── Diff parser ───────────────────────────────────────────────────────────────
-
-function parseDiff(raw: string): DiffFile[] {
-  const files: DiffFile[] = [];
-  let file: DiffFile | null = null;
-  let hunk: DiffHunk | null = null;
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      const m = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-      file = { oldPath: m ? m[1]! : '', newPath: m ? m[2]! : '', hunks: [], additions: 0, deletions: 0, isNew: false, isDeleted: false, isBinary: false };
-      files.push(file!); hunk = null;
-    } else if (!file) {
-      continue;
-    } else if (line.startsWith('new file'))     { file.isNew = true; }
-    else if (line.startsWith('deleted file'))   { file.isDeleted = true; }
-    else if (line.startsWith('Binary files'))   { file.isBinary = true; }
-    else if (line.startsWith('--- '))           { file.oldPath = line.slice(4).replace(/^a\//, ''); }
-    else if (line.startsWith('+++ '))           { file.newPath = line.slice(4).replace(/^b\//, ''); }
-    else if (line.startsWith('@@ ')) {
-      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
-      if (m) { hunk = { header: line.match(/@@ .* @@/)?.[0] ?? line, context: m[3]!.trim(), oldStart: +m[1]!, newStart: +m[2]!, lines: [] }; file.hunks.push(hunk); }
-    } else if (hunk) {
-      if (line.startsWith('+'))      { hunk.lines.push({ type: 'add', content: line.slice(1) }); file.additions++; }
-      else if (line.startsWith('-')) { hunk.lines.push({ type: 'del', content: line.slice(1) }); file.deletions++; }
-      else if (line.startsWith(' ') || line === '') { hunk.lines.push({ type: 'ctx', content: line.slice(1) }); }
-    }
-  }
-  return files;
-}
-
-// ── Hunk ─────────────────────────────────────────────────────────────────────
-
-interface HunkRow extends DiffLine {
-  oldNum: number | null;
-  newNum: number | null;
-}
-
-interface HunkViewProps {
-  hunk: DiffHunk;
-}
-
-function HunkView({ hunk }: HunkViewProps) {
-  const rows: HunkRow[] = [];
-  let old = hunk.oldStart, nw = hunk.newStart;
-  for (const line of hunk.lines) {
-    rows.push({ ...line, oldNum: (line.type !== 'add') ? old : null, newNum: (line.type !== 'del') ? nw : null });
-    if (line.type !== 'add') old++;
-    if (line.type !== 'del') nw++;
-  }
-  return (
-    <div style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 12 }}>
-      <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: '#1b2d41', borderBottom: '1px solid #222222' }}>
-        <span style={{ color: '#93C5FD', userSelect: 'none' }}>{hunk.header}</span>
-        {hunk.context && <span style={{ color: '#525252' }}>{hunk.context}</span>}
-      </div>
-      {rows.map((row, i) => {
-        const isAdd = row.type === 'add', isDel = row.type === 'del';
-        return (
-          <div key={i} style={{ display: 'flex', background: isAdd ? '#0d2818' : isDel ? '#2d0f0f' : 'transparent', borderBottom: '1px solid #0c0c0c' }}>
-            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: '#525252', userSelect: 'none', flexShrink: 0, borderRight: '1px solid #222222' }}>{row.oldNum ?? ''}</div>
-            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: '#525252', userSelect: 'none', flexShrink: 0, borderRight: '1px solid #222222' }}>{row.newNum ?? ''}</div>
-            <div style={{ width: 20, padding: '1px 4px', textAlign: 'center', color: isAdd ? '#4ADE80' : isDel ? '#F87171' : '#525252', userSelect: 'none', flexShrink: 0 }}>
-              {isAdd ? '+' : isDel ? '-' : ' '}
-            </div>
-            <pre style={{ margin: 0, padding: '1px 8px 1px 0', color: isAdd ? '#aff5b4' : isDel ? '#ffdcd7' : '#d4d4d8', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0 }}>
-              {row.content}
-            </pre>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ── File block ────────────────────────────────────────────────────────────────
-
-interface FilePreviewProps {
-  absPath: string;
-}
-
-function FilePreview({ absPath }: FilePreviewProps) {
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const md = isMd(absPath);
-  const img = isImg(absPath);
-
-  useEffect(() => {
-    if (img) return;
-    fetch(`/api/fs/raw?path=${encodeURIComponent(absPath)}`)
-      .then(r => r.ok ? r.text() : r.text().then(t => { throw new Error(t); }))
-      .then(setContent)
-      .catch((e: Error) => setError(e.message));
-  }, [absPath]); // eslint-disable-line
-
-  if (img) return <img src={`/api/fs/raw?path=${encodeURIComponent(absPath)}`} alt="" style={{ maxWidth: '100%', padding: 12 }} />;
-  if (error) return <div style={{ padding: 12, color: '#F87171', fontSize: 12 }}>{error}</div>;
-  if (content === null) return <div style={{ padding: 12, color: '#525252', fontSize: 12 }}>Loading…</div>;
-  if (md) return (
-    <div style={{ padding: '12px 20px', overflow: 'auto' }}>
-      <div className="md-preview"><Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown></div>
-    </div>
-  );
-  return (
-    <div style={{ overflow: 'auto' }}>
-      <SyntaxHighlighter
-        language={getLang(absPath)}
-        style={vscDarkPlus}
-        showLineNumbers
-        wrapLongLines
-        lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: '#484f58', userSelect: 'none' }}
-        customStyle={{ margin: 0, padding: '8px 0', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
-      >
-        {content}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
 
 interface FileBlockProps {
   file: DiffFile;
   gitRoot: string | null;
+  /** Pane session (for the FileView content/edit + per-file diff fetch). */
+  sessionId?: string | null;
   isFocused: boolean;
+  /** The scrolling diff container, used as the IntersectionObserver root so a
+   *  file's (potentially huge) diff body only mounts when near the viewport. */
+  scrollRoot?: React.RefObject<HTMLDivElement | null>;
 }
 
-function FileBlock({ file, gitRoot, isFocused }: FileBlockProps) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [preview, setPreview] = useState(false);
+function FileBlock({ file, gitRoot, sessionId, isFocused, scrollRoot }: FileBlockProps) {
   const displayPath = file.isDeleted ? file.oldPath : (file.newPath || file.oldPath);
   const absPath = gitRoot ? `${gitRoot}/${displayPath}` : null;
-
+  // The whole per-file UI (header, collapse, diff⇄content toggle, lazy-mounted
+  // body) is the shared FileView. `data-file` stays on the wrapper so the
+  // sidebar/keyboard "jump to file" can still scroll to it.
   return (
-    <div data-file={displayPath} style={{ border: `1px solid ${isFocused ? '#0074d9' : '#222222'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', background: '#111111', borderBottom: (collapsed && !preview) ? 'none' : '1px solid #222222' }}>
-        <div onClick={() => setCollapsed(c => !c)} style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer', userSelect: 'none', minWidth: 0 }}>
-          {collapsed ? <ChevronRight size={13} color="#525252" style={{ flexShrink: 0 }} /> : <ChevronDown size={13} color="#525252" style={{ flexShrink: 0 }} />}
-          {file.isNew ? <FilePlus size={13} color="#4ADE80" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={13} color="#F87171" style={{ flexShrink: 0 }} /> : <FileCode size={13} color="#525252" style={{ flexShrink: 0 }} />}
-          <span title={displayPath} style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 12, color: '#F4F4F5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left', minWidth: 0 }}>
-            <bdi>{displayPath}</bdi>
-          </span>
-        </div>
-        {!file.isBinary && (
-          <span title={`${file.additions} line${file.additions !== 1 ? 's' : ''} added, ${file.deletions} line${file.deletions !== 1 ? 's' : ''} removed`} style={{ fontFamily: 'monospace', fontSize: 12, flexShrink: 0 }}>
-            {file.additions > 0 && <span style={{ color: '#4ADE80' }}>+{file.additions}</span>}
-            {file.additions > 0 && file.deletions > 0 && <span style={{ color: '#525252' }}> </span>}
-            {file.deletions > 0 && <span style={{ color: '#F87171' }}>-{file.deletions}</span>}
-          </span>
-        )}
-        {absPath && !file.isDeleted && (
-          <button
-            title="Toggle full file preview"
-            onClick={(e: React.MouseEvent<HTMLElement>) => { e.stopPropagation(); setPreview(p => !p); setCollapsed(false); }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 4px', color: preview ? '#93C5FD' : '#484f58', flexShrink: 0, display: 'flex', alignItems: 'center' }}
-          >
-            <Eye size={12} />
-          </button>
-        )}
-      </div>
-      {!collapsed && (
-        preview && absPath
-          ? <FilePreview absPath={absPath} />
-          : file.isBinary
-            ? <div style={{ padding: '10px 14px', color: '#525252', fontSize: 12, fontStyle: 'italic' }}>Binary file changed</div>
-            : file.hunks.map((hunk, i) => <HunkView key={i} hunk={hunk} />)
-      )}
+    <div data-file={displayPath}>
+      <FileView
+        path={absPath}
+        sessionId={sessionId}
+        displayPath={displayPath}
+        defaultMode="diff"
+        editable
+        hunks={file.hunks}
+        additions={file.additions}
+        deletions={file.deletions}
+        isNew={file.isNew}
+        isDeleted={file.isDeleted}
+        isBinary={file.isBinary}
+        collapsible
+        isFocused={isFocused}
+        scrollRoot={scrollRoot}
+      />
     </div>
   );
 }
@@ -371,68 +199,13 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
   }
 
   return (
-    <div style={{ width: 240, flexShrink: 0, borderRight: '1px solid #222222', overflowY: 'auto', background: '#0c0c0c' }}>
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', fontSize: 11, color: '#525252', display: 'flex', gap: 6, alignItems: 'center' }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#0c0c0c' }}>
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', fontSize: 11, color: '#525252', display: 'flex', gap: 6, alignItems: 'center', position: 'sticky', top: 0, zIndex: 1 }}>
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
         <span style={{ color: '#4ADE80' }}>+{totalAdd}</span>
         <span style={{ color: '#F87171' }}>-{totalDel}</span>
       </div>
       {renderNode(tree, '', '', -1)}
-    </div>
-  );
-}
-
-// ── Commit list ───────────────────────────────────────────────────────────────
-
-interface CommitListProps {
-  sessionId: string;
-  base: string;
-  selected: string | null;
-  onSelect: (hash: string) => void;
-}
-
-function CommitList({ sessionId, base, selected, onSelect }: CommitListProps) {
-  const [commits, setCommits] = useState<Commit[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    setLoading(true);
-    const url = `/api/git/${encodeURIComponent(sessionId)}/log${base ? `?base=${encodeURIComponent(base)}` : ''}`;
-    fetch(url)
-      .then(r => r.json())
-      .then((data: Commit[]) => { setCommits(data); if (data.length > 0 && !selected) onSelect(data[0]!.hash); })
-      .catch(() => setCommits([]))
-      .finally(() => setLoading(false));
-  }, [sessionId, base]); // eslint-disable-line
-
-  if (loading) return <div style={{ width: 260, padding: 12, color: '#525252', fontSize: 12, borderRight: '1px solid #222222' }}>Loading…</div>;
-
-  return (
-    <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid #222222', overflowY: 'auto', background: '#0c0c0c' }}>
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', fontSize: 11, color: '#525252' }}>
-        {commits.length} commit{commits.length !== 1 ? 's' : ''}
-      </div>
-      {commits.length === 0 && (
-        <div style={{ padding: 12, color: '#484f58', fontSize: 12 }}>No commits ahead of base</div>
-      )}
-      {commits.map(c => (
-        <div
-          key={c.hash}
-          onClick={() => onSelect(c.hash)}
-          style={{ padding: '7px 10px', cursor: 'pointer', borderBottom: '1px solid #111111', background: selected === c.hash ? '#1f3a56' : 'transparent' }}
-          onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { if (selected !== c.hash) e.currentTarget.style.background = '#111111'; }}
-          onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { if (selected !== c.hash) e.currentTarget.style.background = 'transparent'; }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <GitCommitHorizontal size={11} color="#4ADE80" style={{ flexShrink: 0 }} />
-            <span style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 11, color: '#93C5FD', flexShrink: 0 }}>{c.short}</span>
-            <span style={{ fontSize: 10, color: '#525252', flexShrink: 0, marginLeft: 'auto' }}>{c.relDate}</span>
-          </div>
-          <div style={{ fontSize: 12, color: '#d4d4d8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 17 }}>{c.subject}</div>
-          <div style={{ fontSize: 10, color: '#525252', paddingLeft: 17 }}>{c.author}</div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -550,32 +323,18 @@ function buildTree(files: DiffFile[]): TreeNode {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 
-type ModeId = 'head' | 'branch' | 'commits' | 'log';
-
-interface Mode {
-  id: ModeId;
-  icon: React.ReactNode;
-  label: string;
-}
-
-const MODES = [
-  { id: 'head',    icon: <Diff size={11} />,      label: 'Working tree' },
-  { id: 'branch',  icon: <GitBranch size={11} />, label: 'Branch diff'  },
-  { id: 'commits', icon: <GitCommitHorizontal size={11} />, label: 'Commits' },
-  { id: 'log',     icon: <ScrollText size={11} />, label: 'Log' },
-] as const satisfies readonly Mode[];
+// The unified per-pane switch (Terminal · Working · Files · Git Log) lives in
+// PaneHeader; this pane is told which git mode to render via the `mode` prop.
+// 'head' = working-tree diff, 'log' = commit log.
+type ModeId = 'head' | 'log';
 
 interface GitDiffPaneProps {
   sessionId: string | null;
+  mode: ModeId;
   onOpenFile?: (path: string) => void;
 }
 
-export default function GitDiffPane({ sessionId, onOpenFile }: GitDiffPaneProps) {
-  const [mode, setMode] = useState<ModeId>('branch');
-  const [base, setBase] = useState('origin/main');
-  const [editingBase, setEditingBase] = useState(false);
-  const [draftBase, setDraftBase] = useState('origin/main');
-  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPaneProps) {
   const [files, setFiles] = useState<DiffFile[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -593,23 +352,18 @@ export default function GitDiffPane({ sessionId, onOpenFile }: GitDiffPaneProps)
   }, [sessionId]);
 
   const load = useCallback(async () => {
-    if (!sessionId) return;
-    if (mode === 'log') return;
-    if (mode === 'commits' && !selectedCommit) return;
+    if (!sessionId || mode === 'log') return;
     setLoading(true); setError(null);
     try {
-      let url = `/api/git/${encodeURIComponent(sessionId)}/diff`;
-      if (mode === 'branch')  url += `?mode=branch&base=${encodeURIComponent(base)}`;
-      if (mode === 'commits') url += `?mode=commit&commit=${encodeURIComponent(selectedCommit!)}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/diff`);
       const text = await res.text();
       setFiles(parseDiff(text));
     } catch (e) { setError((e as Error).message); }
     finally     { setLoading(false); }
-  }, [sessionId, mode, base, selectedCommit]);
+  }, [sessionId, mode]);
 
   useEffect(() => { setFiles(null); setFocusedFileIdx(0); }, [mode]);
-  useEffect(() => { if (mode !== 'commits' || selectedCommit) load(); }, [load]); // eslint-disable-line
+  useEffect(() => { load(); }, [load]); // eslint-disable-line
   useEffect(() => { if (files?.length) setFocusedFileIdx(0); }, [files]);
 
   // Auto-focus for keyboard navigation when the pane mounts
@@ -654,7 +408,7 @@ export default function GitDiffPane({ sessionId, onOpenFile }: GitDiffPaneProps)
   }, [files, sortedFileOrder]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    // Don't capture when typing in the base branch input
+    // Don't capture when typing in an input
     if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
     // File navigation: left/right arrows or h/l
@@ -732,107 +486,49 @@ export default function GitDiffPane({ sessionId, onOpenFile }: GitDiffPaneProps)
   return (
     <div ref={containerRef} tabIndex={0} onKeyDown={handleKeyDown} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: '#0c0c0c', outline: 'none' }}>
 
-      {/* Toolbar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', flexShrink: 0, flexWrap: 'wrap' }}>
-        {/* Mode tabs */}
-        <div style={{ display: 'flex', border: '1px solid #222222', borderRadius: 6, overflow: 'hidden' }}>
-          {MODES.map(({ id, icon, label }) => (
-            <button
-              key={id}
-              onClick={() => setMode(id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                fontSize: 11, padding: '3px 9px',
-                background: mode === id ? '#1f6feb' : 'none',
-                color: mode === id ? '#fff' : '#737373',
-                border: 'none', borderRight: id !== 'log' ? '1px solid #222222' : 'none',
-                cursor: 'pointer',
-              }}
-            >
-              {icon}{label}
-            </button>
-          ))}
-        </div>
-
-        {/* Base branch input (branch + commits mode) */}
-        {(mode === 'branch' || mode === 'commits') && (
-          editingBase ? (
-            <input
-              autoFocus
-              value={draftBase}
-              onChange={e => setDraftBase(e.target.value)}
-              onBlur={() => { setEditingBase(false); setBase(draftBase); }}
-              onKeyDown={e => {
-                if (e.key === 'Enter') { setEditingBase(false); setBase(draftBase); }
-                if (e.key === 'Escape') { setEditingBase(false); setDraftBase(base); }
-              }}
-              style={{ fontSize: 11, padding: '2px 7px', borderRadius: 5, border: '1px solid #0074d9', background: '#0c0c0c', color: '#d4d4d8', outline: 'none', width: 80, fontFamily: 'inherit' }}
-            />
-          ) : (
-            <button
-              onClick={() => { setDraftBase(base); setEditingBase(true); }}
-              title="Base branch for comparison (click to change)"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 8px', borderRadius: 5, border: '1px solid #222222', background: 'none', color: '#737373', cursor: 'pointer' }}
-            >
-              <span style={{ fontSize: 9, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>vs</span>
-              <GitBranch size={10} />{base}
-            </button>
-          )
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {/* Stats summary */}
-        {files !== null && !loading && mode !== 'commits' && (
-          <span style={{ fontSize: 11, color: '#525252' }}>
-            {files.length} file{files.length !== 1 ? 's' : ''}
-            {totalAdd > 0 && <span style={{ color: '#4ADE80', marginLeft: 6 }}>+{totalAdd}</span>}
-            {totalDel > 0 && <span style={{ color: '#F87171', marginLeft: 4 }}>-{totalDel}</span>}
-          </span>
-        )}
-
-        {loading && <RefreshCw size={11} color="#525252" className="animate-spin" />}
-      </div>
-
       {/* Body */}
       {mode === 'log' && sessionId ? (
         <FullLog sessionId={sessionId} />
       ) : (
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <>
+        {/* Toolbar — working-tree stats */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', flexShrink: 0 }}>
+          <div style={{ flex: 1 }} />
+          {files !== null && !loading && (
+            <span style={{ fontSize: 11, color: '#525252' }}>
+              {files.length} file{files.length !== 1 ? 's' : ''}
+              {totalAdd > 0 && <span style={{ color: '#4ADE80', marginLeft: 6 }}>+{totalAdd}</span>}
+              {totalDel > 0 && <span style={{ color: '#F87171', marginLeft: 4 }}>-{totalDel}</span>}
+            </span>
+          )}
+          {loading && <RefreshCw size={11} color="#525252" className="animate-spin" />}
+        </div>
 
-        {/* Commit list (commits mode) */}
-        {mode === 'commits' && sessionId && (
-          <CommitList sessionId={sessionId} base={base} selected={selectedCommit} onSelect={setSelectedCommit} />
-        )}
-
-        {/* File sidebar (all modes, when there are files) */}
-        {showSidebar && (
-          <div className="hidden md:flex flex-col" style={{ width: 240, flexShrink: 0, borderRight: '1px solid #222222' }}>
-            <FileSidebar
-              files={files}
-              focusedIndex={focusedFileIdx}
-              onJump={jumpToFile}
-              onSelect={setFocusedFileIdx}
-              onOpenFile={onOpenFile && gitRoot ? (relPath: string) => onOpenFile(`${gitRoot}/${relPath}`) : null}
-            />
-          </div>
-        )}
-
-        {/* Diff content */}
-        <div ref={diffRef} style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: mode === 'commits' && !selectedCommit ? 0 : 16 }}>
-          {mode === 'commits' && !selectedCommit && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#484f58', fontSize: 13 }}>
-              Select a commit
+        {/* File list (top) + diff content (bottom) — stacked vertically */}
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+          {showSidebar && (
+            <div className="hidden md:flex flex-col" style={{ height: 220, flexShrink: 0, borderBottom: '1px solid #222222' }}>
+              <FileSidebar
+                files={files}
+                focusedIndex={focusedFileIdx}
+                onJump={jumpToFile}
+                onSelect={setFocusedFileIdx}
+                onOpenFile={onOpenFile && gitRoot ? (relPath: string) => onOpenFile(`${gitRoot}/${relPath}`) : null}
+              />
             </div>
           )}
-          {loading && <div style={{ color: '#525252', fontSize: 13 }}>Loading…</div>}
-          {error   && <div style={{ color: '#F87171', fontSize: 13 }}>Error: {error}</div>}
-          {!loading && files !== null && files.length === 0 && (
-            <div style={{ color: '#4ADE80', fontSize: 13 }}>✓  No changes</div>
-          )}
-          {!loading && files?.map((file, i) => <FileBlock key={i} file={file} gitRoot={gitRoot} isFocused={i === focusedFileIdx} />)}
+
+          {/* Diff content */}
+          <div ref={diffRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
+            {loading && <div style={{ color: '#525252', fontSize: 13 }}>Loading…</div>}
+            {error   && <div style={{ color: '#F87171', fontSize: 13 }}>Error: {error}</div>}
+            {!loading && files !== null && files.length === 0 && (
+              <div style={{ color: '#4ADE80', fontSize: 13 }}>✓  No changes</div>
+            )}
+            {!loading && files?.map((file, i) => <FileBlock key={i} file={file} gitRoot={gitRoot} sessionId={sessionId} isFocused={i === focusedFileIdx} scrollRoot={diffRef} />)}
+          </div>
         </div>
-      </div>
+      </>
       )}
     </div>
   );

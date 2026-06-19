@@ -573,6 +573,15 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
   const cellCount = cellIds.length;
   const isFull = cellCount >= 4;
 
+  // Always-visible workspace name: the user-set title, else the last path
+  // segment of the first pane's cwd, else its session name.
+  const firstSession = useStore(s => s.sessionMap[workspace.cells[0] ?? '']);
+  const displayName =
+    workspace.title
+    || (firstSession?.path ? firstSession.path.replace(/\/+$/, '').split('/').pop() : undefined)
+    || firstSession?.name
+    || 'Workspace';
+
   // Compose three refs onto the same DOM node: sortable (for workspace
   // reorder), droppable (for pane merge), and elRef (local).
   const setRefs = (node: HTMLDivElement | null) => {
@@ -626,9 +635,20 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
             placeholder="Workspace title"
             className="workspace-title-input"
           />
-        ) : workspace.title ? (
-          <div className="workspace-title">{workspace.title}</div>
-        ) : null}
+        ) : (
+          <div className="workspace-title-row">
+            <span className="workspace-title" title={displayName}>{displayName}</span>
+            {onToggleFavourite && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleFavourite(); }}
+                className={`session-fav-btn${isFavourite ? ' is-fav' : ''}`}
+                title={isFavourite ? 'Remove from favourites' : 'Add to favourites'}
+              >
+                <Star size={12} style={isFavourite ? { fill: '#FACC15' } : undefined} />
+              </button>
+            )}
+          </div>
+        )}
         <PaneGrid
           gridId={workspace.id}
           layout={workspace.layout}

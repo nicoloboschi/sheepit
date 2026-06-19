@@ -14,11 +14,12 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import useStore, { activeTerminalSend, refreshAllTerminals } from './store';
+import useStore, { activeTerminalSend, activePaneCycleView } from './store';
 import { requestNotificationPermission } from './utils';
 import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
+import KnowledgeDialog from './components/KnowledgeDialog';
 import MobileKeybar from './components/MobileKeybar';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
@@ -34,7 +35,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, BrainCircuit, RefreshCw, ImagePlus,
+  Home, Zap, TerminalSquare, BrainCircuit, ImagePlus, BookOpen,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import ViperIcon from './components/ViperIcon';
@@ -44,7 +45,6 @@ import { tildefy } from './utils';
 
 export default function App() {
   const currentSessionId = useStore(s => s.currentSessionId);
-  const tabCycleRef = useRef<((dir: 'left' | 'right') => void) | null>(null);
   // True while a popstate handler is running — prevents connectSession from
   // pushing another history entry for the same navigation.
   const fromPopstateRef = useRef(false);
@@ -82,6 +82,15 @@ export default function App() {
     setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
   }, [syncHash]);
 
+  // Knowledge (notes) is an overlay dialog over the active workspace, not a
+  // context switch — toggled from the status bar.
+  const knowledgeOpen = useStore(s => s.knowledgeOpen);
+  const setKnowledgeOpen = useStore(s => s.setKnowledgeOpen);
+  // Sanitize stale state: older builds used '__notes__' as a pseudo-workspace.
+  useEffect(() => {
+    if (useStore.getState().currentSessionId === NOTES_SESSION_ID) useStore.getState().setCurrentSessionId(null);
+  }, []);
+
   // Sync hash whenever zen mode changes.
   const zenSessionId = useStore(s => s.zenSessionId);
   useEffect(() => { syncHash(); }, [zenSessionId, syncHash]);
@@ -92,7 +101,7 @@ export default function App() {
       const parsed = parseHash(window.location.hash);
       if (!parsed) return;
       const store = useStore.getState();
-      if (store.workspaces[parsed.workspaceId] || parsed.workspaceId === NOTES_SESSION_ID) {
+      if (store.workspaces[parsed.workspaceId]) {
         fromPopstateRef.current = true;
         store.setCurrentSessionId(parsed.workspaceId);
         localStorage.setItem('vipershell-last-session', parsed.workspaceId);
@@ -119,7 +128,7 @@ export default function App() {
           const stateAfterRender = useStore.getState();
           // Priority: URL hash > localStorage > first session
           const parsed = parseHash(window.location.hash);
-          const hashTarget = parsed && (stateAfterRender.workspaces[parsed.workspaceId] || parsed.workspaceId === NOTES_SESSION_ID) ? parsed : null;
+          const hashTarget = parsed && stateAfterRender.workspaces[parsed.workspaceId] ? parsed : null;
           const lastId = localStorage.getItem('vipershell-last-session');
           const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
           const sessions = msg.sessions as any[];
@@ -173,9 +182,6 @@ export default function App() {
       }
       case 'preview':
         store.updatePreview(msg.session_id as string, msg.preview as string, msg.busy as boolean | undefined);
-        break;
-      case 'last_command':
-        store.setLastCommand(msg.session_id as string, msg.command as string);
         break;
       case 'current_input':
         store.setCurrentInput(msg.session_id as string, msg.input as string);
@@ -244,29 +250,24 @@ export default function App() {
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        tabCycleRef.current?.(e.key === 'ArrowRight' ? 'right' : 'left');
+        activePaneCycleView.current(e.key === 'ArrowRight' ? 'right' : 'left');
         return;
       }
       // Zoom shortcuts — Cmd +, Cmd -, Cmd 0 (reset). Match both Plus/Equal and numpad.
+      // Font size is global, so these apply to every pane in every workspace.
       if (e.key === '+' || e.key === '=') {
-        const id = useStore.getState().currentSessionId;
-        if (!id) return;
         e.preventDefault();
-        useStore.getState().adjustSessionZoom(id, 1);
+        useStore.getState().adjustFontSize(1);
         return;
       }
       if (e.key === '-' || e.key === '_') {
-        const id = useStore.getState().currentSessionId;
-        if (!id) return;
         e.preventDefault();
-        useStore.getState().adjustSessionZoom(id, -1);
+        useStore.getState().adjustFontSize(-1);
         return;
       }
       if (e.key === '0') {
-        const id = useStore.getState().currentSessionId;
-        if (!id) return;
         e.preventDefault();
-        useStore.getState().resetSessionZoom(id);
+        useStore.getState().resetFontSize();
         return;
       }
     };
@@ -501,13 +502,13 @@ export default function App() {
           <PaneTerminal
             sessionId={currentSessionId}
             send={send}
-            onTabReady={(fn) => { tabCycleRef.current = fn; }}
           />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
         </div>
 
         <ConfirmDialog />
+        {knowledgeOpen && <KnowledgeDialog onClose={() => setKnowledgeOpen(false)} />}
       </div>
 
       {/* DragOverlay floats with the cursor for both workspace and pane
@@ -641,8 +642,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               </span>
             )}
             <span key={currentSessionId} className="session-name-slide flex-1 min-w-0 truncate" style={{ fontSize: 13 }}>
-              {currentSessionId === NOTES_SESSION_ID ? 'Notes'
-                : workspace?.title ? workspace.title
+              {workspace?.title ? workspace.title
                 : session ? session.name : 'No session'}
             </span>
             {workspace && workspace.cells.length > 1 && (
@@ -657,15 +657,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             )}
             <ChevronDown size={13} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
           </button>
-
-          <Button
-            variant="ghost" size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            title="Refresh terminal"
-            onClick={() => refreshAllTerminals()}
-          >
-            <RefreshCw size={14} />
-          </Button>
 
           <Button
             variant="ghost" size="icon"
@@ -756,6 +747,9 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
                 <span className="font-mono text-primary">v{version ?? '\u2026'}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => useStore.getState().setKnowledgeOpen(true)}>
+                <BookOpen size={14} /> Knowledge
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs
               </DropdownMenuItem>

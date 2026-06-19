@@ -1,28 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import CodeMirror from '@uiw/react-codemirror';
-import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-import { javascript } from '@codemirror/lang-javascript';
-import { python } from '@codemirror/lang-python';
-import { css } from '@codemirror/lang-css';
-import { html } from '@codemirror/lang-html';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
-import { rust } from '@codemirror/lang-rust';
-import { java } from '@codemirror/lang-java';
-import { cpp } from '@codemirror/lang-cpp';
-import { sql } from '@codemirror/lang-sql';
-import { yaml } from '@codemirror/lang-yaml';
-import { php } from '@codemirror/lang-php';
-import type { Extension } from '@codemirror/state';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
-  FileJson, Film, Music, Archive, File, RefreshCw, Save, Eye, Pencil, Copy, Check,
-  Search, X, Filter, Upload, FilePlus, FolderPlus, Trash2, ClipboardCopy,
+  FileJson, Film, Music, Archive, File, RefreshCw,
+  Search, X, Filter, Upload, FilePlus, FolderPlus,
 } from 'lucide-react';
+import FileView from './FileView';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -93,49 +75,6 @@ function fmtSize(b: number): string {
 
 const ext     = (name: string): string => (name ?? '').split('.').pop()?.toLowerCase() ?? '';
 
-const EXT_LANG: Record<string, string> = {
-  js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
-  css: 'css', scss: 'scss', less: 'less', html: 'html', xml: 'xml',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  sql: 'sql', graphql: 'graphql', gql: 'graphql',
-  dockerfile: 'docker', makefile: 'makefile',
-  swift: 'swift', kt: 'kotlin', scala: 'scala', r: 'r',
-  lua: 'lua', perl: 'perl', php: 'php', dart: 'dart',
-  vue: 'html', svelte: 'html', astro: 'html',
-  md: 'markdown', mdx: 'markdown', tex: 'latex',
-  ini: 'ini', env: 'bash', conf: 'ini', cfg: 'ini',
-  proto: 'protobuf', tf: 'hcl',
-};
-const getLang = (name: string) => EXT_LANG[ext(name)] ?? 'text';
-
-function getCmLang(name: string): Extension[] {
-  const lang = getLang(name);
-  switch (lang) {
-    case 'javascript': return [javascript()];
-    case 'jsx':        return [javascript({ jsx: true })];
-    case 'typescript': return [javascript({ typescript: true })];
-    case 'tsx':        return [javascript({ jsx: true, typescript: true })];
-    case 'python':     return [python()];
-    case 'css': case 'scss': case 'less': return [css()];
-    case 'html': case 'xml': return [html()];
-    case 'json':       return [json()];
-    case 'markdown':   return [markdown()];
-    case 'rust':       return [rust()];
-    case 'java':       return [java()];
-    case 'cpp': case 'c': return [cpp()];
-    case 'sql':        return [sql()];
-    case 'yaml':       return [yaml()];
-    case 'php':        return [php()];
-    default:           return [];
-  }
-}
-const isImage = (name: string): boolean => ['png','jpg','jpeg','gif','webp','svg','ico','bmp'].includes(ext(name));
-const isPdf   = (name: string): boolean => ext(name) === 'pdf';
-const isMd    = (name: string): boolean => ['md','markdown','mdx'].includes(ext(name));
-const isText  = (name: string): boolean => !isImage(name) && !isPdf(name);
 
 // ── File list entry ───────────────────────────────────────────────────────────
 
@@ -289,252 +228,33 @@ function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
 interface FileViewerProps {
   path: string | null;
   cwd?: string | null;
+  /** Session the file belongs to — needed to fetch its git diff. */
+  sessionId?: string | null;
+  /** Git status of this file (from the parent's status map). When the file has
+   *  tracked changes, the viewer offers a content/diff toggle. */
+  gitStatus?: string | null;
   highlightQuery?: string | null;
   highlightLine?: number | null;
   onDelete?: () => void;
+  /** Debounced auto-save while editing (used by Knowledge notes). */
+  autoSave?: boolean;
 }
 
-function FileViewer({ path, cwd: viewerCwd, highlightQuery, highlightLine, onDelete }: FileViewerProps) {
-  const [original,  setOriginal]  = useState('');
-  const [content,   setContent]   = useState('');
-  const [mode,      setMode]      = useState<'preview' | 'edit'>('preview');
-  const [loading,   setLoading]   = useState(false);
-  const [saving,    setSaving]    = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
-  const [saveMsg,   setSaveMsg]   = useState<string | null>(null);
-  const [copied,    setCopied]    = useState(false);
-  const [copiedContent, setCopiedContent] = useState(false);
-  const highlightRef = useRef<HTMLTableRowElement>(null);
-
-  const isDirty = content !== original;
-  const mdFile  = isMd(path ?? '');
-  const imgFile = isImage(path ?? '');
-  const pdfFile = isPdf(path ?? '');
-  const textFile = isText(path ?? '');
-
-  // Load file — keep previous content visible until new content arrives
-  useEffect(() => {
-    if (!path) return;
-    setError(null); setSaveMsg(null);
-    setMode(highlightQuery ? 'preview' : mdFile ? 'preview' : 'edit');
-
-    if (imgFile || pdfFile) { setContent(''); setOriginal(''); setLoading(false); return; }
-
-    setLoading(true);
-    fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
-      .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.text(); })
-      .then(text => { setContent(text); setOriginal(text); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
-  }, [path]); // eslint-disable-line
-
-  // Scroll to highlighted line after content renders
-  useEffect(() => {
-    if (highlightRef.current) {
-      setTimeout(() => highlightRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 50);
-    }
-  }, [content, highlightLine, highlightQuery]);
-
-  const save = async () => {
-    if (!path) return;
-    setSaving(true); setSaveMsg(null);
-    try {
-      const res = await fetch(`/api/fs/write?path=${encodeURIComponent(path)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
-      setOriginal(content);
-      setSaveMsg('Saved');
-      setTimeout(() => setSaveMsg(null), 2000);
-    } catch (e: any) {
-      setSaveMsg(`Error: ${e.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!path) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#484f58', fontSize: 13 }}>
-      Select a file to view
-    </div>
-  );
-
-  const fileName = path.split('/').pop() ?? '';
-
-  const copyPath = () => {
-    navigator.clipboard.writeText(path).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  const copyContent = () => {
-    navigator.clipboard.writeText(content).then(() => {
-      setCopiedContent(true);
-      setTimeout(() => setCopiedContent(false), 1500);
-    });
-  };
-
-  const deleteFile = async () => {
-    if (!path) return;
-    if (!window.confirm(`Delete ${path.split('/').pop()}?`)) return;
-    try {
-      const res = await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
-      onDelete?.();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
-
+export function FileViewer({ path, cwd: viewerCwd, sessionId, gitStatus, highlightQuery, highlightLine, onDelete, autoSave }: FileViewerProps) {
+  const displayPath = viewerCwd && path?.startsWith(viewerCwd + '/') ? path.slice(viewerCwd.length + 1) : (path ?? undefined);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {/* File toolbar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: '1px solid #222222', background: '#111111', flexShrink: 0 }}>
-        <span style={{ fontSize: 11, color: '#737373', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={path}>
-          {(viewerCwd && path?.startsWith(viewerCwd + '/') ? path.slice(viewerCwd.length + 1) : path)}{isDirty ? ' \u2022' : ''}
-        </span>
-        <button
-          onClick={copyPath}
-          title="Copy path"
-          style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: copied ? '#4ADE80' : '#525252', padding: 2, flexShrink: 0 }}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-        </button>
-
-        {textFile && (
-          <button
-            onClick={copyContent}
-            title="Copy file content"
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: copiedContent ? '#4ADE80' : '#525252', padding: 2, flexShrink: 0 }}
-          >
-            {copiedContent ? <Check size={12} /> : <ClipboardCopy size={12} />}
-          </button>
-        )}
-
-        <button
-          onClick={deleteFile}
-          title="Delete file"
-          style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: '#525252', padding: 2, flexShrink: 0, marginLeft: 2 }}
-          onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => { (e.currentTarget as HTMLButtonElement).style.color = '#F87171'; }}
-          onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => { (e.currentTarget as HTMLButtonElement).style.color = '#525252'; }}
-        >
-          <Trash2 size={12} />
-        </button>
-
-        {saveMsg && (
-          <span style={{ fontSize: 11, color: saveMsg.startsWith('Error') ? '#F87171' : '#4ADE80' }}>{saveMsg}</span>
-        )}
-
-        {/* Preview / Edit toggle — only for text files */}
-        {textFile && (
-          <div style={{ display: 'flex', border: '1px solid #222222', borderRadius: 5, overflow: 'hidden' }}>
-            {([
-              { id: 'preview' as const, icon: <Eye size={11} />,    label: mdFile ? 'Preview' : 'View' },
-              { id: 'edit' as const,    icon: <Pencil size={11} />, label: 'Edit' },
-            ]).map(({ id, icon, label }) => (
-              <button
-                key={id}
-                onClick={() => setMode(id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  fontSize: 11, padding: '2px 8px',
-                  background: mode === id ? 'var(--accent)' : 'none',
-                  color: mode === id ? 'var(--foreground)' : 'var(--muted-foreground)',
-                  border: 'none', borderRight: id === 'preview' ? '1px solid #222222' : 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {icon}{label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Save — only when editing text and dirty */}
-        {textFile && mode === 'edit' && (
-          <button
-            onClick={save}
-            disabled={saving || !isDirty}
-            title="Save (\u2318S)"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              fontSize: 11, padding: '3px 8px', borderRadius: 5,
-              background: isDirty ? '#1f6feb' : 'none',
-              border: isDirty ? 'none' : '1px solid #222222',
-              color: isDirty ? '#fff' : '#484f58',
-              cursor: isDirty && !saving ? 'pointer' : 'default',
-            }}
-          >
-            <Save size={11} />{saving ? 'Saving\u2026' : 'Save'}
-          </button>
-        )}
-      </div>
-
-      {/* Content area */}
-      {error   && <div style={{ padding: 16, color: '#F87171', fontSize: 12 }}>{error}</div>}
-
-      {!error && (
-        <>
-          {imgFile && (
-            <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
-              <img src={`/api/fs/raw?path=${encodeURIComponent(path)}`} alt={fileName} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid #222222' }} />
-            </div>
-          )}
-
-          {pdfFile && (
-            <iframe src={`/api/fs/raw?path=${encodeURIComponent(path)}`} title={fileName} style={{ flex: 1, border: 'none', minHeight: 0, width: '100%' }} />
-          )}
-
-          {textFile && mode === 'edit' && (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              <CodeMirror
-                value={content}
-                extensions={getCmLang(path)}
-                theme={vscodeDark}
-                onChange={setContent}
-                onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 's' && e.metaKey) { e.preventDefault(); if (isDirty) save(); } }}
-                basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true, tabSize: 2, searchKeymap: false }}
-                style={{ fontSize: 13, fontFamily: '"JetBrains Mono",monospace', minHeight: '100%' }}
-              />
-            </div>
-          )}
-
-          {textFile && mode === 'preview' && !mdFile && (
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              <SyntaxHighlighter
-                language={getLang(path)}
-                style={vscDarkPlus}
-                showLineNumbers
-                wrapLongLines
-                lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: '#484f58', userSelect: 'none' }}
-                customStyle={{ margin: 0, padding: '8px 0', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
-                lineProps={(lineNum) => {
-                  const isTarget = highlightLine != null && lineNum === highlightLine;
-                  return {
-                    ref: isTarget ? highlightRef : undefined,
-                    style: isTarget ? { background: 'rgba(210,153,34,0.15)', display: 'block' } : { display: 'block' },
-                  };
-                }}
-              >
-                {content}
-              </SyntaxHighlighter>
-            </div>
-          )}
-
-          {textFile && mode === 'preview' && mdFile && (
-            <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
-              <div className="md-preview">
-                <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <FileView
+      path={path}
+      sessionId={sessionId}
+      displayPath={displayPath}
+      gitStatus={gitStatus}
+      highlightQuery={highlightQuery}
+      highlightLine={highlightLine}
+      onDelete={onDelete}
+      editable
+      autoSave={autoSave}
+      defaultMode={autoSave ? 'edit' : 'content'}
+    />
   );
 }
 
@@ -876,8 +596,10 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const [cwd,          setCwd]          = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loading,      setLoading]      = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem('vipershell:files-sidebar-w') ?? '') || 280; } catch { return 280; }
+  // Height of the file-list panel, which sits ABOVE the file viewer (the list
+  // and viewer are stacked vertically). Drag the divider to resize.
+  const [listHeight, setListHeight] = useState<number>(() => {
+    try { return parseInt(localStorage.getItem('vipershell:files-list-h') ?? '') || 240; } catch { return 240; }
   });
   // Mobile: 'list' | 'preview'
   const [mobileView,   setMobileView]   = useState<'list' | 'preview'>('list');
@@ -974,24 +696,28 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const onDragStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     draggingRef.current = true;
-    const startX = e.clientX;
-    const startW = sidebarWidth;
+    const startY = e.clientY;
+    const startH = listHeight;
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
-      const w = Math.max(120, Math.min(600, startW + ev.clientX - startX));
-      setSidebarWidth(w);
+      const h = Math.max(100, Math.min(600, startH + ev.clientY - startY));
+      setListHeight(h);
     };
     const onUp = () => {
       draggingRef.current = false;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setSidebarWidth(w => { try { localStorage.setItem('vipershell:files-sidebar-w', String(w)); } catch {} return w; });
+      setListHeight(h => { try { localStorage.setItem('vipershell:files-list-h', String(h)); } catch {} return h; });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [sidebarWidth]);
+  }, [listHeight]);
 
-  useEffect(() => { if (!sessionId) return; browse(null, { autoReadme: true }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
+  // Reset cwd (the per-session project root) so the next browse re-anchors to
+  // THIS pane's root. `browse` pins cwd via `prev ?? data.cwd`, so without this
+  // reset the root stays stuck on whichever pane's repo was opened first —
+  // making the breadcrumb / "go up" / relative paths point at another repo.
+  useEffect(() => { if (!sessionId) return; setCwd(null); browse(null, { autoReadme: true }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
 
   // Load pinned tabs whenever the session changes (per-session storage key).
   useEffect(() => {
@@ -1405,7 +1131,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     <>
       {toolbar(true)}
       {tabsBar}
-      <FileViewer path={selectedFile} cwd={cwd} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
+      <FileViewer path={selectedFile} cwd={cwd} sessionId={sessionId} gitStatus={selectedFile ? gitStatus?.[selectedFile] ?? null : null} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
     </>
   );
 
@@ -1451,12 +1177,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       {/* Desktop: split layout */}
       <div className="hidden md:flex flex-col flex-1 min-h-0">
         {toolbar(false)}
-        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
           <div
             ref={fileListRef}
             tabIndex={0}
             onKeyDown={searchMode ? undefined : handleFileListKeyDown}
-            style={{ width: sidebarWidth, flexShrink: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
+            style={{ height: listHeight, flexShrink: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
           >
             {searchMode ? (
               <SearchPanel
@@ -1478,21 +1204,21 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
                 </div>
               </>
             )}
-            {/* Resize handle */}
-            <div
-              onMouseDown={onDragStart}
-              style={{
-                position: 'absolute', top: 0, right: 0, width: 4, height: '100%',
-                cursor: 'col-resize', zIndex: 10,
-                background: 'transparent',
-              }}
-              onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#0074d9'}
-              onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!draggingRef.current) e.currentTarget.style.background = 'transparent'; }}
-            />
           </div>
+          {/* Resize divider — drag to grow/shrink the file list above. */}
+          <div
+            onMouseDown={onDragStart}
+            style={{
+              flexShrink: 0, height: 4, width: '100%',
+              cursor: 'row-resize', zIndex: 10,
+              background: '#222222',
+            }}
+            onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#0074d9'}
+            onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!draggingRef.current) e.currentTarget.style.background = '#222222'; }}
+          />
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             {tabsBar}
-            <FileViewer path={selectedFile} cwd={cwd} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
+            <FileViewer path={selectedFile} cwd={cwd} sessionId={sessionId} gitStatus={selectedFile ? gitStatus?.[selectedFile] ?? null : null} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
           </div>
         </div>
       </div>

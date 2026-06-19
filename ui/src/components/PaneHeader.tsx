@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, GripVertical } from 'lucide-react';
+import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, GripVertical, FolderOpen, Columns2 } from 'lucide-react';
 import { useDraggable } from '@dnd-kit/core';
 import useStore from '../store';
 import * as sharedWs from '../sharedWs';
@@ -27,6 +27,10 @@ interface PaneHeaderProps {
    *  the UI no longer calls it out as a "primary" — all panes read as equals. */
   isGridRoot: boolean;
   onClose: () => void;
+  /** Per-pane view switch. When provided, the header shows a terminal/git/files
+   *  toggle that controls what this pane renders below its status bar. */
+  view?: 'terminal' | 'split' | 'working' | 'files' | 'log';
+  onViewChange?: (view: 'terminal' | 'split' | 'working' | 'files' | 'log') => void;
 }
 
 /** Shared style for small icon buttons in the header row. */
@@ -38,10 +42,9 @@ const iconBtnStyle: React.CSSProperties = {
   transition: 'color 0.15s',
 };
 
-export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive, isGridRoot, onClose }: PaneHeaderProps) {
+export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive, isGridRoot, onClose, view, onViewChange }: PaneHeaderProps) {
   const session     = useStore(s => s.sessionMap[sessionId]);
   const showConfirm = useStore(s => s.showConfirm);
-  const lastCommand = useStore(s => s.sessionLastCommand[sessionId] ?? null);
   const isZen       = useStore(s => s.zenSessionId === sessionId);
   const toggleZen   = useStore(s => s.toggleZen);
   const [editing, setEditing]     = useState(false);
@@ -63,6 +66,9 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
 
   async function handleClose(e: React.MouseEvent) {
     e.stopPropagation();
+    // In zen (fullscreen) mode the X exits zen rather than closing the
+    // session — matches the "fullscreen → close = leave fullscreen" expectation.
+    if (isZen) { toggleZen(sessionId); return; }
     const name = session?.name ?? 'pane';
     const msg = isGridRoot
       ? `Close "${name}" and all its panes?`
@@ -150,7 +156,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             : <SquareTerminal size={15} />}
         </span>
 
-        {/* Session name popover — rename + last command */}
+        {/* Session name popover — rename */}
         <Popover>
           <PopoverTrigger asChild>
             <button
@@ -212,21 +218,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
                   </button>
                 )}
               </div>
-              {lastCommand && (
-                <div style={{ padding: '8px 12px' }}>
-                  <div style={{ fontSize: 9, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4, opacity: 0.6 }}>
-                    Last command
-                  </div>
-                  <div style={{
-                    fontSize: 11, color: 'var(--foreground)',
-                    fontFamily: '"JetBrains Mono",monospace',
-                    opacity: 0.8, wordBreak: 'break-all',
-                    maxHeight: 80, overflow: 'auto',
-                  }}>
-                    {lastCommand}
-                  </div>
-                </div>
-              )}
             </div>
           </PopoverContent>
         </Popover>
@@ -248,6 +239,57 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
 
         <div style={{ flex: 1 }} />
 
+        {/* Per-pane view switch — terminal / git / files, scoped to this pane. */}
+        {onViewChange && (
+          // Top-level switch: Terminal vs. the unified Git view. The Git view's
+          // own Working / Files / Git Log sub-switcher lives inside it.
+          // Filled brand-gradient pill so this primary navigation control reads
+          // as clearly distinct from the bare zen/close action icons to its right.
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', flexShrink: 0,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {([
+              { id: 'terminal', icon: <SquareTerminal size={12} />, title: 'Terminal', active: view === 'terminal' },
+              { id: 'split',    icon: <Columns2 size={12} />,       title: 'Terminal + Files', active: view === 'split' },
+              { id: 'git',      icon: <FolderOpen size={12} />,     title: 'Files / Git', active: view !== 'terminal' && view !== 'split' },
+            ] as const).map(({ id, icon, title, active }) => (
+              <button
+                key={id}
+                title={title}
+                // Terminal/Split map directly; the Git button opens the working
+                // tree, or keeps the current git sub-view if one is showing.
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewChange(
+                    id === 'terminal' ? 'terminal'
+                      : id === 'split' ? 'split'
+                      : (view && view !== 'terminal' && view !== 'split' ? view : 'working'),
+                  );
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 26, height: 20,
+                  background: active ? 'var(--primary-gradient)' : 'none',
+                  border: 'none',
+                  borderRight: id !== 'git' ? '1px solid var(--border)' : 'none',
+                  cursor: 'pointer',
+                  color: active ? '#fff' : 'var(--muted-foreground)',
+                }}
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Divider separating the view-switch pill from the action icons. */}
+        <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0, margin: '0 1px' }} />
+
         {/* Zen toggle — enters/exits distraction-free fullscreen */}
         <button
           onClick={(e) => { e.stopPropagation(); toggleZen(sessionId); }}
@@ -264,7 +306,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             whole grid; on other cells, removes just that pane. */}
         <button
           onClick={handleClose}
-          title="Close pane"
+          title={isZen ? 'Exit zen mode' : 'Close pane'}
           className="hover:bg-white/5"
           style={iconBtnStyle}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--destructive)'; }}

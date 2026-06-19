@@ -399,6 +399,19 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
         .then(r => r.stdout)
         .catch((e: any) => e.stdout ?? '');
 
+      // Single-file diff (used by the file viewer's content/diff toggle): the
+      // working-tree changes for one path, falling back to a vs-empty diff for
+      // a new/untracked file so it still shows as all-additions.
+      const { path: filePath } = req.query as Record<string, string>;
+      if (filePath) {
+        let d = await run(`git diff HEAD -- ${sh(filePath)}`);
+        if (!d) {
+          const mimeEnc = await run(`file --mime-encoding ${sh(filePath)}`);
+          if (!mimeEnc.includes('binary')) d = await run(`git diff --no-index /dev/null ${sh(filePath)}`);
+        }
+        return res.type('text/plain; charset=utf-8').send(d);
+      }
+
       let diff = '';
       if (mode === 'commit' && commit) {
         diff = await run(`git diff ${sh(commit)}^..${sh(commit)}`);
@@ -416,16 +429,27 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
         diff = await run('git diff HEAD');
       }
 
-      // For non-commit modes, append untracked files as synthetic diffs
+      // For non-commit modes, append untracked files as synthetic diffs.
+      //
+      // Hot path for the working-tree view: this used to spawn TWO processes
+      // per untracked file (`file --mime-encoding` + `git diff --no-index`)
+      // sequentially, which cost ~1s+ on repos with dozens of untracked files.
+      // Now we let `git diff --no-index` flag binaries itself ("Binary files
+      // … differ") — so one spawn per file — and run them with bounded
+      // concurrency instead of serially.
       if (mode !== 'commit') {
         const untrackedOut = await run("git ls-files --others --exclude-standard");
         const untrackedFiles = untrackedOut.trim().split('\n').filter(Boolean);
-        for (const file of untrackedFiles) {
-          // Skip binary files
-          const mimeEnc = await run(`file --mime-encoding ${sh(file)}`);
-          if (mimeEnc.includes('binary')) continue;
-          const content = await run(`git diff --no-index /dev/null ${sh(file)}`);
-          if (content) diff += '\n' + content;
+        const CONCURRENCY = 16;
+        for (let i = 0; i < untrackedFiles.length; i += CONCURRENCY) {
+          const batch = untrackedFiles.slice(i, i + CONCURRENCY);
+          const parts = await Promise.all(
+            batch.map((file: string) => run(`git diff --no-index /dev/null ${sh(file)}`)),
+          );
+          for (const content of parts) {
+            // git prints "Binary files …" instead of a textual diff for binaries.
+            if (content && !/^Binary files /m.test(content)) diff += '\n' + content;
+          }
         }
       }
 
@@ -576,7 +600,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
         writeFileSync(nodePath.join(NOTES_DIR, 'notes.md'), '', 'utf-8');
         files.push('notes.md');
       }
-      res.json({ sheets: files.map(f => f.replace(/\.md$/, '')) });
+      res.json({ sheets: files.map(f => f.replace(/\.md$/, '')), dir: NOTES_DIR.replace(os.homedir(), '~') });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -830,6 +854,23 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
+  });
+
+  // Open a file with the host OS default application (the machine running the
+  // server, not the browser). vipershell is "your machine, anywhere", so this
+  // surfaces a file in the host's native GUI app.
+  router.post('/fs/open', (req, res) => {
+    const filePath = expandHome(req.query.path as string | undefined ?? '');
+    if (!filePath) return res.status(400).json({ error: 'Missing path' });
+    if (!existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
+    const platform = process.platform;
+    const [cmd, args] = platform === 'darwin' ? ['open', [filePath]]
+      : platform === 'win32'                  ? ['cmd', ['/c', 'start', '', filePath]]
+      :                                         ['xdg-open', [filePath]];
+    const child = spawn(cmd as string, args as string[], { detached: true, stdio: 'ignore' });
+    let settled = false;
+    child.on('error', (err) => { if (!settled) { settled = true; res.status(500).json({ error: String(err) }); } });
+    child.on('spawn', () => { if (!settled) { settled = true; child.unref(); res.json({ ok: true }); } });
   });
 
   router.get('/fs/raw', (req, res) => {

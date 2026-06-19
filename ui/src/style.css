@@ -172,6 +172,14 @@
   max-width: calc(100vw - 64px) !important;
   height: calc(100vh - 64px) !important;
   max-height: calc(100vh - 64px) !important;
+  /* Crisper framing: rounded corners that clip the header/sidebar, a refined
+     border with a faint brand ring, and a deep ambient shadow. */
+  border: 1px solid var(--border) !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 116, 217, 0.12) !important;
 }
 
 /* ── Desktop session list ───────────────────────────────────────────────────── */
@@ -191,6 +199,41 @@
   text-transform: uppercase; letter-spacing: 0.04em;
   user-select: none;
 }
+
+/* Workspace list filter toggle (All / Active / Favourites) — lives in the
+   sidebar header next to the collapse button. */
+.ws-filter-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ws-filter-toggle button {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 3px 6px;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted-foreground);
+}
+.ws-filter-toggle button:hover:not(.active) { background: rgba(255,255,255,0.05); color: var(--foreground); }
+.ws-filter-toggle button + button { border-left: 1px solid var(--border); }
+.ws-filter-toggle button.active {
+  background: var(--primary-gradient);
+  color: #fff;
+}
+
+/* Quick-favourite star on each workspace row — revealed on hover, pinned when
+   favourited. */
+.session-fav-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 4px;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted-foreground); flex-shrink: 0; align-self: flex-start;
+  opacity: 0; transition: opacity 0.15s, color 0.15s;
+}
+.session-item:hover .session-fav-btn { opacity: 0.7; }
+.session-fav-btn:hover { opacity: 1 !important; color: var(--warning); }
+.session-fav-btn.is-fav { opacity: 1; color: var(--warning); }
 
 .session-group-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -235,42 +278,32 @@
   border-color: rgba(255, 255, 255, 0.12);
 }
 .session-item.active {
-  /* Stronger, brand-tinted fill so the selected row is unmistakable and
-     clearly distinct from the amber "unseen" notification state. */
-  background: rgba(0, 116, 217, 0.16);
-  border-color: rgba(0, 116, 217, 0.5);
-  box-shadow: 0 0 0 1px rgba(0, 116, 217, 0.35), 0 0 14px rgba(0, 116, 217, 0.18);
+  /* Selected row: a restrained brand tint + a clean solid accent bar. No glow. */
+  background: rgba(0, 116, 217, 0.10);
+  border-color: rgba(0, 116, 217, 0.32);
+  box-shadow: none;
 }
 .session-item.active::before {
   content: '';
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 3px;
-  background: var(--primary-gradient);
+  background: var(--primary);
   border-top-left-radius: 6px;
   border-bottom-left-radius: 6px;
 }
 
-/* ── Unseen notification highlight ──────────────────────────────────────────
-   Muted amber so it reads as distinct from the blue "selected" state without
-   being visually noisy. No glow — just a subtle bar + faint tint. */
-@keyframes session-unseen-bar-pulse {
-  0%, 100% { opacity: 0.9; }
-  50%      { opacity: 0.55; }
-}
-.session-item.unseen:not(.active) {
-  background: rgba(250, 204, 21, 0.06);
-  border-color: rgba(250, 204, 21, 0.35);
-}
+/* ── Unseen notification ────────────────────────────────────────────────────
+   A solid amber accent bar on the left edge — mirrors the active blue bar so the
+   row is scannable, but muted and static (no pulse, no full-row tint). */
 .session-item.unseen:not(.active)::before {
   content: '';
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 3px;
-  background: rgba(250, 204, 21, 0.75);
+  background: #d29922;
   border-top-left-radius: 6px;
   border-bottom-left-radius: 6px;
-  animation: session-unseen-bar-pulse 2s ease-in-out infinite;
 }
 
 .session-icon {
@@ -278,7 +311,7 @@
   color: var(--muted-foreground); opacity: 0.4; transition: opacity 0.3s;
 }
 .session-item.active .session-icon { opacity: 0.7; }
-.session-item.unseen .session-icon { opacity: 1; color: var(--warning); }
+.session-item.unseen .session-icon { opacity: 1; }
 
 .session-name-unseen { color: var(--primary) !important; opacity: 1 !important; }
 
@@ -396,17 +429,12 @@
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .pane-card-active {
-  background: rgba(0, 116, 217, 0.14);
-  border-color: rgba(0, 116, 217, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(0, 116, 217, 0.25);
+  background: rgba(0, 116, 217, 0.10);
+  border-color: rgba(0, 116, 217, 0.40);
+  box-shadow: none;
 }
-@keyframes pane-card-unseen-pulse {
-  0%, 100% { border-color: rgba(250, 204, 21, 0.7); }
-  50%      { border-color: rgba(250, 204, 21, 0.35); }
-}
-.pane-card-unseen {
-  animation: pane-card-unseen-pulse 2s ease-in-out infinite;
-}
+/* Unseen output is marked by the workspace row's amber left bar (see
+   .session-item.unseen); the per-pane badge keeps a subtle amber border. */
 
 /* Corner badge — session kind icon perched on the top-left corner of the
    card, half in / half out. The overhang is what makes it feel like a
@@ -441,8 +469,7 @@
     0 0 0 1px rgba(0, 116, 217, 0.25);
 }
 .pane-card-unseen .pane-card-badge {
-  color: rgba(250, 204, 21, 0.85);
-  border-color: rgba(250, 204, 21, 0.4);
+  border-color: rgba(210, 153, 34, 0.45);
 }
 
 /* Row 1: name (icon is now the corner badge) */
@@ -814,11 +841,19 @@
 }
 .session-item.active .session-name-inline { opacity: 1; color: var(--foreground); }
 
+/* Name row: always-visible workspace name + an inline favourite star that
+   sits right after the name and doesn't take width from the pane boxes below. */
+.workspace-title-row {
+  display: flex; align-items: center; gap: 2px;
+  min-width: 0; margin-bottom: 3px;
+}
 .workspace-title {
   font-size: 11px; font-weight: 500; color: var(--muted-foreground);
-  padding: 0 2px; margin-bottom: 3px;
+  padding: 0 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex-shrink: 1; min-width: 0;
 }
+.workspace-title-row .session-fav-btn { width: 16px; height: 16px; }
 .session-item.active .workspace-title { color: var(--foreground); }
 
 .workspace-title-input {

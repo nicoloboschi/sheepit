@@ -25,7 +25,6 @@ interface TerminalGridProps {
   /** Create a new backend session and return its id, or null on failure.
    *  Used when the user picks a larger layout than the current cell count. */
   onCreateSplit: () => Promise<string | null>;
-  onFileLinkClick?: (path: string) => void;
   onLayoutReady?: (info: { layout: Layout; changeLayout: (l: Layout) => void }) => void;
 }
 
@@ -61,7 +60,7 @@ const PANEL_STYLE: React.CSSProperties = {
   minWidth: 0,
 };
 
-export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, onFileLinkClick, onLayoutReady }: TerminalGridProps) {
+export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, onLayoutReady }: TerminalGridProps) {
   // The store is the source of truth for workspace shape. We subscribe with a
   // shallow selector so changes elsewhere (drag-drop, pane close, etc.) flow
   // back into this grid automatically.
@@ -178,7 +177,6 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         isActive={activeCell === index}
         onActivate={() => setActiveCell(index)}
         onClose={() => closePane(index)}
-        onFileLinkClick={onFileLinkClick}
       />
     );
   };

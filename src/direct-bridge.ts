@@ -454,9 +454,7 @@ export class DirectBridge {
     const stripped = stripEscapeSequences(data);
     for (const ch of stripped) {
       if (ch === '\r' || ch === '\n') {
-        const cmd = (this.inputBuffers.get(sessionId) ?? '').trim();
         this.inputBuffers.set(sessionId, '');
-        if (cmd) this.pubsub.publish('__sessions__', { type: 'last_command', session_id: sessionId, command: cmd });
         this.pubsub.publish('__sessions__', { type: 'current_input', session_id: sessionId, input: '' });
       } else if (ch === '\x7f' || ch === '\b') {
         const cur = this.inputBuffers.get(sessionId) ?? '';

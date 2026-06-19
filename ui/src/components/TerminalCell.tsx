@@ -1,12 +1,53 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, FolderOpen, ScrollText } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
-import useStore, { activeTerminalSend, activeTerminalRefresh, activeTerminalScrollToLine, addCommandEntry, registerTerminalRefresh, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
+import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
+import GitDiffPane from './GitDiffPane';
+import FilesPane from './FilesPane';
+
+/** Per-pane view — each pane independently shows its terminal, git diff, or
+ *  file browser, all scoped to that pane's own session/cwd. Persisted so a
+ *  pane reopens on the view you left it on. */
+// Unified per-pane view: terminal, the working-tree diff, the file browser, or
+// the git log. ('working' replaces the old 'diff'; 'branch'/'commits' are gone.)
+// 'split' = terminal on the left + the file browser on the right (resizable).
+export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log';
+const PANE_VIEW_KEY = 'vipershell:pane-views';
+function readPaneView(sid: string): PaneView | undefined {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PANE_VIEW_KEY) || '{}')[sid];
+    if (raw === 'diff') return 'working'; // migrate legacy persisted value
+    return (['terminal', 'split', 'working', 'files', 'log'] as const).includes(raw) ? raw : undefined;
+  } catch { return undefined; }
+}
+function savePaneView(sid: string, view: PaneView): void {
+  try {
+    const map = JSON.parse(localStorage.getItem(PANE_VIEW_KEY) || '{}');
+    map[sid] = view;
+    localStorage.setItem(PANE_VIEW_KEY, JSON.stringify(map));
+  } catch { /* quota */ }
+}
+
+// Split-mode divider position (terminal width %), persisted per session.
+const SPLIT_PCT_KEY = 'vipershell:pane-split-pct';
+function readSplitPct(sid: string): number | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(SPLIT_PCT_KEY) || '{}')[sid];
+    return typeof v === 'number' ? v : undefined;
+  } catch { return undefined; }
+}
+function saveSplitPct(sid: string, pct: number): void {
+  try {
+    const map = JSON.parse(localStorage.getItem(SPLIT_PCT_KEY) || '{}');
+    map[sid] = pct;
+    localStorage.setItem(SPLIT_PCT_KEY, JSON.stringify(map));
+  } catch { /* quota */ }
+}
 import { useDndEnabled } from '../dndEnabled';
 
 // No output filtering needed — direct PTY output is passed through as-is.
@@ -40,13 +81,12 @@ interface TerminalCellProps {
   /** Remove this pane from its workspace. If it was the last pane, the
    *  workspace dissolves (Android-folder style). */
   onClose: () => void;
-  onFileLinkClick?: (path: string) => void;
 }
 
-export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, onActivate, onClose, onFileLinkClick }: TerminalCellProps) {
+export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, onActivate, onClose }: TerminalCellProps) {
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
-  const zoom = useStore(s => s.workspaceZooms[gridId]);
+  const zoom = useStore(s => s.fontSize);
   const isMultiPane = useStore(s => {
     const ws = s.workspaces[gridId];
     return !!ws && ws.layout !== 'single' && ws.cells.length > 1;
@@ -57,6 +97,56 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const fitAddonRef = useRef<FitAddon | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererReadyRef = useRef(false);
+
+  // Per-pane view (terminal / git / files) + a ref the Files view fills in so
+  // the git view (and terminal file links) can open a file in this same pane.
+  // New panes default to the split view (terminal + file browser); panes with a
+  // saved preference reopen on whatever view they were left on.
+  const [view, setView] = useState<PaneView>(() => readPaneView(sessionId) ?? 'split');
+  const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
+  const openFileRef = useRef<((path: string) => void) | null>(null);
+  // Split mode: terminal occupies this % of the pane width, files takes the rest.
+  const [termPct, setTermPct] = useState(() => readSplitPct(sessionId) ?? 60);
+  const paneBodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { savePaneView(sessionId, view); }, [view, sessionId]);
+
+  // While this pane is active, the global Cmd+Arrow shortcut cycles ITS view.
+  useEffect(() => {
+    if (!isActive) return;
+    activePaneCycleView.current = (dir: 'left' | 'right') => {
+      setView(prev => {
+        const order: PaneView[] = ['terminal', 'split', 'working', 'files', 'log'];
+        const i = order.indexOf(prev);
+        return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
+      });
+    };
+  }, [isActive]);
+
+  // Resolve a path clicked in the terminal (cmd/ctrl+click) against this pane's
+  // cwd, then open it in this pane's own Files view.
+  const handleFileLink = useCallback(async (rawPath: string) => {
+    let cleaned = rawPath;
+    let line: number | null = null;
+    const colonMatch = cleaned.match(/^(.+?)(?::(\d+)(?::\d+)?)\s*$/);
+    const parenMatch = !colonMatch && cleaned.match(/^(.+?)\((\d+)(?:[,:]\d+)?\)\s*$/);
+    if (colonMatch) { cleaned = colonMatch[1]!; line = parseInt(colonMatch[2]!, 10); }
+    else if (parenMatch) { cleaned = parenMatch[1]!; line = parseInt(parenMatch[2]!, 10); }
+    cleaned = cleaned.replace(/[.,;)'">\]]+$/, '');
+    let absPath = cleaned;
+    if (!cleaned.startsWith('/') && !cleaned.startsWith('~/')) {
+      try {
+        const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/browse`);
+        const data = await res.json();
+        const cwd = (data.cwd as string) ?? '';
+        absPath = cwd ? `${cwd}/${cleaned.replace(/^\.\//, '')}` : cleaned;
+      } catch { /* use cleaned as-is */ }
+    }
+    setFilesHighlightLine(line);
+    setView('files');
+    setTimeout(() => openFileRef.current?.(absPath), 80);
+  }, [sessionId]);
+  const handleFileLinkRef = useRef(handleFileLink);
+  handleFileLinkRef.current = handleFileLink;
 
   /** Safe fit — bails out if container isn't visible or terminal isn't mounted.
    *  Swallows all errors since xterm's async refresh can crash on "dimensions". */
@@ -101,7 +191,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     const isMobile = window.matchMedia('(max-width: 767px)').matches;
     // Read the current zoom synchronously at mount so the terminal opens at the right size.
     const initialFontSize =
-      useStore.getState().workspaceZooms[gridId] ?? DEFAULT_FONT_SIZE();
+      useStore.getState().fontSize;
     const term = new Terminal({
       cursorBlink: !isMobile,
       fontFamily: '"JetBrains Mono", monospace',
@@ -215,33 +305,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       openObserver.observe(containerRef.current);
     }
 
-    // Input handler — also tracks typed commands for the history TOC
-    let inputBuf = '';
-    function trackCommand(data: string) {
-      for (const ch of data) {
-        if (ch === '\r' || ch === '\n') {
-          if (inputBuf.trim()) {
-            const buf = term.buffer.active;
-            addCommandEntry(sessionId, inputBuf, buf.baseY + buf.cursorY);
-          }
-          inputBuf = '';
-        } else if (ch === '\x7f' || ch === '\b') {
-          inputBuf = inputBuf.slice(0, -1);
-        } else if (ch === '\x15') {        // Ctrl-U: clear line
-          inputBuf = '';
-        } else if (ch === '\x17') {        // Ctrl-W: delete word
-          inputBuf = inputBuf.replace(/\S+\s*$/, '');
-        } else if (ch >= ' ' && ch <= '~') {
-          inputBuf += ch;
-        } else if (ch === '\t') {
-          inputBuf += ' ';                  // approximate tab-completion
-        }
-      }
-    }
     function sendInput(data: string) {
       if (/^\x1b\[[\?>][\d;]*c$/.test(data)) return;
       sendRef.current({ type: 'input', data });
-      trackCommand(data);
     }
 
     // On mobile, virtual keyboards (both Android IME and iOS predictive text)
@@ -349,10 +415,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // File link provider
+  // File link provider — cmd/ctrl+click opens the path in this pane's Files view.
   useEffect(() => {
     const term = termRef.current;
-    if (!term || !onFileLinkClick) return;
+    if (!term) return;
     const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+)/g;
     const provider = term.registerLinkProvider({
       provideLinks(y: number, callback: (links: any[]) => void): void {
@@ -369,14 +435,14 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             range: { start: { x: match.index + 1, y }, end: { x: match.index + raw.length, y } },
             text: raw,
             decorations: { underline: true, pointerCursor: true },
-            activate(event: MouseEvent, linkText: string) { if (event?.metaKey || event?.ctrlKey) onFileLinkClick(linkText); },
+            activate(event: MouseEvent, linkText: string) { if (event?.metaKey || event?.ctrlKey) handleFileLinkRef.current(linkText); },
           });
         }
         callback(links);
       },
     });
     return () => provider.dispose();
-  }, [onFileLinkClick]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flush buffered output to xterm — batched per RAF on desktop, per 150ms timer on mobile
   function flushOutput() {
@@ -437,12 +503,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       sharedWs.send({ ...msg, session_id: sessionId });
     };
 
-    const unregRefresh = registerTerminalRefresh(sessionId, () => {
-      const t = termRef.current;
-      sharedWs.send({ type: 'subscribe', session_id: sessionId, ...(t ? { cols: t.cols, rows: t.rows } : {}) });
-      pendingResetRef.current = true;
-      outputBufRef.current = '';
-    });
     const unregSend = registerTerminalSend(sessionId, (msg) => sendRef.current(msg));
 
     // Handle session-specific messages (output, connected)
@@ -484,7 +544,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
 
     return () => {
       mountedRef.current = false;
-      unregRefresh();
       unregSend();
       unsubSession();
       unsubGlobal();
@@ -557,14 +616,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       t?.scrollToBottom();
       activeTerminalSend.current = (msg) => sendRef.current(msg);
       activeTerminalRefresh.current = () => sendRef.current({ type: 'connect', session_id: sessionId });
-      activeTerminalScrollToLine.current = (line: number) => {
-        const term = termRef.current;
-        if (!term) return;
-        const target = Math.max(0, line - Math.floor(term.rows / 4));
-        const current = term.buffer.active.viewportY;
-        const delta = target - current;
-        if (delta !== 0) term.scrollLines(delta);
-      };
     }
   }, [isActive]);
 
@@ -580,6 +631,45 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     window.addEventListener('vipershell:terminal-tab-active', handler);
     return () => window.removeEventListener('vipershell:terminal-tab-active', handler);
   }, [isActive]);
+
+  // Switching this pane back to the terminal view un-hides the xterm container,
+  // which had zero size while git/files was showing — refit + refocus so cols/
+  // rows match the pane and the PTY is told the new size.
+  useEffect(() => {
+    if (view !== 'terminal' && view !== 'split') return;
+    const id = setTimeout(() => {
+      safeFit();
+      if (isActive) termRef.current?.focus();
+      const term = termRef.current;
+      if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
+    }, 60);
+    return () => clearTimeout(id);
+  }, [view, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drag the divider between the terminal and the files panel (split mode).
+  const startSplitDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const body = paneBodyRef.current;
+    if (!body) return;
+    const onMove = (ev: MouseEvent) => {
+      const rect = body.getBoundingClientRect();
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      setTermPct(Math.min(80, Math.max(20, pct)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      safeFit();
+      const t = termRef.current;
+      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      // Persist once on release (not during the drag) to avoid localStorage churn.
+      setTermPct(pct => { saveSplitPct(sessionId, pct); return pct; });
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [sessionId]);
 
   // Refit when entering/exiting zen mode — the container dimensions change
   // dramatically so we need to recalculate cols/rows and tell the PTY.
@@ -856,26 +946,23 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         isActive={isActive}
         isGridRoot={sessionId === gridId}
         onClose={onClose}
+        view={view}
+        onViewChange={setView}
       />
       {/* Terminal surface — own relative container so absolute-positioned
           .terminal-pane fills only this area (below the header), and the
           active-pane / drag overlays sit on top of the terminal only. */}
-      <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div ref={paneBodyRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      {/* Terminal view — kept mounted (display toggled) so xterm preserves its
+          scrollback while git/files is showing. In 'split' it shares the row
+          with the file browser on the right, separated by a resizable handle. */}
+      <div style={{ position: 'absolute', inset: 0, display: (view === 'terminal' || view === 'split') ? 'flex' : 'none', flexDirection: 'row' }}>
+      {/* Terminal column — full width normally, fixed % in split. */}
+      <div style={{ position: 'relative', minWidth: 0, overflow: 'hidden', ...(view === 'split' ? { width: `${termPct}%`, flexShrink: 0 } : { flex: 1 }) }}>
       <div
         ref={containerRef}
         className="terminal-pane"
       />
-      {/* Active pane border overlay — rendered above the terminal so it's
-          visible even though .terminal-pane covers the entire container. */}
-      {isMultiPane && isActive && !isPaneDragOver && !fileDragOver && (
-        <div style={{
-          position: 'absolute', inset: 0, zIndex: 15,
-          borderRadius: 8,
-          boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(0,116,217,0.35)',
-          pointerEvents: 'none',
-          transition: 'box-shadow 0.15s ease',
-        }} />
-      )}
       {(isPaneDragOver || fileDragOver) && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20,
@@ -936,7 +1023,94 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
           Jump to bottom
         </button>
       )}
-      </div>{/* /terminal surface */}
+      </div>{/* /terminal column */}
+
+      {/* Split mode: resizable divider + the file browser on the right. */}
+      {view === 'split' && (
+        <>
+          <div
+            onMouseDown={startSplitDrag}
+            className="terminal-resize-handle terminal-resize-handle-horizontal"
+            style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: '#161b22' }}
+          />
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
+            <FilesPane
+              sessionId={sessionId}
+              openFileRef={openFileRef}
+              onFileSelect={() => setFilesHighlightLine(null)}
+              highlightLine={filesHighlightLine}
+            />
+          </div>
+        </>
+      )}
+      </div>{/* /terminal+split row */}
+
+      {/* Unified Git view — Working tree / Files / Git log, sharing one sub-
+          switcher. Scoped to this pane's session; mounted on demand. */}
+      {view !== 'terminal' && view !== 'split' && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0a0a0a' }}>
+          {/* Sub-switcher — the grouped Working / Files / Git Log tabs, full width. */}
+          <div
+            style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid #222222', background: '#0d1117', flexShrink: 0 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', width: '100%', border: '1px solid #222222', borderRadius: 6, overflow: 'hidden' }}>
+              {([
+                { id: 'working', icon: <Diff size={11} />,       label: 'Working tree' },
+                { id: 'files',   icon: <FolderOpen size={11} />, label: 'Files' },
+                { id: 'log',     icon: <ScrollText size={11} />, label: 'Git log' },
+              ] as const).map(({ id, icon, label }) => (
+                <button
+                  key={id}
+                  onClick={() => setView(id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                    flex: 1, fontSize: 11, padding: '4px 9px',
+                    background: view === id ? '#1f6feb' : 'none',
+                    color: view === id ? '#fff' : '#737373',
+                    border: 'none', borderRight: id !== 'log' ? '1px solid #222222' : 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {icon}{label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Active panel */}
+          <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {(view === 'working' || view === 'log') && (
+              <GitDiffPane
+                sessionId={sessionId}
+                mode={view === 'log' ? 'log' : 'head'}
+                onOpenFile={(path: string) => { setView('files'); setTimeout(() => openFileRef.current?.(path), 60); }}
+              />
+            )}
+            {view === 'files' && (
+              <FilesPane
+                sessionId={sessionId}
+                openFileRef={openFileRef}
+                onFileSelect={() => setFilesHighlightLine(null)}
+                highlightLine={filesHighlightLine}
+              />
+            )}
+          </div>
+        </div>
+      )}
+      {/* Active pane border overlay — at the pane-body level so it outlines the
+          WHOLE pane (terminal + files in split view, or the git/files panel),
+          making it clear a split is still a single pane. */}
+      {isMultiPane && isActive && !isPaneDragOver && !fileDragOver && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 15,
+          borderRadius: 8,
+          boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(0,116,217,0.35)',
+          pointerEvents: 'none',
+          transition: 'box-shadow 0.15s ease',
+        }} />
+      )}
+      </div>{/* /pane body */}
       </div>{/* /inner wrapper */}
       </div>{/* /outer wrapper */}
     </>

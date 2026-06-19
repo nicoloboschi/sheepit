@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StickyNote, SquarePlus } from 'lucide-react';
+import { SquarePlus } from 'lucide-react';
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -8,7 +8,6 @@ import { useDroppable, useDndMonitor } from '@dnd-kit/core';
 import useStore, { type Workspace } from '../store';
 import SessionItem, { loadFavourites, toggleFavourite } from './SessionItem';
 import { ScrollArea } from './ui/scroll-area';
-import { NOTES_SESSION_ID } from './PaneTerminal';
 import { useDndEnabled } from '../dndEnabled';
 
 interface SessionListProps {
@@ -63,8 +62,25 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
   const workspaces = useStore(s => s.workspaces);
   const workspaceOrder = useStore(s => s.workspaceOrder);
   const currentSessionId = useStore(s => s.currentSessionId);
+  const hasUnseen = useStore(s => s.sessionHasUnseen);
+  const busy = useStore(s => s.sessionBusy);
   const [favourites, setFavourites] = useState(loadFavourites);
   const dndEnabled = useDndEnabled();
+
+  // Slack-style filter (All / Active / Favourites). Lives in the store so the
+  // toggle can render up in the sidebar header.
+  const filter = useStore(s => s.workspaceFilter);
+
+  // "Active" = the current workspace (blue), or any pane with unseen output
+  // (yellow) or a running/busy command. Reactive: when sessionBusy/unseen
+  // change in the store, this list re-renders and the filter re-applies, so a
+  // newly-active workspace appears automatically.
+  const isWsActive = (ws: Workspace) =>
+    currentSessionId === ws.id || ws.cells.some(c => hasUnseen[c] || busy[c]);
+  const applyFilter = (list: Workspace[]) =>
+    filter === 'active' ? list.filter(isWsActive)
+      : filter === 'favourites' ? list.filter(w => favourites.has(w.id))
+      : list;
 
   // Track whether a *pane* drag is currently in flight in the global
   // DndContext so the gap zones can light up only when relevant. We use
@@ -89,77 +105,37 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
   if (allWs.length === 0) {
     return (
       <ScrollArea id={id} className="session-list flex-1 py-2">
-        <div
-          onClick={() => onConnect(NOTES_SESSION_ID)}
-          data-session-id={NOTES_SESSION_ID}
-          className={`session-item${currentSessionId === NOTES_SESSION_ID ? ' active' : ''}`}
-        >
-          <span className="session-icon" style={{ opacity: currentSessionId === NOTES_SESSION_ID ? 0.7 : 0.4 }}>
-            <StickyNote size={12} />
-          </span>
-          <span className="session-name-inline">Notes</span>
-        </div>
         <div className="empty-state">No workspaces yet</div>
       </ScrollArea>
     );
   }
 
-  const favWs = allWs.filter(w => favourites.has(w.id));
-  const otherWs = allWs.filter(w => !favourites.has(w.id));
-  const isNotesActive = currentSessionId === NOTES_SESSION_ID;
-
-  // Single sortable context spans BOTH sections. Items are addressed by
-  // workspace.id; the visual section split is purely cosmetic.
-  const sortableIds = allWs.map(w => w.id);
-
-  /** Render a section of workspace rows. No more per-row gap drop zones —
-   *  there's a single "create new workspace" zone at the bottom of the
-   *  whole list (rendered outside this helper). */
-  const renderSection = (section: Workspace[], isFav: boolean): React.ReactElement[] =>
-    section.map(ws => (
-      <SessionItem
-        key={ws.id}
-        workspace={ws}
-        isActive={currentSessionId === ws.id}
-        onConnect={onConnect}
-        send={send}
-        isFavourite={isFav}
-        onToggleFavourite={() => setFavourites(toggleFavourite(ws.id))}
-      />
-    ));
-
-  // The id of the very last workspace in the list — used as `prevId` for
-  // the single trailing gap drop zone, so dropping a pane there extracts
-  // it into a new workspace appended at the end of workspaceOrder.
+  // One filtered list, in workspaceOrder. The All/Active/Favourites toggle now
+  // lives in the sidebar header (so no section band eating vertical space).
+  const visible = applyFilter(allWs);
+  const sortableIds = visible.map(w => w.id);
   const lastWsId = allWs[allWs.length - 1]?.id ?? null;
 
   return (
-    <ScrollArea id={id} className="session-list flex-1 py-2">
-      <div
-        onClick={() => onConnect(NOTES_SESSION_ID)}
-        data-session-id={NOTES_SESSION_ID}
-        className={`session-item${isNotesActive ? ' active' : ''}`}
-      >
-        <span className="session-icon" style={{ opacity: isNotesActive ? 0.7 : 0.4 }}>
-          <StickyNote size={12} />
-        </span>
-        <span className="session-name-inline">Notes</span>
-      </div>
-
+    <ScrollArea id={id} className="session-list flex-1" style={{ paddingTop: 4 }}>
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-        {favWs.length > 0 && (
-          <>
-            <div className="session-section-label" style={{ marginTop: 10 }}>Favourites</div>
-            {renderSection(favWs, true)}
-          </>
-        )}
-
-        {otherWs.length > 0 && (
-          <>
-            <div className="session-section-label" style={{ marginTop: 10 }}>Workspaces</div>
-            {renderSection(otherWs, false)}
-          </>
-        )}
+        {visible.length === 0 ? (
+          <div className="empty-state" style={{ padding: '12px', fontSize: 12 }}>
+            {filter === 'favourites'
+              ? 'No favourites yet — hover a workspace and tap the star'
+              : 'No active workspaces'}
+          </div>
+        ) : visible.map(ws => (
+          <SessionItem
+            key={ws.id}
+            workspace={ws}
+            isActive={currentSessionId === ws.id}
+            onConnect={onConnect}
+            send={send}
+            isFavourite={favourites.has(ws.id)}
+            onToggleFavourite={() => setFavourites(toggleFavourite(ws.id))}
+          />
+        ))}
       </SortableContext>
 
       {/* The single "create new workspace" drop target. Drops a pane here →

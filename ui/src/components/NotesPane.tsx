@@ -1,85 +1,39 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, X, FileText, Eye, Pencil } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, X, FileText, Folder } from 'lucide-react';
+import { FileViewer } from './FilesPane';
 
 export default function NotesPane(): JSX.Element {
   const [sheets, setSheets] = useState<string[]>([]);
+  const [dir, setDir] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
-  const [content, setContent] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [preview, setPreview] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renameRef = useRef<HTMLInputElement | null>(null);
-  const contentRef = useRef<string>('');
 
-  // Load sheet list
-  useEffect(() => {
-    fetch('/api/notes/sheets')
+  // Load sheet list + the on-disk notes directory.
+  const loadSheets = (selectAfter?: (sheets: string[]) => string | null) => {
+    return fetch('/api/notes/sheets')
       .then(r => r.json())
-      .then((d: { sheets: string[] }) => {
+      .then((d: { sheets: string[]; dir?: string }) => {
         setSheets(d.sheets);
-        if (d.sheets.length > 0 && !activeSheet) {
+        setDir(d.dir ?? null);
+        setActiveSheet(prev => {
+          if (selectAfter) return selectAfter(d.sheets);
+          if (prev && d.sheets.includes(prev)) return prev;
           const saved = localStorage.getItem('vipershell:active-note-sheet');
-          setActiveSheet(d.sheets.includes(saved ?? '') ? saved! : d.sheets[0]!);
-        }
+          return d.sheets.includes(saved ?? '') ? saved! : (d.sheets[0] ?? null);
+        });
       })
       .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  };
 
-  // Load active sheet content
-  useEffect(() => {
-    if (!activeSheet) return;
-    setContent(null);
-    localStorage.setItem('vipershell:active-note-sheet', activeSheet);
-    fetch(`/api/notes/sheets/${encodeURIComponent(activeSheet)}`)
-      .then(r => r.json())
-      .then((d: { content: string }) => {
-        const c = d.content ?? '';
-        setContent(c);
-        contentRef.current = c;
-      })
-      .catch(() => {
-        setContent('');
-        contentRef.current = '';
-      });
-  }, [activeSheet]);
+  useEffect(() => { loadSheets(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeSheet) localStorage.setItem('vipershell:active-note-sheet', activeSheet); }, [activeSheet]);
 
-  const save = useCallback((text: string) => {
-    if (!activeSheet) return;
-    setSaving(true);
-    fetch(`/api/notes/sheets/${encodeURIComponent(activeSheet)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: text }),
-    })
-      .then(() => setSaving(false))
-      .catch(() => setSaving(false));
-  }, [activeSheet]);
-
-  const handleChange = useCallback((text: string) => {
-    contentRef.current = text;
-    setContent(text);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => save(text), 500);
-  }, [save]);
-
-  // Save on unmount if pending
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        if (activeSheet) {
-          navigator.sendBeacon?.(`/api/notes/sheets/${encodeURIComponent(activeSheet)}`, new Blob(
-            [JSON.stringify({ content: contentRef.current })],
-            { type: 'application/json' }
-          ));
-        }
-      }
-    };
-  }, [activeSheet]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Absolute (home-relative) path of the active sheet — the notes are plain .md
+  // files on disk, so the Files pane's FileViewer can edit/open/copy them via
+  // the /api/fs endpoints (which expand "~/").
+  const activePath = dir && activeSheet ? `${dir}/${activeSheet}.md` : null;
 
   const addSheet = () => {
     const base = 'untitled';
@@ -101,9 +55,7 @@ export default function NotesPane(): JSX.Element {
       .then(() => {
         setSheets(prev => {
           const next = prev.filter(s => s !== name);
-          if (activeSheet === name) {
-            setActiveSheet(next.length > 0 ? next[0]! : null);
-          }
+          if (activeSheet === name) setActiveSheet(next.length > 0 ? next[0]! : null);
           return next;
         });
       });
@@ -137,142 +89,114 @@ export default function NotesPane(): JSX.Element {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: '#0c0c0c' }}>
-      {/* Tab bar */}
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, background: '#0c0c0c' }}>
+      {/* Left sidebar — sheets as a filesystem-style list */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 0,
-        borderBottom: '1px solid var(--border)',
-        background: '#111111',
-        overflowX: 'auto',
-        flexShrink: 0,
+        width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        borderRight: '1px solid var(--border)', background: '#111111',
       }}>
-        {sheets.map(name => (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '6px 8px 6px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted-foreground)', fontWeight: 600 }}>
+            Sheets
+          </span>
+          <button
+            onClick={addSheet}
+            title="New sheet"
+            className="hover:text-foreground"
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 2 }}
+          >
+            <Plus size={13} />
+          </button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          {sheets.map(name => {
+            const active = activeSheet === name;
+            return (
+              <div
+                key={name}
+                onClick={() => setActiveSheet(name)}
+                onDoubleClick={() => startRename(name)}
+                title={name}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '5px 8px 5px 12px', cursor: 'pointer', userSelect: 'none',
+                  fontSize: 12, fontFamily: '"JetBrains Mono", monospace',
+                  color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
+                  background: active ? '#1f3a56' : 'transparent',
+                  borderLeft: active ? '2px solid var(--primary)' : '2px solid transparent',
+                }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <FileText size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
+                {renaming === name ? (
+                  <input
+                    ref={renameRef}
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename();
+                      if (e.key === 'Escape') setRenaming(null);
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      flex: 1, minWidth: 0, fontSize: 12, background: 'var(--input)',
+                      border: '1px solid var(--ring)', borderRadius: 3,
+                      padding: '0 4px', color: 'var(--foreground)',
+                      fontFamily: 'inherit', outline: 'none',
+                    }}
+                  />
+                ) : (
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                )}
+                {sheets.length > 1 && active && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteSheet(name); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', flexShrink: 0,
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--muted-foreground)', padding: 0,
+                    }}
+                    title="Delete sheet"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {dir && (
           <div
-            key={name}
-            onClick={() => setActiveSheet(name)}
-            onDoubleClick={() => startRename(name)}
+            title={dir}
             style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '5px 10px',
-              fontSize: 11,
+              flexShrink: 0, borderTop: '1px solid var(--border)',
+              padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 5,
+              fontSize: 10, color: 'var(--muted-foreground)',
               fontFamily: '"JetBrains Mono", monospace',
-              cursor: 'pointer',
-              color: activeSheet === name ? 'var(--foreground)' : 'var(--muted-foreground)',
-              background: activeSheet === name
-                ? 'linear-gradient(135deg, #0074d9 0%, #009296 100%) bottom / 100% 2px no-repeat, #0c0c0c'
-                : 'transparent',
-              borderBottom: '2px solid transparent',
-              whiteSpace: 'nowrap',
-              userSelect: 'none',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >
-            <FileText size={10} style={{ flexShrink: 0, opacity: 0.5 }} />
-            {renaming === name ? (
-              <input
-                ref={renameRef}
-                value={renameValue}
-                onChange={e => setRenameValue(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') commitRename();
-                  if (e.key === 'Escape') setRenaming(null);
-                }}
-                onClick={e => e.stopPropagation()}
-                style={{
-                  width: 80, fontSize: 11, background: 'var(--input)',
-                  border: '1px solid var(--ring)', borderRadius: 3,
-                  padding: '0 4px', color: 'var(--foreground)',
-                  fontFamily: 'inherit', outline: 'none',
-                }}
-              />
-            ) : (
-              <span>{name}</span>
-            )}
-            {sheets.length > 1 && activeSheet === name && (
-              <button
-                onClick={(e) => { e.stopPropagation(); deleteSheet(name); }}
-                style={{
-                  display: 'flex', alignItems: 'center',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--muted-foreground)', padding: 0,
-                }}
-                title="Delete sheet"
-              >
-                <X size={10} />
-              </button>
-            )}
+            <Folder size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{dir}</span>
           </div>
-        ))}
-        <button
-          onClick={addSheet}
-          style={{
-            display: 'flex', alignItems: 'center',
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--muted-foreground)', padding: '5px 8px',
-          }}
-          title="New sheet"
-        >
-          <Plus size={12} />
-        </button>
-
-        <div style={{ flex: 1 }} />
-        {saving && <span style={{ fontSize: 10, color: 'var(--muted-foreground)', marginRight: 8 }}>Saving...</span>}
-        <button
-          onClick={() => setPreview(p => !p)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: preview ? 'var(--primary)' : 'var(--muted-foreground)',
-            padding: '5px 10px', fontSize: 10,
-            fontFamily: '"JetBrains Mono", monospace',
-          }}
-          title={preview ? 'Edit' : 'Preview markdown'}
-        >
-          {preview ? <Pencil size={11} /> : <Eye size={11} />}
-          <span>{preview ? 'Edit' : 'Preview'}</span>
-        </button>
+        )}
       </div>
 
-      {/* Editor / Preview */}
-      {content === null ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted-foreground)' }}>
-          Loading...
-        </div>
-      ) : preview ? (
-        <div
-          className="notes-preview"
-          style={{
-            flex: 1, minHeight: 0, overflow: 'auto',
-            padding: '16px 20px',
-            color: 'var(--foreground)',
-            fontSize: 13,
-            lineHeight: 1.6,
-          }}
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-        </div>
-      ) : (
-        <textarea
-          key={activeSheet}
-          value={content}
-          onChange={e => handleChange(e.target.value)}
-          spellCheck={false}
-          style={{
-            flex: 1, minHeight: 0,
-            width: '100%',
-            padding: '16px 20px',
-            background: '#0c0c0c',
-            color: 'var(--foreground)',
-            border: 'none',
-            outline: 'none',
-            resize: 'none',
-            fontFamily: '"JetBrains Mono", monospace',
-            fontSize: 12,
-            lineHeight: 1.6,
-            tabSize: 2,
-          }}
+      {/* Main — each sheet is a real .md file, rendered with the Files pane's
+          viewer so it gets edit / preview / copy / open-in-app / delete. */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <FileViewer
+          path={activePath}
+          cwd={dir}
+          autoSave
+          onDelete={() => loadSheets(s => s[0] ?? null)}
         />
-      )}
+      </div>
     </div>
   );
 }

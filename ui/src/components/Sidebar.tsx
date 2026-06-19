@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Zap, TerminalSquare, SquarePlus, PanelLeftClose } from 'lucide-react';
+import { Settings, Zap, TerminalSquare, SquarePlus, PanelLeftClose, List, Activity, Star } from 'lucide-react';
 import MemoryIndicator from './MemoryIndicator';
 import useStore, { activeTerminalSend } from '../store';
 import SessionList from './SessionList';
@@ -21,6 +21,8 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   const wsStatus = useStore(s => s.wsStatus);
   const currentSessionId = useStore(s => s.currentSessionId);
   const sessions = useStore(s => s.sessions);
+  const workspaceFilter = useStore(s => s.workspaceFilter);
+  const setWorkspaceFilter = useStore(s => s.setWorkspaceFilter);
   const [showSettings, setShowSettings] = useState(false);
   const [showNewSession, setShowNewSession] = useState<{ initCommand?: string; title: string; icon?: React.ReactNode } | null>(null);
   const [commands, setCommands] = useState(loadCommands);
@@ -138,18 +140,37 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         style={{ borderColor: 'var(--border)' }}
       >
         <span className="logo"><ViperIcon size={15} color="var(--primary)" /> <span className="brand-gradient-text">vipershell</span></span>
-        <button
-          onClick={toggleCollapse}
-          title="Collapse sidebar"
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--muted-foreground)', padding: 4, borderRadius: 4,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          className="hover:text-foreground hover:bg-white/5"
-        >
-          <PanelLeftClose size={14} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* Workspace list filter — All / Active / Favourites. */}
+          <div className="ws-filter-toggle">
+            {([
+              { id: 'all' as const,        icon: <List size={12} />,     title: 'All workspaces' },
+              { id: 'active' as const,     icon: <Activity size={12} />, title: 'Active only (current, running, or new output)' },
+              { id: 'favourites' as const, icon: <Star size={12} />,     title: 'Favourites only' },
+            ]).map(({ id, icon, title }) => (
+              <button
+                key={id}
+                title={title}
+                onClick={() => setWorkspaceFilter(id)}
+                className={workspaceFilter === id ? 'active' : ''}
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={toggleCollapse}
+            title="Collapse sidebar"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--muted-foreground)', padding: 4, borderRadius: 4,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            className="hover:text-foreground hover:bg-white/5"
+          >
+            <PanelLeftClose size={14} />
+          </button>
+        </div>
       </div>
 
       <SessionList
