@@ -58,6 +58,22 @@ import { useDndEnabled } from '../dndEnabled';
 const URL_RE = /https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](?::\d+)?(?:\/[^\s"'<>()\x1b\x07\u0007\]{}|\\^`]*)?/g;
 const stripAnsi = (s: string) => s.replace(/\x1b(?:\[[0-9;]*[a-zA-Z]|\].*?(?:\x07|\x1b\\))/g, '');
 
+// Convert a `file://` URI (as emitted by Claude Code's OSC 8 hyperlinks) to a
+// local filesystem path. Handles the empty-host form `file:///abs/path` and the
+// RFC 8089 host form `file://host.local/abs/path` (CC emits both). Returns null
+// for any non-`file:` URI so the caller can fall back to opening it externally.
+function fileUriToPath(uri: string): string | null {
+  if (!/^file:\/\//i.test(uri)) return null;
+  let rest = uri.slice(uri.indexOf('//') + 2);
+  if (!rest.startsWith('/')) {
+    // host form — drop the authority (hostname) up to the first path slash.
+    const slash = rest.indexOf('/');
+    rest = slash === -1 ? '' : rest.slice(slash);
+  }
+  try { rest = decodeURIComponent(rest); } catch { /* keep percent-encoded */ }
+  return rest || null;
+}
+
 const TERMINAL_THEME = {
   background: '#111111', foreground: '#d4d4d8', cursor: '#0074d9', cursorAccent: '#ffffff',
   selectionBackground: 'rgba(0,116,217,0.25)',
@@ -105,6 +121,15 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const [view, setView] = useState<PaneView>(() => readPaneView(sessionId) ?? 'split');
   const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
   const openFileRef = useRef<((path: string) => void) | null>(null);
+  // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
+  // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
+  const wheelPendingRef = useRef(0);
+  const wheelDrainRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Whether the foreground app enabled SGR mouse encoding (DEC private mode 1006).
+  // We only synthesize SGR wheel reports (\x1b[<…M) when the app actually asked
+  // for that encoding — otherwise the bytes leak into the shell as literal text.
+  // Tracked from the output stream in flushOutput.
+  const sgrMouseRef = useRef(false);
   // Split mode: terminal occupies this % of the pane width, files takes the rest.
   const [termPct, setTermPct] = useState(() => readSplitPct(sessionId) ?? 60);
   const paneBodyRef = useRef<HTMLDivElement | null>(null);
@@ -135,14 +160,19 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     let absPath = cleaned;
     if (!cleaned.startsWith('/') && !cleaned.startsWith('~/')) {
       try {
-        const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/browse`);
+        // Resolve against the live foreground-process cwd (e.g. Claude Code's
+        // working directory), so a relative path it printed — `out/foo.mp4` —
+        // points at the file IT created, not wherever the shell happens to be.
+        const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/cwd`);
         const data = await res.json();
         const cwd = (data.cwd as string) ?? '';
         absPath = cwd ? `${cwd}/${cleaned.replace(/^\.\//, '')}` : cleaned;
       } catch { /* use cleaned as-is */ }
     }
     setFilesHighlightLine(line);
-    setView('files');
+    // Open in split view (terminal + files side by side) rather than replacing
+    // the whole pane with the Files view — keeps the clicked-from terminal visible.
+    setView('split');
     setTimeout(() => openFileRef.current?.(absPath), 80);
   }, [sessionId]);
   const handleFileLinkRef = useRef(handleFileLink);
@@ -199,6 +229,20 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       lineHeight: 1.2,
       scrollback: isMobile ? 1000 : 5000,
       theme: TERMINAL_THEME,
+      // OSC 8 hyperlinks (Claude Code emits file references as these). A local
+      // `file://` link opens in this pane's Files view; anything else opens
+      // externally. `allowNonHttpProtocols` is required for `file:` to reach us.
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate(_event: MouseEvent, uri: string) {
+          const filePath = fileUriToPath(uri);
+          if (filePath) { handleFileLinkRef.current(filePath); return; }
+          // Real URL scheme (http:, https:, mailto:, …) → open externally.
+          if (/^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) { window.open(uri, '_blank', 'noopener'); return; }
+          // Otherwise it's a bare/relative path → resolve against the app's cwd.
+          handleFileLinkRef.current(uri);
+        },
+      },
     });
     const fit = new FitAddon();
     const links = new WebLinksAddon((_: MouseEvent, url: string) => window.open(url, '_blank', 'noopener'));
@@ -419,7 +463,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+)/g;
+    // Two shapes: (1) anchored paths starting with ~/ ./ ../ or / ; and
+    // (2) bare relative paths Claude Code prints — one or more `dir/` segments
+    // ending in a `name.ext` (the extension requirement keeps prose like
+    // "and/or" or "TCP/IP" from matching). Both resolve via handleFileLink.
+    const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+|(?:[\w.\-@+%]+\/)+[\w.\-@+%]+\.[A-Za-z0-9]{1,8})/g;
     const provider = term.registerLinkProvider({
       provideLinks(y: number, callback: (links: any[]) => void): void {
         const line = term.buffer.active.getLine(y - 1);
@@ -477,6 +525,17 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       flushRafRef.current = requestAnimationFrame(flushOutput);
       return;
     }
+    // Track SGR mouse encoding (DEC private mode 1006) from the stream so the
+    // wheel handler only synthesizes SGR wheel reports when the app enabled it.
+    // A combined sequence like `\x1b[?1000;1006h` toggles several modes at once.
+    if (batch.includes('\x1b[?')) {
+      const re = /\x1b\[\?([0-9;]+)([hl])/g;
+      let mm: RegExpExecArray | null;
+      while ((mm = re.exec(batch)) !== null) {
+        if (mm[1]!.split(';').includes('1006')) sgrMouseRef.current = mm[2] === 'h';
+      }
+    }
+
     const plain = stripAnsi(batch);
     const urls = plain.match(URL_RE);
     if (urls) {
@@ -797,8 +856,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     };
     const onWheel = (e: WheelEvent): void => {
       const term = termRef.current;
-      if (!term || term.buffer?.active?.type === 'alternate') return;
-      e.preventDefault(); e.stopPropagation();
+      if (!term) return;
       const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? 1.2);
       let lines: number;
       if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
@@ -808,7 +866,51 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       } else {
         lines = Math.round(e.deltaY / lineH);
       }
-      if (lines !== 0) term.scrollLines(lines);
+      if (lines === 0) return;
+
+      if (term.buffer?.active?.type === 'alternate') {
+        // Full-screen apps that drive mouse tracking (Claude Code, vim, btop, …)
+        // scroll on mouse-wheel events. But CC COALESCES a burst sent at once
+        // into ~one step — so we PACE them: accumulate the desired number of
+        // wheel steps and drain one every ~25ms, which each register → fast,
+        // real multi-line scrolling. Signed pending: <0 = up (btn 64), >0 = down.
+        const modes = term.modes;
+        // Require BOTH mouse tracking AND SGR encoding (mode 1006). Without the
+        // SGR check we could emit `\x1b[<…M` to an app using legacy mouse
+        // encoding (or to a stale terminal), where it surfaces as literal text.
+        if (!modes || modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return;
+        e.preventDefault(); e.stopPropagation();
+        // Scroll a modest, capped number of lines per wheel event so it isn't
+        // hyper-sensitive (devices report wildly different deltaY). The paced
+        // drain + pending accumulation still let a fast flick scroll far.
+        const PER_EVENT = 3;
+        const add = (lines < 0 ? -1 : 1) * Math.min(Math.abs(lines), PER_EVENT);
+        const MAX = term.rows ?? 20; // at most ~one screen queued
+        wheelPendingRef.current = Math.max(-MAX, Math.min(MAX, wheelPendingRef.current + add));
+        if (!wheelDrainRef.current) {
+          wheelDrainRef.current = setInterval(() => {
+            const t = termRef.current;
+            // Re-check the gate every tick: the app may have left the alternate
+            // buffer or disabled mouse mode mid-drain, and we must NOT keep
+            // firing wheel reports into a plain shell prompt.
+            if (!t || t.buffer?.active?.type !== 'alternate'
+                || t.modes?.mouseTrackingMode === 'none' || !sgrMouseRef.current
+                || wheelPendingRef.current === 0) {
+              if (wheelDrainRef.current) clearInterval(wheelDrainRef.current);
+              wheelDrainRef.current = null; wheelPendingRef.current = 0;
+              return;
+            }
+            const dir = wheelPendingRef.current < 0 ? -1 : 1;
+            wheelPendingRef.current -= dir;
+            sendRef.current({ type: 'input', data: `\x1b[<${dir < 0 ? 64 : 65};1;1M` });
+          }, 25);
+        }
+        return;
+      }
+
+      // Normal buffer: scroll vipershell's own scrollback.
+      e.preventDefault(); e.stopPropagation();
+      term.scrollLines(lines);
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
@@ -818,6 +920,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
 
     return () => {
       stopMomentum();
+      if (wheelDrainRef.current) { clearInterval(wheelDrainRef.current); wheelDrainRef.current = null; }
       el.removeEventListener('touchstart', onTouchStart, { capture: true });
       el.removeEventListener('touchmove', onTouchMove, { capture: true });
       el.removeEventListener('touchend', onTouchEnd, { capture: true });

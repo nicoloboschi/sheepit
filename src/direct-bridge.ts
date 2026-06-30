@@ -83,6 +83,92 @@ class RingBuffer {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+// DEC private modes that represent sticky terminal state an app sets ONCE (often
+// before a client connects): alternate screen, mouse tracking, app-cursor keys,
+// bracketed paste. We track these so a reconnect snapshot can restore them —
+// otherwise full-screen apps (e.g. the updated Claude Code, vim, btop) lose
+// alt-screen / mouse mode once their setup bytes roll off the ring buffer, which
+// breaks scrolling and the mouse in the reconnected terminal.
+const STICKY_PRIVATE_MODES = new Set([
+  1,                       // DECCKM — application cursor keys
+  47, 1047, 1048, 1049,    // alternate screen buffer
+  1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, // mouse tracking / encoding / focus
+  2004,                    // bracketed paste
+]);
+
+/** Update `active` from DECSET (?Nh) / DECRST (?Nl) sequences in `data`. */
+function trackPrivateModes(active: Set<number>, data: string): void {
+  const re = /\x1b\[\?([0-9;]+)([hl])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(data)) !== null) {
+    const enable = m[2] === 'h';
+    for (const part of m[1]!.split(';')) {
+      const n = parseInt(part, 10);
+      if (!STICKY_PRIVATE_MODES.has(n)) continue;
+      if (enable) active.add(n); else active.delete(n);
+    }
+  }
+}
+
+// Subset of tracked modes we actually RE-ASSERT on reconnect. We deliberately
+// exclude mouse-tracking / focus modes (1000/1002/1003/1004/1005/1006/1015/1016):
+// replaying those re-arms the client's mouse handling from a ring-buffer scan
+// that can be STALE (e.g. the app already exited to a shell, but its disable
+// sequence rolled off the persisted ring). A stale mouse-on state makes the UI
+// synthesize wheel reports that leak into the shell as literal `\x1b[<…M` text.
+// Alt-screen, app-cursor-keys and bracketed paste are safe to restore and are
+// what actually fix the reconnected terminal's rendering / scroll region. A live
+// app re-arms its own mouse modes via the output stream, so we don't need to.
+const REPLAY_PRIVATE_MODES = new Set([1, 47, 1047, 1048, 1049, 2004]);
+
+/** Escape sequence that re-establishes the safe-to-replay sticky modes. Alt-screen
+ *  is emitted first so replayed snapshot content lands in the alternate buffer. */
+function privateModePrefix(active: Set<number>): string {
+  const replay = [...active].filter(n => REPLAY_PRIVATE_MODES.has(n));
+  if (replay.length === 0) return '';
+  const isAlt = (n: number) => n === 47 || n === 1047 || n === 1049;
+  const ordered = replay.sort((a, b) => (isAlt(a) ? 0 : 1) - (isAlt(b) ? 0 : 1));
+  return ordered.map(n => `\x1b[?${n}h`).join('');
+}
+
+// Mouse / focus tracking is LIVE-interaction state, not snapshot state. A ring
+// buffer can hold stale ENABLE sequences whose matching disable rolled off — a
+// TUI that exited or was killed without resetting the terminal (observed in the
+// wild: 29× `\x1b[?1003h` with zero disables left in the ring). Replaying the
+// snapshot then re-arms xterm's mouse reporting at a plain shell prompt, so every
+// mouse MOVE floods the shell with `\x1b[<…M` reports that echo as literal text.
+// We force these modes OFF immediately after the replayed snapshot; a genuinely
+// live full-screen app re-arms them through its own output (it redraws on the
+// resize we send at subscribe, and on the next keystroke). We deliberately do NOT
+// try to restore mouse state from history — the ring can't tell "stale on" from
+// "really on", so the safe default is off-until-the-app-asks.
+const MOUSE_FOCUS_MODES = [1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016];
+const MOUSE_FOCUS_RESET = MOUSE_FOCUS_MODES.map(n => `\x1b[?${n}l`).join('');
+
+// Counterpart for the alternate screen buffer. Same staleness trap: the ring can
+// hold a TUI's `?1049h` (enter alt-screen) while its matching exit rolled off —
+// so replaying the snapshot drops the reconnected pane into a dead alt buffer
+// showing a frozen frame of an app that already quit. We can't tell "stale" from
+// "a live full-screen app" by counting toggles (a live app is also unbalanced:
+// entered, not yet exited). But an interactive shell re-emits `?2004h` (bracketed
+// paste) at every prompt, so a `?2004h` AFTER the last alt-enter is a reliable
+// "the app exited, we're back at the shell" marker → the alt buffer is stale.
+const ALT_SCREEN_RESET = '\x1b[?1049l\x1b[?1047l\x1b[?47l';
+
+function altScreenStale(snapshot: string): boolean {
+  const lastIndexOf = (re: RegExp): number => {
+    let idx = -1, m: RegExpExecArray | null;
+    const g = new RegExp(re.source, 'g');
+    while ((m = g.exec(snapshot)) !== null) idx = m.index;
+    return idx;
+  };
+  const altOn = lastIndexOf(/\x1b\[\?(?:1049|1047|47)h/);
+  if (altOn < 0) return false;                       // never entered alt-screen
+  const altOff = lastIndexOf(/\x1b\[\?(?:1049|1047|47)l/);
+  if (altOff > altOn) return false;                  // properly exited — not stale
+  return lastIndexOf(/\x1b\[\?2004h/) > altOn;        // shell prompt came after → stale
+}
+
 interface DirectSession {
   id: string;
   name: string;
@@ -93,6 +179,8 @@ interface DirectSession {
   rows: number;
   createdAt: number;
   sessionType?: string | null;
+  /** Active sticky DEC private modes, tracked from output (see above). */
+  modes?: Set<number>;
 }
 
 interface SavedDirectSession {
@@ -277,6 +365,7 @@ export class DirectBridge {
       (id, data) => {
         const sess = this.sessions.get(id);
         if (sess) {
+          trackPrivateModes(sess.modes ??= new Set(), data);
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -435,7 +524,16 @@ export class DirectBridge {
     });
 
     onConnected();
-    if (snapshot) onOutput(snapshot);
+    // Re-establish sticky modes (alt-screen, mouse, …) the running app set
+    // before this client connected, in case those bytes have rolled off the
+    // ring — otherwise the reconnected terminal is stuck in the wrong mode.
+    // Order: re-assert sticky modes (alt-screen first) → replay snapshot → force
+    // mouse/focus tracking OFF, and drop a stale alternate-screen buffer, so the
+    // reconnected pane lands on the live shell rather than a frozen dead frame or
+    // an input-grabbing mouse state (see MOUSE_FOCUS_RESET / ALT_SCREEN_RESET).
+    const modePrefix = privateModePrefix(sess.modes ?? new Set());
+    const altReset = altScreenStale(snapshot) ? ALT_SCREEN_RESET : '';
+    if (modePrefix || snapshot) onOutput(modePrefix + snapshot + MOUSE_FOCUS_RESET + altReset);
     return unsub;
   }
 
@@ -598,6 +696,41 @@ export class DirectBridge {
     return this.sessions.get(sessionId)?.pid ?? null;
   }
 
+  /** Live working directory of the app running in the session's foreground
+   *  (e.g. Claude Code), read from the OS rather than the OSC-7-tracked shell
+   *  path — so relative paths an app prints resolve against ITS cwd. We read the
+   *  shell's direct child (the foreground app) and fall back to the shell itself.
+   *  Returns null if nothing resolves; callers fall back to the tracked path. */
+  async getForegroundCwd(sessionId: string): Promise<string | null> {
+    const sess = this.sessions.get(sessionId);
+    if (!sess || sess.pid <= 0) return null;
+    const isLinux = os.platform() === 'linux';
+
+    const readCwd = async (pid: number): Promise<string> => {
+      try {
+        if (isLinux) {
+          return await execAsync(`readlink /proc/${pid}/cwd 2>/dev/null`, { timeout: 2000 })
+            .then(r => r.stdout.trim());
+        }
+        const { stdout } = await execAsync(`lsof -a -p ${pid} -d cwd -F n 2>/dev/null`, { timeout: 3000 });
+        return stdout.split('\n').find(l => l.startsWith('n'))?.slice(1) ?? '';
+      } catch { return ''; }
+    };
+
+    let childPids: number[] = [];
+    try {
+      const { stdout } = await execAsync(`pgrep -P ${sess.pid} 2>/dev/null`, { timeout: 2000 });
+      childPids = stdout.trim().split('\n').filter(Boolean).map(n => parseInt(n, 10)).filter(n => n > 0);
+    } catch { /* no children → fall back to shell */ }
+
+    // Foreground app first (last-spawned child), then the shell as fallback.
+    for (const pid of [...childPids.reverse(), sess.pid]) {
+      const cwd = await readCwd(pid);
+      if (cwd) return cwd;
+    }
+    return null;
+  }
+
   getScrollbackPath(sessionId: string): string { return join(RING_DIR, `${sessionId}.buf`); }
 
   diagnostics(): object {
@@ -659,6 +792,9 @@ export class DirectBridge {
           id, name: info.name, path: ds.cwd || info.path, pid: ds.pid,
           ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
         };
+        // Seed sticky modes from the persisted ring — the app (still alive) set
+        // them before this restart, so reconnect can restore alt-screen/mouse.
+        trackPrivateModes(sess.modes = new Set(), ring.read());
         this.sessions.set(id, sess);
         await this.daemon.request({ type: 'subscribe', id });
         const num = parseInt(id.replace('direct-', ''), 10);
