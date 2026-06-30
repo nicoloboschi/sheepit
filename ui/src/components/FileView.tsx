@@ -26,6 +26,24 @@ import { cpp } from '@codemirror/lang-cpp';
 import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
 import { php } from '@codemirror/lang-php';
+import { go } from '@codemirror/lang-go';
+import { sass } from '@codemirror/lang-sass';
+import { less } from '@codemirror/lang-less';
+import { xml } from '@codemirror/lang-xml';
+import { StreamLanguage } from '@codemirror/language';
+import { EditorView } from '@codemirror/view';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { ruby } from '@codemirror/legacy-modes/mode/ruby';
+import { toml } from '@codemirror/legacy-modes/mode/toml';
+import { swift } from '@codemirror/legacy-modes/mode/swift';
+import { lua } from '@codemirror/legacy-modes/mode/lua';
+import { perl } from '@codemirror/legacy-modes/mode/perl';
+import { r as rMode } from '@codemirror/legacy-modes/mode/r';
+import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
+import { properties } from '@codemirror/legacy-modes/mode/properties';
+import { stex } from '@codemirror/legacy-modes/mode/stex';
+import { protobuf } from '@codemirror/legacy-modes/mode/protobuf';
+import { csharp, scala, kotlin, dart } from '@codemirror/legacy-modes/mode/clike';
 import type { Extension } from '@codemirror/state';
 import {
   ChevronDown, ChevronRight, FileCode, FilePlus, FileMinus,
@@ -128,6 +146,8 @@ const EXT_LANG: Record<string, string> = {
 };
 export const getLang = (name: string) => EXT_LANG[ext(name)] ?? 'text';
 
+const legacy = (m: Parameters<typeof StreamLanguage.define>[0]): Extension => StreamLanguage.define(m);
+
 function getCmLang(name: string): Extension[] {
   switch (getLang(name)) {
     case 'javascript': return [javascript()];
@@ -135,16 +155,35 @@ function getCmLang(name: string): Extension[] {
     case 'typescript': return [javascript({ typescript: true })];
     case 'tsx':        return [javascript({ jsx: true, typescript: true })];
     case 'python':     return [python()];
-    case 'css': case 'scss': case 'less': return [css()];
-    case 'html': case 'xml': return [html()];
+    case 'css':        return [css()];
+    case 'scss':       return [sass()];
+    case 'less':       return [less()];
+    case 'html':       return [html()];
+    case 'xml':        return [xml()];
     case 'json':       return [json()];
     case 'markdown':   return [markdown()];
     case 'rust':       return [rust()];
     case 'java':       return [java()];
     case 'cpp': case 'c': return [cpp()];
+    case 'csharp':     return [legacy(csharp)];
+    case 'scala':      return [legacy(scala)];
+    case 'kotlin':     return [legacy(kotlin)];
+    case 'dart':       return [legacy(dart)];
+    case 'go':         return [go()];
     case 'sql':        return [sql()];
     case 'yaml':       return [yaml()];
     case 'php':        return [php()];
+    case 'bash':       return [legacy(shell)];
+    case 'ruby':       return [legacy(ruby)];
+    case 'toml':       return [legacy(toml)];
+    case 'ini':        return [legacy(properties)];
+    case 'swift':      return [legacy(swift)];
+    case 'lua':        return [legacy(lua)];
+    case 'perl':       return [legacy(perl)];
+    case 'r':          return [legacy(rMode)];
+    case 'docker':     return [legacy(dockerFile)];
+    case 'protobuf':   return [legacy(protobuf)];
+    case 'latex':      return [legacy(stex)];
     default:           return [];
   }
 }
@@ -235,6 +274,15 @@ export default function FileView({
 
   const isDirty = content !== original;
   const diffHunks = hunks ?? fetchedHunks ?? [];
+  // Prism (showLineNumbers + per-line lineProps + wrapLongLines) is O(n) and
+  // janky on big files, so above a threshold we render plain monospace text —
+  // instant. We ALSO skip Prism when there's no language to highlight (e.g.
+  // .jsonl, .log, .ndjson, .csv, plain .txt): it gains nothing from tokenizing
+  // and pays the full wrapLongLines cost, which made data files feel like they
+  // hung. `getLang` returns 'text' for any extension without a Prism grammar.
+  const noHighlight = content.length > 50_000
+    || content.split('\n', 1501).length > 1500
+    || getLang(name) === 'text';
 
   // Lazy-mount the diff body when inside a scrolling list.
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -492,7 +540,7 @@ export default function FileView({
             <div style={{ flex: fill ? 1 : undefined, minHeight: 0, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               <CodeMirror
                 value={content}
-                extensions={getCmLang(name)}
+                extensions={[EditorView.lineWrapping, ...getCmLang(name)]}
                 theme={vscodeDark}
                 onChange={setContent}
                 onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 's' && e.metaKey) { e.preventDefault(); if (isDirty) save(); } }}
@@ -503,15 +551,21 @@ export default function FileView({
           )}
           {textFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
             <div style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
-              <SyntaxHighlighter
-                language={getLang(name)} style={vscDarkPlus} showLineNumbers wrapLongLines
-                lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: '#484f58', userSelect: 'none' }}
-                customStyle={{ margin: 0, padding: '8px 0', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
-                lineProps={(lineNum: number) => {
-                  const isTarget = highlightLine != null && lineNum === highlightLine;
-                  return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(210,153,34,0.15)', display: 'block' } : { display: 'block' } };
-                }}
-              >{content}</SyntaxHighlighter>
+              {noHighlight ? (
+                <pre style={{ margin: 0, padding: '8px 12px', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace', color: '#d4d4d8', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {content}
+                </pre>
+              ) : (
+                <SyntaxHighlighter
+                  language={getLang(name)} style={vscDarkPlus} showLineNumbers wrapLongLines
+                  lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: '#484f58', userSelect: 'none' }}
+                  customStyle={{ margin: 0, padding: '8px 0', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
+                  lineProps={highlightLine == null ? undefined : (lineNum: number) => {
+                    const isTarget = lineNum === highlightLine;
+                    return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(210,153,34,0.15)', display: 'block' } : { display: 'block' } };
+                  }}
+                >{content}</SyntaxHighlighter>
+              )}
             </div>
           )}
           {textFile && mode === 'preview' && mdFile && !loading && (
