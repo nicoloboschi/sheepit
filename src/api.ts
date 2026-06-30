@@ -206,11 +206,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
   router.get('/git/:sessionId', async (req, res) => {
     try {
       const { sessionId } = req.params;
-      const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json(null);
 
       const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
@@ -246,11 +242,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
   router.get('/git/:sessionId/github', async (req, res) => {
     try {
       const { sessionId } = req.params;
-      const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json(null);
 
       const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
@@ -317,10 +309,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     try {
       const { sessionId } = req.params;
       const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json([]);
       const { stdout: rootOut } = await execAsync(`git -C ${sh(cwd)} rev-parse --show-toplevel 2>/dev/null`);
       const gitRoot = rootOut.trim();
@@ -345,16 +334,33 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     try {
       const { sessionId } = req.params;
       const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.status(400).json({ error: 'No session path' });
       const { stdout: rootOut } = await execAsync(`git -C ${sh(cwd)} rev-parse --show-toplevel 2>/dev/null`);
       const gitRoot = rootOut.trim();
       if (!gitRoot) return res.status(400).json({ error: 'Not a git repository' });
       const parentDir = nodePath.dirname(gitRoot);
       const repoName = nodePath.basename(gitRoot);
+
+      // Explicit name → worktree dir `<repo>-<name>` on a new branch `<name>`.
+      const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      const name = rawName.replace(/[^A-Za-z0-9._/-]+/g, '-').replace(/^[-/]+|[-/]+$/g, '');
+      if (name) {
+        const worktreePath = nodePath.join(parentDir, `${repoName}-${name.replace(/\//g, '-')}`);
+        if (existsSync(worktreePath)) {
+          return res.status(400).json({ error: `Path already exists: ${nodePath.basename(worktreePath)}` });
+        }
+        try {
+          // New branch named after the worktree…
+          await execAsync(`git -C ${sh(gitRoot)} worktree add -b ${sh(name)} ${sh(worktreePath)}`);
+        } catch {
+          // …or attach an existing branch of that name.
+          await execAsync(`git -C ${sh(gitRoot)} worktree add ${sh(worktreePath)} ${sh(name)}`);
+        }
+        return res.json({ path: worktreePath });
+      }
+
+      // No name → auto-numbered fallback.
       let worktreePath = '';
       for (let i = 1; i <= 20; i++) {
         const candidate = nodePath.join(parentDir, `${repoName}-wt${i}`);
@@ -372,10 +378,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     try {
       const { sessionId } = req.params;
       const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json({ root: null });
       const { stdout } = await execAsync(`git -C ${sh(cwd)} rev-parse --show-toplevel 2>/dev/null`);
       res.json({ root: stdout.trim() || null });
@@ -389,10 +392,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
       const { sessionId } = req.params;
       const { mode, base, commit } = req.query as Record<string, string>;
       const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.type('text/plain').send('');
 
       const run = (cmd: string) => execAsync(cmd, { cwd, maxBuffer: 10 * 1024 * 1024 })
@@ -464,10 +464,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
       const { sessionId } = req.params;
       const { base, limit = '60' } = req.query as Record<string, string>;
       const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json([]);
 
       const { full } = req.query as Record<string, string>;
@@ -510,11 +507,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
   router.get('/git/:sessionId/status', async (req, res) => {
     try {
       const { sessionId } = req.params;
-      const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout: pathOut } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = pathOut.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json({ files: {} });
 
       const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
@@ -648,15 +641,25 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
 
   const expandHome = (p: string) => p.startsWith('~/') ? nodePath.join(os.homedir(), p.slice(2)) : p === '~' ? os.homedir() : p;
 
+  // Live foreground-process working directory — used to resolve relative paths
+  // an app (e.g. Claude Code) prints, against ITS cwd rather than the shell's
+  // tracked path. Falls back to the session's tracked cwd.
+  router.get('/fs/:sessionId/cwd', async (req, res) => {
+    const { sessionId } = req.params;
+    const fallback = getSessionCwd(sessionId);
+    try {
+      const cwd = await bridge.getForegroundCwd(sessionId);
+      res.json({ cwd: cwd || fallback });
+    } catch {
+      res.json({ cwd: fallback });
+    }
+  });
+
   router.get('/fs/:sessionId/browse', async (req, res) => {
     try {
       const { sessionId } = req.params;
       const subpath = expandHome((req.query.path as string | undefined) ?? '');
-      const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const { stdout } = await execAsync(
-        `echo ${sh(getSessionCwd(sessionId))}`
-      );
-      const cwd = stdout.trim();
+      const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.status(404).json({ error: 'Session not found' });
 
       const dir = subpath ? nodePath.resolve(cwd, subpath) : cwd;
