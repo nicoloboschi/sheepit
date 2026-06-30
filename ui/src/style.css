@@ -685,12 +685,26 @@
    entry list atomically; remounting this wrapper (via a dir-based key) plays
    a soft fade/slide so the change doesn't feel jarring. */
 @keyframes file-list-enter {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .file-list-anim {
-  animation: file-list-enter 0.16s ease-out;
-  will-change: opacity, transform;
+  animation: file-list-enter 0.18s ease-out;
+  will-change: opacity;
+}
+
+/* Soft, delayed loading indicator for directory browsing — a thin sliding bar
+   instead of a layout-shifting "Loading…" line. */
+.file-loading-bar {
+  height: 2px; width: 100%; flex-shrink: 0;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: file-loading-bar 0.9s ease-in-out infinite;
+}
+@keyframes file-loading-bar {
+  0%   { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
 }
 
 /* ── Workspace grip (top strip) ────────────────────────────────────────────

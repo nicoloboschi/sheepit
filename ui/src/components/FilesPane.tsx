@@ -596,6 +596,17 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const [cwd,          setCwd]          = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loading,      setLoading]      = useState(false);
+  // Monotonic browse counter — only the latest navigation applies its result,
+  // so rapid subdir clicks don't get clobbered by an earlier in-flight load.
+  const browseSeqRef = useRef(0);
+  // Only surface a loading indicator if a navigation is actually slow (>150ms),
+  // so quick browses don't flash/flicker the list.
+  const [showLoading, setShowLoading] = useState(false);
+  useEffect(() => {
+    if (!loading) { setShowLoading(false); return; }
+    const t = setTimeout(() => setShowLoading(true), 150);
+    return () => clearTimeout(t);
+  }, [loading]);
   // Height of the file-list panel, which sits ABOVE the file viewer (the list
   // and viewer are stacked vertically). Drag the divider to resize.
   const [listHeight, setListHeight] = useState<number>(() => {
@@ -635,6 +646,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}) => {
     if (!sessionId) return;
+    const seq = ++browseSeqRef.current;
     setLoading(true);
     try {
       const url = targetPath
@@ -642,6 +654,8 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         : `/api/fs/${encodeURIComponent(sessionId!)}/browse`;
       const res  = await fetch(url);
       const data = await res.json();
+      // A newer navigation superseded this one — drop the stale result.
+      if (seq !== browseSeqRef.current) return;
       if (data.error) throw new Error(data.error);
       setDir(data.dir);
       setCwd(prev => prev ?? data.cwd);
@@ -653,9 +667,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         if (toOpen) setSelectedFile(toOpen.path);
       }
     } catch (e) {
-      console.error(e);
+      if (seq === browseSeqRef.current) console.error(e);
     } finally {
-      setLoading(false);
+      if (seq === browseSeqRef.current) setLoading(false);
     }
   }, [sessionId]);
 
@@ -1111,7 +1125,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {fileFilterInput}
           {createInput}
-          {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
+          {showLoading && <div className="file-loading-bar" />}
           {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
           <div key={dir ?? 'root'} className="file-list-anim">
             {filteredEntries.map(e => (
@@ -1195,7 +1209,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
               <>
                 {fileFilterInput}
                 {createInput}
-                {loading && <div style={{ padding: '8px 12px', color: '#525252', fontSize: 12 }}>Loading\u2026</div>}
+                {showLoading && <div className="file-loading-bar" />}
                 {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: '#484f58', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
                 <div key={dir ?? 'root'} className="file-list-anim">
                   {filteredEntries.map((e, i) => (

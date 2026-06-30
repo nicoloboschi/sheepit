@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GitBranch, GitCommitHorizontal, GitPullRequest, ArrowUp, ArrowDown, Github, GitFork, Loader2, CircleCheck, CircleX, Clock } from 'lucide-react';
 import { useStats } from '../hooks/useStats';
-import { useGit, useGithubPR, useWorktrees } from '../hooks/useGit';
+import { useGit, useGithubPR } from '../hooks/useGit';
 import useStore from '../store';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
@@ -40,11 +40,6 @@ export interface Stats {
   mem_percent: number;
   mem_used_gb: number;
   processes?: StatsProcess[];
-}
-
-interface Worktree {
-  path: string;
-  branch?: string;
 }
 
 interface ParsedUrl {
@@ -387,19 +382,26 @@ interface GitDetailsProps {
 function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsProps): React.ReactElement {
   const Icon = git.detached ? GitCommitHorizontal : GitBranch;
   const branchColor: string = git.dirty ? '#FACC15' : '#4ADE80';
-  const [worktrees, refreshWorktrees] = useWorktrees(sessionId);
   const [wtLoading, setWtLoading] = useState<boolean>(false);
   const [wtError, setWtError] = useState<string | null>(null);
+  const [wtAdding, setWtAdding] = useState<boolean>(false);
+  const [wtName, setWtName] = useState<string>('');
 
-  async function createWorktree(): Promise<void> {
+  async function createWorktree(name: string): Promise<void> {
+    if (!name.trim()) return;
     setWtLoading(true);
     setWtError(null);
     try {
-      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/worktree`, { method: 'POST' });
+      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/worktree`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
       const data = await res.json();
       if (!res.ok) { setWtError(data.error ?? 'Failed'); return; }
       send({ type: 'create_session', path: data.path });
-      refreshWorktrees();
+      setWtAdding(false);
+      setWtName('');
     } catch (e) {
       setWtError(String(e));
     } finally {
@@ -505,47 +507,42 @@ function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsPro
           <span style={{ fontSize: 9, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.65, display: 'flex', alignItems: 'center', gap: 4 }}>
             <GitFork size={9} /> Worktrees
           </span>
-          <button
-            onClick={createWorktree}
-            disabled={wtLoading}
-            title="Create new worktree"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 18, height: 18, background: 'none', border: '1px solid var(--border)',
-              borderRadius: 3, cursor: wtLoading ? 'default' : 'pointer',
-              color: 'var(--muted-foreground)', opacity: wtLoading ? 0.5 : 1, flexShrink: 0,
-            }}
-            className="hover:bg-white/5 hover:text-foreground"
-          >
-            {wtLoading ? <Loader2 size={10} className="animate-spin" /> : <span style={{ fontSize: 14, lineHeight: 1, marginTop: -1 }}>+</span>}
-          </button>
+          {wtAdding ? (
+            <input
+              autoFocus
+              value={wtName}
+              onChange={(e) => setWtName(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') createWorktree(wtName);
+                if (e.key === 'Escape') { setWtAdding(false); setWtName(''); setWtError(null); }
+              }}
+              placeholder="branch name…"
+              disabled={wtLoading}
+              style={{
+                width: 150, fontSize: 11, padding: '2px 6px',
+                background: 'var(--input)', border: '1px solid var(--ring)', borderRadius: 3,
+                color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', outline: 'none',
+              }}
+            />
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setWtError(null); setWtAdding(true); }}
+              disabled={wtLoading}
+              title="Create new worktree"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 18, height: 18, background: 'none', border: '1px solid var(--border)',
+                borderRadius: 3, cursor: wtLoading ? 'default' : 'pointer',
+                color: 'var(--muted-foreground)', opacity: wtLoading ? 0.5 : 1, flexShrink: 0,
+              }}
+              className="hover:bg-white/5 hover:text-foreground"
+            >
+              {wtLoading ? <Loader2 size={10} className="animate-spin" /> : <span style={{ fontSize: 14, lineHeight: 1, marginTop: -1 }}>+</span>}
+            </button>
+          )}
         </div>
-        {worktrees === null && (
-          <span style={{ fontSize: 10, color: 'var(--muted-foreground)', opacity: 0.5 }}>Loading\u2026</span>
-        )}
-        {(worktrees as Worktree[] | null)?.map((wt: Worktree) => (
-          <button
-            key={wt.path}
-            onClick={() => send({ type: 'create_session', path: wt.path })}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left',
-              background: 'none', border: 'none', borderRadius: 3,
-              padding: '3px 4px', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)',
-            }}
-            className="hover:bg-white/5 hover:text-foreground"
-            title={wt.path}
-          >
-            <GitFork size={10} style={{ flexShrink: 0, opacity: 0.6 }} />
-            <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-              <span style={{ fontFamily: '"JetBrains Mono",monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {wt.branch ?? wt.path.split('/').pop()}
-              </span>
-              <span style={{ fontSize: 9, opacity: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {wt.path}
-              </span>
-            </span>
-          </button>
-        ))}
         {wtError && <span style={{ fontSize: 10, color: '#F87171' }}>{wtError}</span>}
       </div>
     </div>
