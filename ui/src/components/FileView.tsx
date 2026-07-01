@@ -274,6 +274,13 @@ export default function FileView({
 
   const isDirty = content !== original;
   const diffHunks = hunks ?? fetchedHunks ?? [];
+  // Live-update: `justUpdated` flashes the body when the file changes on disk;
+  // `diskChanged` warns when it changed under unsaved edits (we don't clobber).
+  const [justUpdated, setJustUpdated] = useState(false);
+  const [diskChanged, setDiskChanged] = useState(false);
+  const contentRef = useRef(content); contentRef.current = content;
+  const isDirtyRef = useRef(isDirty); isDirtyRef.current = isDirty;
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Prism (showLineNumbers + per-line lineProps + wrapLongLines) is O(n) and
   // janky on big files, so above a threshold we render plain monospace text —
   // instant. We ALSO skip Prism when there's no language to highlight (e.g.
@@ -306,9 +313,33 @@ export default function FileView({
     setError(null); setSaveMsg(null); setLoading(true);
     fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
       .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.text(); })
-      .then(text => { setContent(text); setOriginal(text); setLoading(false); })
+      .then(text => { setContent(text); setOriginal(text); setLoading(false); setDiskChanged(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, [path, mode]); // eslint-disable-line
+
+  // Live updates: subscribe to on-disk changes for the open file and re-fetch
+  // when it's rewritten (e.g. by Claude Code). We never clobber unsaved edits —
+  // if the user has local changes we surface a "changed on disk" hint instead.
+  useEffect(() => {
+    if (!path || imgFile || pdfFile) return;
+    const es = new EventSource(`/api/fs/watch?path=${encodeURIComponent(path)}`);
+    es.onmessage = (ev) => {
+      let msg: { type?: string }; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type !== 'change') return;
+      fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
+        .then(r => r.ok ? r.text() : Promise.reject())
+        .then(text => {
+          if (text === contentRef.current) return;      // our own save / no-op
+          if (isDirtyRef.current) { setDiskChanged(true); return; } // don't overwrite edits
+          setContent(text); setOriginal(text);
+          setJustUpdated(true);
+          if (flashTimer.current) clearTimeout(flashTimer.current);
+          flashTimer.current = setTimeout(() => setJustUpdated(false), 1400);
+        })
+        .catch(() => { /* transient read error — ignore */ });
+    };
+    return () => { es.close(); };
+  }, [path, imgFile, pdfFile]);
 
   // Fetch the per-file diff when toggled to diff with no pre-parsed hunks.
   useEffect(() => {
@@ -459,6 +490,8 @@ export default function FileView({
         <span title={shownPath} style={{ fontSize: 11, color: '#cdd3da', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
+        {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}
+        {diskChanged && <span className="file-disk-changed-badge" title="This file changed on disk while you have unsaved edits" style={{ flexShrink: 0 }}>changed on disk</span>}
         {(additions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#4ADE80', fontFamily: 'monospace', flexShrink: 0 }}>+{additions}</span>}
         {(deletions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#F87171', fontFamily: 'monospace', flexShrink: 0 }}>-{deletions}</span>}
 
@@ -537,7 +570,7 @@ export default function FileView({
           {textFile && mode !== 'diff' && loading && loadingEl}
 
           {textFile && mode === 'edit' && editable && !loading && (
-            <div style={{ flex: fill ? 1 : undefined, minHeight: 0, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
+            <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, minHeight: 0, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               <CodeMirror
                 value={content}
                 extensions={[EditorView.lineWrapping, ...getCmLang(name)]}
@@ -550,7 +583,7 @@ export default function FileView({
             </div>
           )}
           {textFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
-            <div style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
+            <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               {noHighlight ? (
                 <pre style={{ margin: 0, padding: '8px 12px', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace', color: '#d4d4d8', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {content}
@@ -569,7 +602,7 @@ export default function FileView({
             </div>
           )}
           {textFile && mode === 'preview' && mdFile && !loading && (
-            <div style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto', padding: '16px 24px' }}>
+            <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto', padding: '16px 24px' }}>
               {content.trim()
                 ? <div className="md-preview"><Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown></div>
                 : <div style={{ color: '#525252', fontSize: 12, fontStyle: 'italic' }}>Empty note — switch to Edit to start writing.</div>}

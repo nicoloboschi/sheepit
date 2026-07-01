@@ -707,6 +707,28 @@
   100% { background-position: 140% 0; }
 }
 
+/* Live file updates — a brief brand-tinted wash when an open file changes on
+   disk, plus header badges. `updated` (brand) confirms an auto-refresh; `changed
+   on disk` (amber warning) means it changed under unsaved edits and was NOT
+   overwritten. */
+@keyframes file-updated-flash {
+  0%   { background-color: rgba(0, 116, 217, 0.22); }
+  100% { background-color: transparent; }
+}
+.file-updated-flash { animation: file-updated-flash 1.4s ease-out; }
+.file-updated-badge {
+  font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 10px;
+  color: var(--primary); border: 1px solid var(--primary);
+  background: var(--primary-tint);
+  animation: fade-in 0.15s ease;
+}
+.file-disk-changed-badge {
+  font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 10px;
+  color: #f0b429; border: 1px solid rgba(240, 180, 41, 0.5);
+  background: rgba(240, 180, 41, 0.12);
+  animation: fade-in 0.15s ease; cursor: help;
+}
+
 /* ── Workspace grip (top strip) ────────────────────────────────────────────
  *  Sits on the TOP edge of each .session-item card. Only drag source for
  *  workspace reorder — clicks on it bubble nowhere (the dnd-kit listeners

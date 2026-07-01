@@ -876,6 +876,38 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     child.on('spawn', () => { if (!settled) { settled = true; child.unref(); res.json({ ok: true }); } });
   });
 
+  // Live file-change stream (SSE). The file viewer subscribes to this for an
+  // open file and re-fetches /fs/raw on each `change` event so the content stays
+  // in sync while another process (e.g. Claude Code) rewrites it.
+  router.get('/fs/watch', (req, res) => {
+    const filePath = expandHome(req.query.path as string | undefined ?? '');
+    if (!filePath || !existsSync(filePath)) return res.status(404).end();
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    let lastMtime = -1;
+    try { lastMtime = statSync(filePath).mtimeMs; } catch { /* ignore */ }
+
+    const onChange = () => {
+      try {
+        const mtime = statSync(filePath).mtimeMs;
+        if (mtime !== lastMtime) {
+          lastMtime = mtime;
+          res.write(`data: ${JSON.stringify({ type: 'change', mtime })}\n\n`);
+        }
+      } catch {
+        res.write(`data: ${JSON.stringify({ type: 'deleted' })}\n\n`);
+      }
+    };
+    watchFile(filePath, { interval: 500 }, onChange);
+    const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 30_000);
+
+    req.on('close', () => { unwatchFile(filePath, onChange); clearInterval(hb); });
+  });
+
   router.get('/fs/raw', (req, res) => {
     const filePath = expandHome(req.query.path as string | undefined ?? '');
     if (!filePath) return res.status(400).send('Missing path');
