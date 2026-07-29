@@ -49,10 +49,13 @@ vipershell
 - **Pre-warmed shell pool** — new sessions open instantly, no shell-startup lag
 - **Workspaces + split panes** — single, horizontal, vertical, three-pane (4 variants), and 2×2 grid layouts
 - **Drag & drop everywhere** — reorder workspaces, swap panes within a workspace, move panes between workspaces, or extract a pane into a new workspace
+- **Zen mode + shareable links** — focus a single pane, and the URL always points at the workspace (and pane) you're looking at, so you can bookmark it or reopen it later
 - **Git integration** — branch status, PR links, diff viewer, worktree management
-- **File browser** — navigate, edit, and preview files with syntax highlighting
+- **File browser** — navigate, edit, and preview files with syntax highlighting; open files refresh live when something else rewrites them on disk
 - **Search** — grep across your project from the browser
 - **AI session naming** — sessions get auto-named based on terminal activity (requires the `claude` or `codex` CLI)
+- **Saved commands** — keep the commands you run often a click away
+- **Knowledge notes** — scratch markdown notes kept alongside your sessions
 - **Mobile-friendly** — responsive UI with touch scrolling and a tap-only session list
 - **File upload** — drop files from your desktop onto any terminal to upload and paste the path
 - **Unseen output indicator** — highlight on sessions with new output you haven't seen
