@@ -18,7 +18,6 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { logger } from './server.js';
-import type { MemoryStore } from './memory.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -486,10 +485,6 @@ export class DirectBridge {
     mkdirSync(CONFIG_DIR, { recursive: true });
     mkdirSync(RING_DIR, { recursive: true });
   }
-
-  // Reserved for future memory-aware features; kept on the API surface so
-  // index.ts can wire in a MemoryStore without needing a conditional.
-  setMemory(_memory: MemoryStore): void { /* noop for now */ }
 
   async start(): Promise<void> {
     this.daemon.setHandlers(

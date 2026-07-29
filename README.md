@@ -53,7 +53,6 @@ vipershell
 - **File browser** — navigate, edit, and preview files with syntax highlighting
 - **Search** — grep across your project from the browser
 - **AI session naming** — sessions get auto-named based on terminal activity (requires the `claude` or `codex` CLI)
-- **Hindsight memory** — optional long-term memory via [Hindsight](https://github.com/vectorize-io/hindsight) so Claude Code and Codex recall context across sessions
 - **Mobile-friendly** — responsive UI with touch scrolling and a tap-only session list
 - **File upload** — drop files from your desktop onto any terminal to upload and paste the path
 - **Unseen output indicator** — highlight on sessions with new output you haven't seen

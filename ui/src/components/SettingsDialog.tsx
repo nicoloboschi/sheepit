@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { Activity, ScrollText, BrainCircuit, Keyboard, Sparkles, Zap } from 'lucide-react';
+import { Activity, ScrollText, Keyboard, Sparkles, Zap } from 'lucide-react';
 import { DialogHeader, DialogTitle } from './ui/dialog';
 import ConfigDialog from './ConfigDialog';
 import ViperIcon from './ViperIcon';
 import { DiagnosticsContent } from './DiagnosticsDialog';
 import { LogsContent } from './LogsModal';
-import { MemoryContent } from './MemoryDialog';
 import { ShortcutsContent } from './ShortcutsDialog';
 import { AIFeaturesContent } from './AIFeaturesDialog';
 import { CommandsContent } from './CommandsDialog';
@@ -14,7 +13,6 @@ const TABS = [
   { id: 'ai', label: 'AI Features', icon: Sparkles },
   { id: 'commands', label: 'Commands', icon: Zap },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
-  { id: 'memory', label: 'Memory', icon: BrainCircuit },
   { id: 'logs', label: 'Server Logs', icon: ScrollText },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity },
 ] as const;
@@ -69,7 +67,6 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
         <div className="flex-1 min-w-0 flex flex-col min-h-0 overflow-y-auto">
           {tab === 'diagnostics' && <DiagnosticsContent />}
           {tab === 'logs' && <LogsContent />}
-          {tab === 'memory' && <MemoryContent />}
           {tab === 'shortcuts' && <ShortcutsContent />}
           {tab === 'commands' && <CommandsContent />}
           {tab === 'ai' && <AIFeaturesContent />}

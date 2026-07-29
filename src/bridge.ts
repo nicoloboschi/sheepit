@@ -8,7 +8,6 @@ import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import { PubSub } from './pubsub.js';
 import { logger } from './server.js';
-import type { MemoryStore } from './memory.js';
 import os from 'os';
 
 const SCROLLBACK_DIR = join(homedir(), '.config', 'vipershell', 'scrollback');
@@ -69,12 +68,6 @@ interface ManagedSession {
   lastPreview: string;
 }
 
-interface MemBuffer {
-  chunks: string[];
-  seq: number;
-  lastText: string;
-}
-
 type SessionType = 'claude' | 'codex' | null;
 
 interface SavedSession {
@@ -93,12 +86,10 @@ export type BridgeMessage =
 export class TmuxBridge {
   private managed = new Map<string, ManagedSession>();
   private scrollbackStreams = new Map<string, WriteStream>();
-  private memBuffers = new Map<string, MemBuffer>();
   readonly pubsub = new PubSub<BridgeMessage>();
   private sessionListInterval: NodeJS.Timeout | null = null;
   private previewInterval: NodeJS.Timeout | null = null;
   private knownSessions = new Set<string>();
-  private memory: MemoryStore | null = null;
   private inputBuffers = new Map<string, string>();
   private cachedSessions: Session[] = [];
   getCachedSessions(): Session[] { return this.cachedSessions; }
@@ -108,10 +99,6 @@ export class TmuxBridge {
   /** Cached PR info per directory path — refreshed every 30s */
   private prCache = new Map<string, { prNum: number; prState: string; prUrl: string } | null>();
   private prCacheInterval: NodeJS.Timeout | null = null;
-
-  setMemory(memory: MemoryStore): void {
-    this.memory = memory;
-  }
 
   async start(): Promise<void> {
     mkdirSync(SCROLLBACK_DIR, { recursive: true });
@@ -173,8 +160,6 @@ export class TmuxBridge {
         this._closeScrollback(id, true);
         this._unpersistSession(id);
         this.inputBuffers.delete(id);
-        await this._flushMemory(id, '');
-        this.memBuffers.delete(id);
         logger.debug(`Session closed: ${id}`);
       }
     }
@@ -768,7 +753,6 @@ export class TmuxBridge {
       managedPtys: this.managed.size,
       managedPtyDetails,
       scrollbackStreams: this.scrollbackStreams.size,
-      memBuffers: this.memBuffers.size,
       inputBuffers: this.inputBuffers.size,
       knownSessions: this.knownSessions.size,
       pubsubChannels: this.pubsub.channelStats(),
@@ -777,25 +761,4 @@ export class TmuxBridge {
     };
   }
 
-  private async _flushMemory(sessionId: string, path: string, buf?: MemBuffer): Promise<void> {
-    if (!this.memory?.active) return;
-    const b = buf ?? this.memBuffers.get(sessionId);
-    if (!b || b.chunks.length === 0) return;
-
-    const combined = b.chunks.join('\n---\n').trim();
-    if (!combined) return;
-
-    const tags = [
-      `session:${sessionId}`,
-      `path:${path}`,
-      `host:${os.hostname()}`,
-    ];
-    const context = path
-      ? `tmux terminal session in ${path}`
-      : 'tmux terminal session';
-
-    await this.memory.retain(combined, `${sessionId}-${b.seq}`, tags, context);
-    b.seq++;
-    b.chunks = [];
-  }
 }

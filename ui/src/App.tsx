@@ -23,7 +23,6 @@ import KnowledgeDialog from './components/KnowledgeDialog';
 import MobileKeybar from './components/MobileKeybar';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
-import MemoryDialog from './components/MemoryDialog';
 import CommandsDialog, { loadCommands } from './components/CommandsDialog';
 import SessionList from './components/SessionList';
 import { WorkspaceCardPreview, PaneCardPreview } from './components/SessionItem';
@@ -35,7 +34,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, BrainCircuit, ImagePlus, BookOpen,
+  Home, Zap, TerminalSquare, ImagePlus, BookOpen,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import ViperIcon from './components/ViperIcon';
@@ -601,7 +600,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
 
   const [showSessions, setShowSessions] = useState(false);
   const [showLogs,     setShowLogs]     = useState(false);
-  const [showMemory,   setShowMemory]   = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [commands,     setCommands]     = useState(loadCommands);
   const [version,      setVersion]      = useState<string | null>(null);
@@ -793,9 +791,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowMemory(true)}>
-                <BrainCircuit size={14} /> Memory
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -843,7 +838,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
       )}
 
       {showLogs     && <LogsModal     onClose={() => setShowLogs(false)} />}
-      {showMemory   && <MemoryDialog  onClose={() => setShowMemory(false)} />}
       {showCommands && <CommandsDialog onClose={() => { setShowCommands(false); setCommands(loadCommands()); }} />}
     </>
   );

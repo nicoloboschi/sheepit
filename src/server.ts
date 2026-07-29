@@ -7,7 +7,6 @@ import { existsSync, statSync, watchFile, unwatchFile } from 'fs';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import type { BridgeMessage } from './bridge.js';
-import type { MemoryStore } from './memory.js';
 import type { AIService } from './ai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -72,12 +71,12 @@ interface ClientState {
 
 // ── Server factory ────────────────────────────────────────────────────────────
 
-export async function createApp(bridge: DirectBridge, memory: MemoryStore, ai: AIService) {
+export async function createApp(bridge: DirectBridge, ai: AIService) {
   const app = express();
   app.use(express.json());
 
   // REST API
-  app.use('/api', createApiRouter(bridge, logBuffer, memory, ai));
+  app.use('/api', createApiRouter(bridge, logBuffer, ai));
 
   const server = createServer(app);
 

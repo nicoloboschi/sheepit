@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings, Zap, TerminalSquare, SquarePlus, PanelLeftClose, List, Activity, Star } from 'lucide-react';
-import MemoryIndicator from './MemoryIndicator';
 import useStore, { activeTerminalSend } from '../store';
 import SessionList from './SessionList';
 import { loadCommands } from './CommandsDialog';
@@ -233,8 +232,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-
-        <MemoryIndicator onOpenSettings={() => setShowSettings(true)} />
 
         <Button
           variant="ghost"

@@ -1,11 +1,10 @@
 import { useRef, useEffect, useState } from 'react';
-import { Home, SquarePlus, Zap, TerminalSquare, Settings, ScrollText, BrainCircuit } from 'lucide-react';
+import { Home, SquarePlus, Zap, TerminalSquare, Settings, ScrollText } from 'lucide-react';
 import useStore from '../store';
 import { tildefy } from '../utils';
 import SessionList from './SessionList';
 import CommandsDialog, { loadCommands } from './CommandsDialog';
 import LogsModal from './LogsModal';
-import MemoryDialog from './MemoryDialog';
 import DirectoryPicker from './DirectoryPicker';
 import ViperIcon from './ViperIcon';
 import { Button } from './ui/button';
@@ -30,7 +29,6 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
   const currentSessionId = useStore(s => s.currentSessionId);
   const [showCommands, setShowCommands] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
-  const [showMemory, setShowMemory] = useState(false);
   const [commands, setCommands] = useState(loadCommands);
 
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -125,7 +123,6 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
 
         {showCommands && <CommandsDialog onClose={() => { setShowCommands(false); setCommands(loadCommands()); }} />}
         {showLogs && <LogsModal onClose={() => setShowLogs(false)} />}
-        {showMemory && <MemoryDialog onClose={() => setShowMemory(false)} />}
 
         <div className="flex items-center justify-between px-4 pb-2 shrink-0">
           <div className="flex items-center gap-2">
@@ -167,9 +164,6 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowMemory(true)}>
-                <BrainCircuit size={14} /> Memory
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

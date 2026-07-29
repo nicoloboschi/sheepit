@@ -4,7 +4,6 @@ import { createServer } from 'http'
 import type { AddressInfo } from 'net'
 import { createApiRouter } from '../api.js'
 import type { DirectBridge } from '../direct-bridge.js'
-import type { MemoryStore, MemoryConfig } from '../memory.js'
 import type { LogBuffer } from '../server.js'
 import type { AIService } from '../ai.js'
 
@@ -31,33 +30,6 @@ const mockBridge: DirectBridge = {
     serverMemory: { rss: 100000, heapUsed: 50000, heapTotal: 80000, external: 1000, arrayBuffers: 500 },
   }),
 } as unknown as DirectBridge
-
-// ── Mock memory ──────────────────────────────────────────────────────────────
-
-const defaultConfig: MemoryConfig = {
-  hindsightEnabled: false,
-  hindsightApiUrl: '',
-  hindsightApiToken: '',
-  retainChunkChars: 3000,
-  observationsEnabled: false,
-  uiPort: 18765,
-}
-
-const mockMemory: MemoryStore = {
-  get active() { return false },
-  get apiUrl() { return 'http://127.0.0.1:9027' },
-  get startedAt() { return null },
-  get retainChunkChars() { return 3000 },
-  getConfig: vi.fn().mockReturnValue(defaultConfig),
-  saveConfig: vi.fn(),
-  start: vi.fn().mockResolvedValue(undefined),
-  startInBackground: vi.fn(),
-  restart: vi.fn().mockResolvedValue(undefined),
-  close: vi.fn(),
-  retain: vi.fn().mockResolvedValue(undefined),
-  recall: vi.fn().mockResolvedValue([]),
-  startUi: vi.fn().mockResolvedValue(null),
-} as unknown as MemoryStore
 
 // ── Mock logBuffer ───────────────────────────────────────────────────────────
 
@@ -92,7 +64,7 @@ beforeAll(() => {
   return new Promise<void>((resolve) => {
     const app = express()
     app.use(express.json())
-    app.use('/api', createApiRouter(mockBridge, mockLogBuffer, mockMemory, mockAI))
+    app.use('/api', createApiRouter(mockBridge, mockLogBuffer, mockAI))
 
     server = createServer(app)
     server.listen(0, '127.0.0.1', () => {
@@ -209,43 +181,6 @@ describe('GET /api/sessions/:id/scrollback', () => {
   it('returns 404 when scrollback file does not exist', async () => {
     const res = await fetch(`${baseUrl}/sessions/$0/scrollback`)
     expect(res.status).toBe(404)
-  })
-})
-
-describe('GET /api/memory/config', () => {
-  it('has hindsightEnabled, active, hindsightApiUrl fields', async () => {
-    const res = await fetch(`${baseUrl}/memory/config`)
-    expect(res.status).toBe(200)
-    const body = await res.json() as Record<string, unknown>
-    expect(body).toHaveProperty('hindsightEnabled')
-    expect(body).toHaveProperty('active')
-    expect(body).toHaveProperty('hindsightApiUrl')
-  })
-
-  it('active is false when memory not active', async () => {
-    const res = await fetch(`${baseUrl}/memory/config`)
-    const body = await res.json() as Record<string, unknown>
-    expect(body.active).toBe(false)
-  })
-})
-
-describe('POST /api/memory/restart', () => {
-  it('returns { ok: true }', async () => {
-    const res = await fetch(`${baseUrl}/memory/restart`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hindsightEnabled: false }),
-    })
-    expect(res.status).toBe(200)
-    const body = await res.json() as { ok: boolean }
-    expect(body).toEqual({ ok: true })
-  })
-})
-
-describe('GET /api/hindsight/health', () => {
-  it('returns 503 when memory not active', async () => {
-    const res = await fetch(`${baseUrl}/hindsight/health`)
-    expect(res.status).toBe(503)
   })
 })
 

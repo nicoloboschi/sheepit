@@ -4,7 +4,6 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { DirectBridge } from './direct-bridge.js';
-import { MemoryStore } from './memory.js';
 import { AIService } from './ai.js';
 import { createApp, logger } from './server.js';
 import { config } from './config.js';
@@ -28,18 +27,14 @@ program
     const port = parseInt(opts.port, 10);
     const host = opts.host;
 
-    const memory = new MemoryStore();
-    memory.startInBackground();
-
     const bridge = new DirectBridge();
-    bridge.setMemory(memory);
     await bridge.start();
 
     const ai = new AIService();
     ai.setBridge(bridge);
     ai.start();
 
-    const server = await createApp(bridge, memory, ai);
+    const server = await createApp(bridge, ai);
 
     server.listen(port, host, () => {
       const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
@@ -56,7 +51,6 @@ program
       logger.info('Shutting down\u2026');
       ai.stop();
       bridge.stop();
-      memory.close();
       server.close();
       process.exit(0);
     };
