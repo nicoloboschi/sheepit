@@ -3,9 +3,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
+import { existsSync, statSync, watchFile, unwatchFile } from 'fs';
 import { DirectBridge } from './direct-bridge.js';
-import { createApiRouter } from './api.js';
+import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import type { BridgeMessage } from './bridge.js';
 import type { MemoryStore } from './memory.js';
 import type { AIService } from './ai.js';
@@ -64,6 +64,9 @@ interface ClientState {
   subscribedSessions: Map<string, () => void>;
   /** Global session-list subscription unsub */
   unsubSessions: (() => void) | null;
+  /** Watched file paths (path → stop fn). Multiplexed over this one socket —
+   *  see the `watch_file` case for why these can't be SSE streams. */
+  watchedFiles: Map<string, () => void>;
 }
 
 
@@ -105,7 +108,7 @@ export async function createApp(bridge: DirectBridge, memory: MemoryStore, ai: A
   };
 
   wss.on('connection', (ws: WebSocket) => {
-    const state: ClientState = { subscribedSessions: new Map(), unsubSessions: null };
+    const state: ClientState = { subscribedSessions: new Map(), unsubSessions: null, watchedFiles: new Map() };
     const clientInfo = { ws, state, connectedAt: Date.now(), messageCount: 0, bytesSent: 0 };
     activeClients.add(clientInfo);
     logger.debug(`WS client connected (total: ${activeClients.size})`);
@@ -162,6 +165,43 @@ export async function createApp(bridge: DirectBridge, memory: MemoryStore, ai: A
             const sessionId = msg.session_id as string;
             state.subscribedSessions.get(sessionId)?.();
             state.subscribedSessions.delete(sessionId);
+            break;
+          }
+
+          // Live file watching, multiplexed over this socket.
+          //
+          // This used to be one SSE stream per open file (`GET /api/fs/watch`).
+          // A browser allows only ~6 HTTP/1.1 connections per host, and an SSE
+          // stream never completes — so a handful of open files consumed the
+          // entire budget and EVERY other request to the origin queued forever,
+          // surfacing as "Failed to fetch" across the whole app. The WebSocket
+          // is already open and has no such limit, so watches ride on it.
+          case 'watch_file': {
+            const filePath = expandHome(msg.path as string | undefined ?? '');
+            if (!filePath || state.watchedFiles.has(filePath)) break;
+            if (!existsSync(filePath)) break;
+
+            let lastMtime = -1;
+            try { lastMtime = statSync(filePath).mtimeMs; } catch { /* ignore */ }
+            const onChange = () => {
+              try {
+                const mtime = statSync(filePath).mtimeMs;
+                if (mtime === lastMtime) return;
+                lastMtime = mtime;
+                send({ type: 'file_changed', path: filePath, mtime });
+              } catch {
+                send({ type: 'file_deleted', path: filePath });
+              }
+            };
+            watchFile(filePath, { interval: 500 }, onChange);
+            state.watchedFiles.set(filePath, () => unwatchFile(filePath, onChange));
+            break;
+          }
+
+          case 'unwatch_file': {
+            const filePath = expandHome(msg.path as string | undefined ?? '');
+            state.watchedFiles.get(filePath)?.();
+            state.watchedFiles.delete(filePath);
             break;
           }
 
@@ -223,6 +263,9 @@ export async function createApp(bridge: DirectBridge, memory: MemoryStore, ai: A
     ws.on('close', () => {
       for (const unsub of state.subscribedSessions.values()) unsub();
       state.subscribedSessions.clear();
+      // Polling watchers outlive the socket unless we stop them explicitly.
+      for (const stop of state.watchedFiles.values()) stop();
+      state.watchedFiles.clear();
       state.unsubSessions?.();
       activeClients.delete(clientInfo);
       logger.debug(`WS client disconnected (total: ${activeClients.size})`);

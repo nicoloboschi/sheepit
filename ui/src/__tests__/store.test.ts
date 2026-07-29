@@ -51,6 +51,60 @@ describe('useStore', () => {
   })
 
   describe('renderSessions', () => {
+    it('is a no-op when the session list is unchanged', () => {
+      // The server re-publishes this list every 2 seconds. Writing state anyway
+      // re-rendered the whole sidebar and re-serialised every workspace to
+      // localStorage on a timer, which showed up as periodic 50–124ms
+      // main-thread stalls in the browser with the app sitting idle.
+      const sessions = [makeSession('$0', 'shell'), makeSession('$1', 'dev')]
+      useStore.getState().renderSessions(sessions)
+      const first = useStore.getState()
+
+      useStore.getState().renderSessions([makeSession('$0', 'shell'), makeSession('$1', 'dev')])
+      const second = useStore.getState()
+
+      // Same references — nothing downstream has any reason to re-render.
+      expect(second.sessions).toBe(first.sessions)
+      expect(second.workspaces).toBe(first.workspaces)
+      expect(second.workspaceOrder).toBe(first.workspaceOrder)
+      expect(second.sessionMap).toBe(first.sessionMap)
+    })
+
+    it('still updates when a session actually changes', () => {
+      useStore.getState().renderSessions([makeSession('$0', 'shell')])
+      const before = useStore.getState().sessions
+
+      const busier = { ...makeSession('$0', 'shell'), cpuPercent: 42 }
+      useStore.getState().renderSessions([busier])
+      const after = useStore.getState()
+
+      expect(after.sessions).not.toBe(before)
+      expect(after.sessions[0]!.cpuPercent).toBe(42)
+    })
+
+    it('still updates when a session appears or disappears', () => {
+      useStore.getState().renderSessions([makeSession('$0', 'shell')])
+      const before = useStore.getState().workspaces
+
+      useStore.getState().renderSessions([makeSession('$0', 'shell'), makeSession('$1', 'new')])
+      expect(useStore.getState().workspaces).not.toBe(before)
+      expect(Object.keys(useStore.getState().workspaces)).toHaveLength(2)
+
+      useStore.getState().renderSessions([makeSession('$0', 'shell')])
+      expect(Object.keys(useStore.getState().workspaces)).toHaveLength(1)
+    })
+
+    it('keeps the identity of workspaces it did not touch', () => {
+      useStore.getState().renderSessions([makeSession('$0', 'a'), makeSession('$1', 'b')])
+      const { workspaceOrder, workspaces } = useStore.getState()
+      const untouched = workspaceOrder[0]!
+      const untouchedWs = workspaces[untouched]
+
+      // A third session arrives: the other workspaces must not be rebuilt.
+      useStore.getState().renderSessions([makeSession('$0', 'a'), makeSession('$1', 'b'), makeSession('$2', 'c')])
+      expect(useStore.getState().workspaces[untouched]).toBe(untouchedWs)
+    })
+
     it('stores sessions and builds sessionMap', () => {
       const sessions = [makeSession('$0', 'shell'), makeSession('$1', 'dev')]
       useStore.getState().renderSessions(sessions)
@@ -215,6 +269,27 @@ describe('useStore', () => {
       expect(useStore.getState().workspaces[b]!.cells).toEqual(['$2', '$1'])
       expect(useStore.getState().workspaces[b]!.layout).toBe('horizontal')
       expect(useStore.getState().workspaces[b]!.activeCell).toBe(1) // moved pane gets focus
+    })
+
+    it('extractPaneToNewWorkspace re-homes every pane past a downgraded layout', () => {
+      // The sequence TerminalGrid.changeLayout runs on quad → single. Panes
+      // beyond the new capacity must end up in their own workspaces: left in
+      // `cells` they would never render, yet their PTYs would stay alive and
+      // hidden from the sidebar with no way to close them.
+      const id = useStore.getState().createWorkspace(['$0', '$1', '$2', '$3'])
+      const insertAt = useStore.getState().workspaceOrder.indexOf(id) + 1
+      for (let i = 3; i >= 1; i--) {
+        useStore.getState().extractPaneToNewWorkspace({ sourceId: id, sourceIdx: i, insertAt })
+      }
+      const ws = useStore.getState().workspaces[id]!
+      expect(ws.cells).toEqual(['$0'])
+
+      // Each evicted pane owns exactly one workspace — nothing stranded.
+      const all = useStore.getState().workspaceOrder
+        .flatMap(wid => useStore.getState().workspaces[wid]!.cells)
+      expect(all.sort()).toEqual(['$0', '$1', '$2', '$3'])
+      // …and they sit next to the workspace they came from, not at the end.
+      expect(useStore.getState().workspaceOrder.indexOf(id)).toBe(insertAt - 1)
     })
 
     it('movePaneBetweenWorkspaces allows moving cell 0 (no more root restriction)', () => {

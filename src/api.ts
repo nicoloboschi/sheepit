@@ -39,6 +39,13 @@ function _detectPluginSource(req: { headers: Record<string, unknown>; url?: stri
   return 'plugin';
 }
 
+/** Expand a leading `~` to the user's home directory. Shared with server.ts,
+ *  which resolves the same user-supplied paths for WebSocket file watches. */
+export function expandHomePath(p: string): string {
+  if (p.startsWith('~/')) return nodePath.join(os.homedir(), p.slice(2));
+  return p === '~' ? os.homedir() : p;
+}
+
 export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memory: MemoryStore, ai: AIService): Router {
   const router = Router();
 
@@ -639,7 +646,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
 
   // ── Filesystem browse ────────────────────────────────────────────────────────
 
-  const expandHome = (p: string) => p.startsWith('~/') ? nodePath.join(os.homedir(), p.slice(2)) : p === '~' ? os.homedir() : p;
+  const expandHome = expandHomePath;
 
   // Live foreground-process working directory — used to resolve relative paths
   // an app (e.g. Claude Code) prints, against ITS cwd rather than the shell's
@@ -876,37 +883,11 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, memo
     child.on('spawn', () => { if (!settled) { settled = true; child.unref(); res.json({ ok: true }); } });
   });
 
-  // Live file-change stream (SSE). The file viewer subscribes to this for an
-  // open file and re-fetches /fs/raw on each `change` event so the content stays
-  // in sync while another process (e.g. Claude Code) rewrites it.
-  router.get('/fs/watch', (req, res) => {
-    const filePath = expandHome(req.query.path as string | undefined ?? '');
-    if (!filePath || !existsSync(filePath)) return res.status(404).end();
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
-
-    let lastMtime = -1;
-    try { lastMtime = statSync(filePath).mtimeMs; } catch { /* ignore */ }
-
-    const onChange = () => {
-      try {
-        const mtime = statSync(filePath).mtimeMs;
-        if (mtime !== lastMtime) {
-          lastMtime = mtime;
-          res.write(`data: ${JSON.stringify({ type: 'change', mtime })}\n\n`);
-        }
-      } catch {
-        res.write(`data: ${JSON.stringify({ type: 'deleted' })}\n\n`);
-      }
-    };
-    watchFile(filePath, { interval: 500 }, onChange);
-    const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 30_000);
-
-    req.on('close', () => { unwatchFile(filePath, onChange); clearInterval(hb); });
-  });
+  // NOTE: the old `GET /fs/watch` SSE endpoint lived here. It was replaced by
+  // `watch_file` / `unwatch_file` messages on the shared WebSocket (see
+  // server.ts): one never-ending SSE stream per open file exhausted the
+  // browser's ~6 HTTP/1.1 connections per host, which made every other request
+  // to the origin hang and surfaced as "Failed to fetch" across the app.
 
   router.get('/fs/raw', (req, res) => {
     const filePath = expandHome(req.query.path as string | undefined ?? '');

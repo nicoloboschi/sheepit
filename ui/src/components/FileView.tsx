@@ -50,6 +50,7 @@ import {
   Eye, Pencil, Diff, Save, Copy, Check, ClipboardCopy, ExternalLink, Trash2,
   Maximize2, Minimize2, Loader2, AlertCircle,
 } from 'lucide-react';
+import * as sharedWs from '../sharedWs';
 
 // ── Diff types + parser (owned here; GitDiffPane/FilesPane import from this) ──
 
@@ -244,6 +245,35 @@ export default function FileView({
   const pdfFile = isPdf(name);
   const textFile = isText(name);
 
+  // Directory of the markdown file — relative image srcs resolve against it.
+  const mdDir = useMemo(() => {
+    if (!path) return '';
+    const i = path.lastIndexOf('/');
+    return i >= 0 ? path.slice(0, i) : '';
+  }, [path]);
+
+  // Rewrite a markdown image src to something the browser can load. Absolute
+  // URLs / data: URIs pass through; local paths (relative to the .md file, or
+  // absolute-on-disk, or ~-rooted) are routed through the /fs/raw endpoint,
+  // which serves the file bytes with the right content-type.
+  const resolveImgSrc = (src?: string): string | undefined => {
+    if (!src) return src;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return src; // http:, https:, data:, …
+    let abs = (src.startsWith('/') || src.startsWith('~')) ? src : `${mdDir}/${src}`;
+    // Collapse ./ and ../ segments (no node path module in the browser).
+    const rooted = abs.startsWith('/');
+    const out: string[] = [];
+    for (const seg of abs.split('/')) {
+      if (!seg || seg === '.') continue;
+      if (seg === '..') {
+        if (out.length && out[out.length - 1] !== '..') out.pop();
+        else if (!rooted) out.push('..');
+      } else out.push(seg);
+    }
+    abs = (rooted ? '/' : '') + out.join('/');
+    return `/api/fs/raw?path=${encodeURIComponent(abs)}`;
+  };
+
   // A diff exists when hunks were supplied, or (files view) the git status says
   // the tracked/new file changed. Deleted files have nothing to show as content.
   const hasDiff = hunks
@@ -322,10 +352,13 @@ export default function FileView({
   // if the user has local changes we surface a "changed on disk" hint instead.
   useEffect(() => {
     if (!path || imgFile || pdfFile) return;
-    const es = new EventSource(`/api/fs/watch?path=${encodeURIComponent(path)}`);
-    es.onmessage = (ev) => {
-      let msg: { type?: string }; try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type !== 'change') return;
+    // Rides the shared WebSocket rather than an SSE stream per open file: a
+    // browser allows only ~6 HTTP/1.1 connections per host and an SSE stream
+    // never completes, so a handful of open files starved every other request
+    // to the origin — the whole app failed with "Failed to fetch".
+    const unwatch = sharedWs.watchFile(path);
+    const unsub = sharedWs.subscribeGlobal((msg) => {
+      if (msg.type !== 'file_changed' || msg.path !== path) return;
       fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
         .then(r => r.ok ? r.text() : Promise.reject())
         .then(text => {
@@ -337,8 +370,8 @@ export default function FileView({
           flashTimer.current = setTimeout(() => setJustUpdated(false), 1400);
         })
         .catch(() => { /* transient read error — ignore */ });
-    };
-    return () => { es.close(); };
+    });
+    return () => { unsub(); unwatch(); };
   }, [path, imgFile, pdfFile]);
 
   // Fetch the per-file diff when toggled to diff with no pre-parsed hunks.
@@ -604,7 +637,15 @@ export default function FileView({
           {textFile && mode === 'preview' && mdFile && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto', padding: '16px 24px' }}>
               {content.trim()
-                ? <div className="md-preview"><Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown></div>
+                ? <div className="md-preview"><Markdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      img: ({ src, alt, ...props }) => (
+                        // eslint-disable-next-line jsx-a11y/alt-text
+                        <img {...props} src={resolveImgSrc(typeof src === 'string' ? src : undefined)} alt={alt ?? ''} loading="lazy" />
+                      ),
+                    }}
+                  >{content}</Markdown></div>
                 : <div style={{ color: '#525252', fontSize: 12, fontStyle: 'italic' }}>Empty note — switch to Edit to start writing.</div>}
             </div>
           )}

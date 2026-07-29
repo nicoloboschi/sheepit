@@ -1072,8 +1072,15 @@
   border-left: 3px solid #222222; margin: 0.8em 0; padding: 0.2em 1em;
   color: #737373;
 }
+/* Tailwind's Preflight resets list-style to none globally, so restore markers
+   here (react-markdown output isn't styled by Tailwind utilities). */
 .md-preview ul, .md-preview ol { padding-left: 1.6em; margin: 0.5em 0; }
+.md-preview ul { list-style: disc; }
+.md-preview ol { list-style: decimal; }
 .md-preview li { margin: 0.2em 0; }
+/* GFM task lists (- [ ]) render their own checkbox — no bullet. */
+.md-preview ul.contains-task-list { list-style: none; padding-left: 0; }
+.md-preview li.task-list-item { list-style: none; }
 .md-preview table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
 .md-preview th, .md-preview td { border: 1px solid #222222; padding: 6px 12px; }
 .md-preview th { background: #111111; color: #F4F4F5; font-weight: 600; }

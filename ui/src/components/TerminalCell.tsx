@@ -58,6 +58,11 @@ import { useDndEnabled } from '../dndEnabled';
 const URL_RE = /https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](?::\d+)?(?:\/[^\s"'<>()\x1b\x07\u0007\]{}|\\^`]*)?/g;
 const stripAnsi = (s: string) => s.replace(/\x1b(?:\[[0-9;]*[a-zA-Z]|\].*?(?:\x07|\x1b\\))/g, '');
 
+/** Cap on output parked for a hidden pane (see flushOutput). Matches the
+ *  daemon's reconnect ring so a revealed pane shows the same tail a reconnect
+ *  would replay. */
+const MAX_PARKED_OUTPUT = 256 * 1024;
+
 // Convert a `file://` URI (as emitted by Claude Code's OSC 8 hyperlinks) to a
 // local filesystem path. Handles the empty-host form `file:///abs/path` and the
 // RFC 8089 host form `file://host.local/abs/path` (CC emits both). Returns null
@@ -215,6 +220,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const outputBufRef = useRef('');
   const flushRafRef = useRef<number>(0);
   const isRestoringRef = useRef(false);
+  // While a snapshot is being replayed on (re)connect, the ring buffer can
+  // contain stale terminal QUERIES the app emitted earlier — e.g. a DSR
+  // cursor-position request (`\x1b[6n`). Replaying those makes xterm auto-reply
+  // via onData with a CPR (`\x1b[<row>;<col>R`); forwarding that reply to the
+  // PTY lands as garbage at the shell prompt ("15;3R…") and, with a live TUI
+  // that re-queries on redraw, self-sustains into an endless `;3R…` stream.
+  // We suppress these replies only for a short window around the replay so live
+  // cursor-position queries (vim/less/shell prompt-width detection) still work.
+  // (DA replies are always dropped separately in sendInput — no app needs them.)
+  const cprGuardUntilRef = useRef(0);
 
   // Create terminal once
   useEffect(() => {
@@ -350,7 +365,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     }
 
     function sendInput(data: string) {
+      // DA replies (\x1b[?…c / \x1b[>…c) are never wanted by the PTY.
       if (/^\x1b\[[\?>][\d;]*c$/.test(data)) return;
+      // CPR replies (\x1b[<row>;<col>R, incl. DECXCPR's `?` variant) are dropped
+      // only while replaying a reconnect snapshot — see cprGuardUntilRef.
+      if (Date.now() < cprGuardUntilRef.current && /^\x1b\[\??\d+;\d+R$/.test(data)) return;
       sendRef.current({ type: 'input', data });
     }
 
@@ -498,10 +517,27 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     const batch = outputBufRef.current;
     const t = termRef.current;
     if (!t || !batch) { flushRafRef.current = 0; return; }
-    // Don't write until renderer is ready AND container has dimensions —
-    // xterm's syncScrollArea will crash on 'dimensions' access otherwise.
+    // Don't write until the container has dimensions — xterm's syncScrollArea
+    // will crash on 'dimensions' access otherwise.
+    //
+    // Panes of a workspace that isn't on screen are `display:none`, so they sit
+    // at 0×0 for as long as they stay hidden. Park their output and STOP:
+    // re-arming a frame here would spin one callback per hidden pane per frame,
+    // forever, each forcing a layout read — main-thread work competing with the
+    // keystrokes in the pane the user is actually typing into. The
+    // ResizeObserver flushes the parked batch the moment the pane is shown.
     const el = containerRef.current;
-    if (!el || el.clientWidth < 1 || el.clientHeight < 1 || !rendererReadyRef.current) {
+    if (!el || el.clientWidth < 1 || el.clientHeight < 1) {
+      // Bound what a busy hidden pane can park, mirroring the daemon's own
+      // reconnect ring: on reveal it shows the tail, same as a reconnect would.
+      if (outputBufRef.current.length > MAX_PARKED_OUTPUT) {
+        outputBufRef.current = outputBufRef.current.slice(-MAX_PARKED_OUTPUT);
+      }
+      return;
+    }
+    // A not-yet-ready renderer IS transient (mount, renderer swap), so retrying
+    // next frame is right here.
+    if (!rendererReadyRef.current) {
       flushRafRef.current = requestAnimationFrame(flushOutput);
       return;
     }
@@ -577,6 +613,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         isRestoringRef.current = true;
         // Discard any buffered output from before the reset
         outputBufRef.current = '';
+        // Suppress CPR auto-replies while the snapshot (which may contain stale
+        // \x1b[6n queries) is replayed and parsed by xterm.
+        cprGuardUntilRef.current = Date.now() + 1500;
         // No resize needed here — cols/rows were sent with subscribe
       } else if (msg.type === 'output') {
         const term = termRef.current;
@@ -596,6 +635,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       if (msg.type === '__ws_open__') {
         pendingResetRef.current = true;
         outputBufRef.current = '';
+        cprGuardUntilRef.current = Date.now() + 1500;
       }
     });
 
@@ -654,6 +694,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
     };
     const ro = new ResizeObserver(() => {
+      // Going from 0×0 back to a real size means this pane's workspace just
+      // became visible — write whatever flushOutput parked while it was hidden.
+      if (el.clientWidth > 0 && el.clientHeight > 0 && outputBufRef.current) scheduleFlush();
       if (timer) clearTimeout(timer);
       if (followup) clearTimeout(followup);
       timer = setTimeout(doFit, 50);
@@ -681,6 +724,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // Refit + refocus when terminal tab becomes visible again
   useEffect(() => {
     const handler = () => {
+      // Fires on every workspace switch (App dispatches it after connecting),
+      // so this is the second, RO-independent trigger for output that
+      // flushOutput parked while this pane's workspace was hidden.
+      if (outputBufRef.current) scheduleFlush();
       if (!isActive) return;
       safeFit();
       termRef.current?.focus();
@@ -777,6 +824,51 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       velocity = 0;
     };
 
+    // Paced drain of queued wheel steps → SGR mouse-wheel reports (see onWheel).
+    const startAltDrain = () => {
+      if (wheelDrainRef.current) return;
+      wheelDrainRef.current = setInterval(() => {
+        const t = termRef.current;
+        // Re-check the gate every tick: the app may have left the alternate
+        // buffer or disabled mouse mode mid-drain, and we must NOT keep firing
+        // wheel reports into a plain shell prompt.
+        if (!t || t.buffer?.active?.type !== 'alternate'
+            || t.modes?.mouseTrackingMode === 'none' || !sgrMouseRef.current
+            || wheelPendingRef.current === 0) {
+          if (wheelDrainRef.current) clearInterval(wheelDrainRef.current);
+          wheelDrainRef.current = null; wheelPendingRef.current = 0;
+          return;
+        }
+        const dir = wheelPendingRef.current < 0 ? -1 : 1;
+        wheelPendingRef.current -= dir;
+        sendRef.current({ type: 'input', data: `\x1b[<${dir < 0 ? 64 : 65};1;1M` });
+      }, 25);
+    };
+
+    // Route a line-delta (positive = scroll down) to the right mechanism, shared
+    // by wheel AND touch. In the alternate screen (full-screen TUIs like Claude
+    // Code) there is no scrollback, so we translate the delta into paced SGR
+    // mouse-wheel reports the app understands — this is what lets touch scroll
+    // full-screen apps on mobile, matching the wheel on desktop. In the normal
+    // buffer we scroll xterm's own scrollback. Returns false when an alt-screen
+    // app isn't accepting wheel input (nothing scrolled).
+    const scrollBy = (lines: number): boolean => {
+      const t = termRef.current;
+      if (!t || lines === 0) return false;
+      if (t.buffer?.active?.type === 'alternate') {
+        // Require BOTH mouse tracking AND SGR encoding (mode 1006): without the
+        // SGR check we could emit `\x1b[<…M` to an app using legacy mouse
+        // encoding (or a stale terminal), where it surfaces as literal text.
+        if (!t.modes || t.modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return false;
+        const MAX = t.rows ?? 20; // at most ~one screen queued
+        wheelPendingRef.current = Math.max(-MAX, Math.min(MAX, wheelPendingRef.current + lines));
+        startAltDrain();
+        return true;
+      }
+      t.scrollLines(lines);
+      return true;
+    };
+
     const onTouchStart = (e: TouchEvent): void => {
       stopMomentum();
       startX = e.touches[0]!.clientX;
@@ -823,7 +915,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       const lines = Math.trunc(accPx / lineH);
       if (lines !== 0) {
         accPx -= lines * lineH;
-        term.scrollLines(lines);
+        scrollBy(lines);
       }
     };
     const onTouchEnd = (): void => {
@@ -847,7 +939,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         const lines = Math.trunc(residual / lineH);
         if (lines !== 0) {
           residual -= lines * lineH;
-          term.scrollLines(lines);
+          if (!scrollBy(lines)) { velocity = 0; return; }
         }
         v *= FRICTION;
         momentumRaf = requestAnimationFrame(tick);
@@ -870,41 +962,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
 
       if (term.buffer?.active?.type === 'alternate') {
         // Full-screen apps that drive mouse tracking (Claude Code, vim, btop, …)
-        // scroll on mouse-wheel events. But CC COALESCES a burst sent at once
-        // into ~one step — so we PACE them: accumulate the desired number of
-        // wheel steps and drain one every ~25ms, which each register → fast,
-        // real multi-line scrolling. Signed pending: <0 = up (btn 64), >0 = down.
-        const modes = term.modes;
-        // Require BOTH mouse tracking AND SGR encoding (mode 1006). Without the
-        // SGR check we could emit `\x1b[<…M` to an app using legacy mouse
-        // encoding (or to a stale terminal), where it surfaces as literal text.
-        if (!modes || modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return;
+        // scroll on mouse-wheel events. scrollBy PACES them (accumulate + drain
+        // one every ~25ms) so a coalesced burst still registers as real
+        // multi-line scrolling. Bail (letting nothing happen) if the app isn't
+        // accepting wheel input — same gate scrollBy applies internally.
+        if (!term.modes || term.modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return;
         e.preventDefault(); e.stopPropagation();
-        // Scroll a modest, capped number of lines per wheel event so it isn't
-        // hyper-sensitive (devices report wildly different deltaY). The paced
-        // drain + pending accumulation still let a fast flick scroll far.
+        // Cap lines per wheel event so wildly-varying deltaY isn't hyper-sensitive;
+        // the paced drain + accumulation still let a fast flick scroll far.
         const PER_EVENT = 3;
-        const add = (lines < 0 ? -1 : 1) * Math.min(Math.abs(lines), PER_EVENT);
-        const MAX = term.rows ?? 20; // at most ~one screen queued
-        wheelPendingRef.current = Math.max(-MAX, Math.min(MAX, wheelPendingRef.current + add));
-        if (!wheelDrainRef.current) {
-          wheelDrainRef.current = setInterval(() => {
-            const t = termRef.current;
-            // Re-check the gate every tick: the app may have left the alternate
-            // buffer or disabled mouse mode mid-drain, and we must NOT keep
-            // firing wheel reports into a plain shell prompt.
-            if (!t || t.buffer?.active?.type !== 'alternate'
-                || t.modes?.mouseTrackingMode === 'none' || !sgrMouseRef.current
-                || wheelPendingRef.current === 0) {
-              if (wheelDrainRef.current) clearInterval(wheelDrainRef.current);
-              wheelDrainRef.current = null; wheelPendingRef.current = 0;
-              return;
-            }
-            const dir = wheelPendingRef.current < 0 ? -1 : 1;
-            wheelPendingRef.current -= dir;
-            sendRef.current({ type: 'input', data: `\x1b[<${dir < 0 ? 64 : 65};1;1M` });
-          }, 25);
-        }
+        scrollBy((lines < 0 ? -1 : 1) * Math.min(Math.abs(lines), PER_EVENT));
         return;
       }
 

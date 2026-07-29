@@ -29,6 +29,11 @@ let destroyed = false;
 /** Sessions the server knows we're subscribed to (for reconnect replay) */
 const activeSubscriptions = new Set<string>();
 
+/** Files we've asked the server to watch, refcounted by how many views have the
+ *  same path open. Replayed on reconnect — the server drops all watches when the
+ *  socket closes, so without this live file updates would silently stop. */
+const fileWatches = new Map<string, number>();
+
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /** Initialize the shared connection. Call once from App mount. */
@@ -107,6 +112,28 @@ export function subscribeSession(sessionId: string, handler: MessageHandler, col
   };
 }
 
+/** Ask the server to report on-disk changes for `path`, over this socket.
+ *
+ *  Deliberately not one SSE stream per file: a browser allows only ~6 HTTP/1.1
+ *  connections per host and an SSE stream never completes, so a handful of open
+ *  files starved every other request to the origin ("Failed to fetch"
+ *  everywhere). Returns a function that releases this view's claim on the path.
+ */
+export function watchFile(path: string): () => void {
+  const n = fileWatches.get(path) ?? 0;
+  fileWatches.set(path, n + 1);
+  if (n === 0) send({ type: 'watch_file', path });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (fileWatches.get(path) ?? 1) - 1;
+    if (left > 0) { fileWatches.set(path, left); return; }
+    fileWatches.delete(path);
+    send({ type: 'unwatch_file', path });
+  };
+}
+
 /** Subscribe to global messages (sessions list, previews, etc.). */
 export function subscribeGlobal(handler: MessageHandler): () => void {
   globalListeners.add(handler);
@@ -133,6 +160,11 @@ function connect(): void {
     // Re-subscribe all active sessions (reconnect resilience)
     for (const sessionId of activeSubscriptions) {
       send({ type: 'subscribe', session_id: sessionId });
+    }
+
+    // Same for file watches — the server dropped them when the socket closed.
+    for (const path of fileWatches.keys()) {
+      send({ type: 'watch_file', path });
     }
 
     // Notify global listeners of reconnect

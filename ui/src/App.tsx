@@ -48,6 +48,12 @@ export default function App() {
   // True while a popstate handler is running — prevents connectSession from
   // pushing another history entry for the same navigation.
   const fromPopstateRef = useRef(false);
+  // Guards the one-shot "open the workspace/pane named in the URL hash" pass.
+  const initialHashAppliedRef = useRef(false);
+  // The hash the app was opened with, captured during the first render —
+  // syncHash would otherwise overwrite it with the persisted workspace before
+  // the session list arrives, and the link's target would be lost.
+  const initialHashRef = useRef(window.location.hash);
 
   /** Build the hash fragment from workspace + zen state.
    *  Format: `#workspaceId` or `#workspaceId/zen:sessionId` */
@@ -63,9 +69,31 @@ export default function App() {
     return { workspaceId: wsId!, zenSessionId: zenPart ?? null };
   }, []);
 
+  /** Resolve a hash into a workspace that actually exists right now, plus the
+   *  pane to open in zen. Workspace ids are per-browser (randomly minted), so
+   *  a link opened elsewhere may not know our id — in that case fall back to
+   *  whichever workspace owns the zen pane. Returns null when neither
+   *  resolves, and drops a zen id that isn't a pane of the target workspace
+   *  (a stale one would leave zen state on with nothing rendered). */
+  const resolveHashTarget = useCallback((hash: string) => {
+    const parsed = parseHash(hash);
+    if (!parsed) return null;
+    const { workspaces, workspaceOrder } = useStore.getState();
+    let workspaceId: string | null = workspaces[parsed.workspaceId] ? parsed.workspaceId : null;
+    if (!workspaceId && parsed.zenSessionId) {
+      workspaceId = workspaceOrder.find(id => workspaces[id]?.cells.includes(parsed.zenSessionId!)) ?? null;
+    }
+    if (!workspaceId) return null;
+    const cells = workspaces[workspaceId]!.cells;
+    const zenSessionId = parsed.zenSessionId && cells.includes(parsed.zenSessionId) ? parsed.zenSessionId : null;
+    return { workspaceId, zenSessionId };
+  }, [parseHash]);
+
   /** Push current workspace + zen state into the URL hash. */
   const syncHash = useCallback(() => {
     if (fromPopstateRef.current) return;
+    // Don't overwrite the opened link before we've had a chance to honour it.
+    if (!initialHashAppliedRef.current && initialHashRef.current) return;
     const { currentSessionId: wsId, zenSessionId } = useStore.getState();
     if (!wsId) return;
     const next = buildHash(wsId, zenSessionId);
@@ -98,49 +126,61 @@ export default function App() {
   // Browser back/forward: read workspace + zen state from hash.
   useEffect(() => {
     const onPopState = () => {
-      const parsed = parseHash(window.location.hash);
-      if (!parsed) return;
+      const target = resolveHashTarget(window.location.hash);
+      if (!target) return;
       const store = useStore.getState();
-      if (store.workspaces[parsed.workspaceId]) {
-        fromPopstateRef.current = true;
-        store.setCurrentSessionId(parsed.workspaceId);
-        localStorage.setItem('vipershell-last-session', parsed.workspaceId);
-        // Restore or clear zen mode
-        if (parsed.zenSessionId && store.zenSessionId !== parsed.zenSessionId) {
-          store.toggleZen(parsed.zenSessionId);
-        } else if (!parsed.zenSessionId && store.zenSessionId) {
-          store.exitZen();
-        }
-        setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
-        fromPopstateRef.current = false;
+      fromPopstateRef.current = true;
+      store.setCurrentSessionId(target.workspaceId);
+      localStorage.setItem('vipershell-last-session', target.workspaceId);
+      // Restore or clear zen mode
+      if (target.zenSessionId && store.zenSessionId !== target.zenSessionId) {
+        store.toggleZen(target.zenSessionId);
+      } else if (!target.zenSessionId && store.zenSessionId) {
+        store.exitZen();
       }
+      setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
+      fromPopstateRef.current = false;
     };
+    // `hashchange` covers pasting a link into the address bar of an already
+    // open tab; `popstate` covers back/forward.
     window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [parseHash]);
+    window.addEventListener('hashchange', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('hashchange', onPopState);
+    };
+  }, [resolveHashTarget]);
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const store = useStore.getState();
     switch (msg.type) {
       case 'sessions': {
         store.renderSessions(msg.sessions as any); // eslint-disable-line @typescript-eslint/no-explicit-any
-        if (!store.currentSessionId && (msg.sessions as any[]).length > 0) {
-          const stateAfterRender = useStore.getState();
-          // Priority: URL hash > localStorage > first session
-          const parsed = parseHash(window.location.hash);
-          const hashTarget = parsed && stateAfterRender.workspaces[parsed.workspaceId] ? parsed : null;
-          const lastId = localStorage.getItem('vipershell-last-session');
-          const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
-          const sessions = msg.sessions as any[];
-          const fallbackTarget = sessions[0]?.id;
-          const targetId = hashTarget?.workspaceId ?? lastTarget ?? fallbackTarget;
-          if (targetId) {
-            connectSession(targetId);
-            // Restore zen mode from hash on initial load
-            if (hashTarget?.zenSessionId) {
+        const sessionList = msg.sessions as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (sessionList.length === 0) break;
+
+        // The URL hash wins over the persisted last workspace, but only on the
+        // first `sessions` message — after that the user's own navigation owns
+        // the selection and re-applying the hash would fight it.
+        if (!initialHashAppliedRef.current) {
+          initialHashAppliedRef.current = true;
+          const hashTarget = resolveHashTarget(initialHashRef.current);
+          if (hashTarget) {
+            connectSession(hashTarget.workspaceId);
+            if (hashTarget.zenSessionId && useStore.getState().zenSessionId !== hashTarget.zenSessionId) {
               useStore.getState().toggleZen(hashTarget.zenSessionId);
             }
+            break;
           }
+        }
+
+        if (!store.currentSessionId) {
+          const stateAfterRender = useStore.getState();
+          // Priority: localStorage > first session
+          const lastId = localStorage.getItem('vipershell-last-session');
+          const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
+          const targetId = lastTarget ?? sessionList[0]?.id;
+          if (targetId) connectSession(targetId);
         }
         break;
       }
@@ -188,7 +228,7 @@ export default function App() {
         break;
       default: break;
     }
-  }, [connectSession]);
+  }, [connectSession, resolveHashTarget]);
 
   const send = useCallback((msg: Record<string, unknown>) => sharedWs.send(msg), []);
 

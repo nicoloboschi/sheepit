@@ -29,6 +29,53 @@ const CONFIG_DIR = join(os.homedir(), '.config', 'vipershell');
 const SESSIONS_FILE = join(CONFIG_DIR, 'direct-sessions.json');
 const RING_DIR = join(CONFIG_DIR, 'ring-buffers');
 const RING_SIZE = 256 * 1024;
+
+/** Coalescing window for `current_input` broadcasts (see publishCurrentInput).
+ *  Short enough that the sidebar still feels live, long enough that a fast
+ *  typist produces ~20 broadcasts/second instead of one per character. */
+const INPUT_PUBLISH_MS = 50;
+
+/** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
+const PERSIST_DEBOUNCE_MS = 1000;
+
+/** How much of a session's ring the preview sweep decodes. A preview is two
+ *  lines; this is generous even for very wide panes. */
+const PREVIEW_TAIL_BYTES = 8 * 1024;
+
+/** How many external commands a background sweep may have in flight.
+ *
+ *  `child_process` spawning does synchronous fork/exec work on the main thread,
+ *  so firing one per repo at once blocks the event loop — and a blocked loop is
+ *  a keystroke that hasn't reached the PTY yet. Measured on a 25-repo, 34-session
+ *  setup: the unbounded git sweep stalled the loop for up to 1.6 seconds. */
+const EXEC_CONCURRENCY = 4;
+
+/** How long per-session process stats (the CPU/mem chips) may go stale.
+ *
+ *  Deliberately decoupled from the 2s session-list publish: the list must stay
+ *  responsive so a newly opened pane appears promptly, but the stats behind it
+ *  need a `ps` of every process on the machine, which is the expensive part. */
+const PROC_INFO_TTL_MS = 10_000;
+
+/** Run a background sweep's command at reduced scheduling priority.
+ *
+ *  These sweeps (ps / git / gh) are housekeeping: nothing waits on them, and
+ *  they exist to keep sidebar chips fresh. On a machine loaded by the agents
+ *  running *inside* vipershell — measured at load average 12–16, where even a
+ *  raw `cat` echo showed a 200 ms p90 — letting them compete at normal priority
+ *  with the PTYs and the browser is what turns housekeeping into input lag. */
+const nice = (cmd: string) => `nice -n 10 ${cmd}`;
+
+/** Map with bounded concurrency, preserving input order in the result. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 const SOCKET_PATH = join(CONFIG_DIR, 'pty-daemon.sock');
 const PID_FILE = join(CONFIG_DIR, 'pty-daemon.pid');
 
@@ -43,14 +90,19 @@ function stripEscapeSequences(data: string): string {
 
 // ── Ring Buffer ──────────────────────────────────────────────────────────────
 
-class RingBuffer {
+export class RingBuffer {
   private buf: Buffer;
   private pos = 0;
   private full = false;
+  /** Bumped on every write. Lets periodic work (previews, disk flush) skip
+   *  sessions that produced nothing since it last looked — most of them, most
+   *  of the time. */
+  version = 0;
 
   constructor(size: number) { this.buf = Buffer.alloc(size); }
 
   write(data: string): void {
+    this.version++;
     const bytes = Buffer.from(data, 'utf-8');
     if (bytes.length >= this.buf.length) {
       bytes.copy(this.buf, 0, bytes.length - this.buf.length);
@@ -72,6 +124,21 @@ class RingBuffer {
   read(): string {
     if (!this.full) return this.buf.slice(0, this.pos).toString('utf-8');
     return Buffer.concat([this.buf.slice(this.pos), this.buf.slice(0, this.pos)]).toString('utf-8');
+  }
+
+  /** The most recent `maxBytes` of content. For callers that only need the tail
+   *  (previews want two lines), this avoids concatenating and UTF-8-decoding the
+   *  whole 256 KB buffer — doing that per session per second was the single
+   *  biggest source of event-loop stalls, felt as input lag while typing.
+   *  May clip a multi-byte character at the head; harmless for display. */
+  readTail(maxBytes: number): string {
+    const len = this.full ? this.buf.length : this.pos;
+    const n = Math.min(maxBytes, len);
+    if (n === 0) return '';
+    const start = ((this.pos - n) % this.buf.length + this.buf.length) % this.buf.length;
+    if (start + n <= this.buf.length) return this.buf.slice(start, start + n).toString('utf-8');
+    const head = this.buf.length - start;
+    return Buffer.concat([this.buf.slice(start), this.buf.slice(0, n - head)]).toString('utf-8');
   }
 
   saveTo(path: string): void { writeFileSync(path, this.read(), 'utf-8'); }
@@ -96,18 +163,23 @@ const STICKY_PRIVATE_MODES = new Set([
   2004,                    // bracketed paste
 ]);
 
-/** Update `active` from DECSET (?Nh) / DECRST (?Nl) sequences in `data`. */
-function trackPrivateModes(active: Set<number>, data: string): void {
+/** Update `active` from DECSET (?Nh) / DECRST (?Nl) sequences in `data`.
+ *  Returns true when the set actually changed, so callers can persist only on
+ *  real transitions rather than on every chunk of output. */
+function trackPrivateModes(active: Set<number>, data: string): boolean {
   const re = /\x1b\[\?([0-9;]+)([hl])/g;
   let m: RegExpExecArray | null;
+  let changed = false;
   while ((m = re.exec(data)) !== null) {
     const enable = m[2] === 'h';
     for (const part of m[1]!.split(';')) {
       const n = parseInt(part, 10);
       if (!STICKY_PRIVATE_MODES.has(n)) continue;
-      if (enable) active.add(n); else active.delete(n);
+      if (enable) { if (!active.has(n)) { active.add(n); changed = true; } }
+      else if (active.delete(n)) changed = true;
     }
   }
+  return changed;
 }
 
 // Subset of tracked modes we actually RE-ASSERT on reconnect. We deliberately
@@ -137,13 +209,49 @@ function privateModePrefix(active: Set<number>): string {
 // wild: 29× `\x1b[?1003h` with zero disables left in the ring). Replaying the
 // snapshot then re-arms xterm's mouse reporting at a plain shell prompt, so every
 // mouse MOVE floods the shell with `\x1b[<…M` reports that echo as literal text.
-// We force these modes OFF immediately after the replayed snapshot; a genuinely
-// live full-screen app re-arms them through its own output (it redraws on the
-// resize we send at subscribe, and on the next keystroke). We deliberately do NOT
-// try to restore mouse state from history — the ring can't tell "stale on" from
-// "really on", so the safe default is off-until-the-app-asks.
+// We force these modes OFF immediately after the replayed snapshot — UNLESS the
+// ring shows an app still driving the mouse (see mouseModeTail). Forcing them
+// off unconditionally left a reconnected Claude Code pane with mouse tracking
+// dead in xterm, which is exactly the gate the wheel handler checks — so the
+// wheel stopped scrolling the app, with no scrollback to fall back to either.
 const MOUSE_FOCUS_MODES = [1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016];
 const MOUSE_FOCUS_RESET = MOUSE_FOCUS_MODES.map(n => `\x1b[?${n}l`).join('');
+
+/** Index of the last match of `re` in `s`, or -1. */
+function lastIndexOfRe(s: string, re: RegExp): number {
+  const g = new RegExp(re.source, 'g');
+  let idx = -1, m: RegExpExecArray | null;
+  while ((m = g.exec(s)) !== null) idx = m.index;
+  return idx;
+}
+
+/** Bytes to append after the replayed snapshot to settle mouse/focus tracking.
+ *
+ *  Restoring mouse state is only safe when we can tell "stale on" (the app
+ *  exited without resetting the terminal) from "really on". The ring answers
+ *  that, and — unlike anything we hold in memory — it survives a server
+ *  restart, so a reconnect after `tsx watch` reloads decides the same way:
+ *
+ *  `liveApp` (does the PTY have a child process right now?) is that answer, and
+ *  unlike anything derived from the ring it can't be fooled: byte heuristics
+ *  fail here because the markers aren't exclusive to shells — Claude Code emits
+ *  `?2004h` too, so "prompt after the last mouse-enable" wrongly condemns a
+ *  live pane. Gating on the alt-screen bit fails for the opposite reason: an
+ *  app's one-time `?1049h` rolls off a busy ring within minutes. */
+export function mouseModeTail(active: Set<number>, snapshot: string, liveApp: boolean): string {
+  // No foreground process → the shell is at a prompt, where a leftover mouse-on
+  // turns every mouse MOVE into literal `\x1b[<…M` text. Always force off.
+  if (!liveApp) return MOUSE_FOCUS_RESET;
+  // Something IS running. Restore exactly the modes it asked for: the tracked
+  // set (persisted, so it survives a restart) with the ring replayed over it,
+  // so a mode the app turned back OFF later in the window isn't resurrected.
+  const effective = new Set(active);
+  trackPrivateModes(effective, snapshot);
+  const on = MOUSE_FOCUS_MODES.filter(n => effective.has(n));
+  // A live app that never asked for the mouse (less, man) gets an explicit off:
+  // the pane may be reconnecting onto a terminal that still has it armed.
+  return on.length ? on.map(n => `\x1b[?${n}h`).join('') : MOUSE_FOCUS_RESET;
+}
 
 // Counterpart for the alternate screen buffer. Same staleness trap: the ring can
 // hold a TUI's `?1049h` (enter alt-screen) while its matching exit rolled off —
@@ -156,12 +264,7 @@ const MOUSE_FOCUS_RESET = MOUSE_FOCUS_MODES.map(n => `\x1b[?${n}l`).join('');
 const ALT_SCREEN_RESET = '\x1b[?1049l\x1b[?1047l\x1b[?47l';
 
 function altScreenStale(snapshot: string): boolean {
-  const lastIndexOf = (re: RegExp): number => {
-    let idx = -1, m: RegExpExecArray | null;
-    const g = new RegExp(re.source, 'g');
-    while ((m = g.exec(snapshot)) !== null) idx = m.index;
-    return idx;
-  };
+  const lastIndexOf = (re: RegExp): number => lastIndexOfRe(snapshot, re);
   const altOn = lastIndexOf(/\x1b\[\?(?:1049|1047|47)h/);
   if (altOn < 0) return false;                       // never entered alt-screen
   const altOff = lastIndexOf(/\x1b\[\?(?:1049|1047|47)l/);
@@ -181,12 +284,28 @@ interface DirectSession {
   sessionType?: string | null;
   /** Active sticky DEC private modes, tracked from output (see above). */
   modes?: Set<number>;
+  /** Whether the PTY currently has a child process — i.e. something is running
+   *  in the foreground rather than the shell sitting at a prompt. Ground truth
+   *  for "is a full-screen app alive", refreshed by the listSessions poll and
+   *  primed at startup. Used by the reconnect path (see mouseModeTail). */
+  liveApp?: boolean;
+}
+
+/** One row of `ps` output (see snapshotChildProcesses). */
+interface ProcSnapshot {
+  pid: number;
+  cpu: number;
+  rssKb: number;
+  args: string;
 }
 
 interface SavedDirectSession {
   name: string;
   path: string;
   sessionType?: string | null;
+  /** Sticky DEC private modes active at the last write. Persisted because the
+   *  ring can't be trusted to still hold an app's one-time setup sequences. */
+  modes?: number[];
 }
 
 // ── Daemon Client ────────────────────────────────────────────────────────────
@@ -350,6 +469,18 @@ export class DirectBridge {
   private gitCache = new Map<string, { gitRoot: string | null; branch: string | null; dirty: boolean }>();
   private prCache = new Map<string, { prNum: number; prState: string; prUrl: string } | null>();
   private inputBuffers = new Map<string, string>();
+  /** Pending coalesced `current_input` broadcasts (see publishCurrentInput). */
+  private inputPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Pending coalesced persist triggered by a mode change (see schedulePersist). */
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Ring version last used to build a preview / written to disk, per session.
+   *  Both periodic sweeps use these to skip sessions that produced no output. */
+  private previewVersions = new Map<string, number>();
+  private flushedVersions = new Map<string, number>();
+  /** Per-session process stats (CPU/mem/app detection), refreshed on their own
+   *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+  private procInfoAt = 0;
 
   constructor() {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -365,7 +496,10 @@ export class DirectBridge {
       (id, data) => {
         const sess = this.sessions.get(id);
         if (sess) {
-          trackPrivateModes(sess.modes ??= new Set(), data);
+          // Sticky modes must outlive THIS process: they're set once at app
+          // startup, so a server restart that loses them can't recover from the
+          // ring alone (the setup bytes have long rolled off a busy session).
+          if (trackPrivateModes(sess.modes ??= new Set(), data)) this.schedulePersist();
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -387,15 +521,23 @@ export class DirectBridge {
     await this.daemon.connect();
     await this.restoreSessions();
 
+    // Cadences are a freshness/cost trade. The two git sweeps shell out per repo
+    // — `git status` across every session's repo, and `gh pr view` (a network
+    // call) — so they run far less often than the cheap in-memory sweeps. Both
+    // describe slow-moving state; polling them hard just stole time from
+    // keystroke delivery.
     this.ringFlushInterval = setInterval(() => this.flushRings(), 10_000);
     this.sessionListInterval = setInterval(() => this.discoverSessions(), 2000);
     this.previewInterval = setInterval(() => this.publishPreviews(), 1000);
-    this.gitCacheInterval = setInterval(() => this._refreshGitCache(), 10_000);
-    this.prCacheInterval = setInterval(() => this._refreshPRCache(), 30_000);
+    this.gitCacheInterval = setInterval(() => this._refreshGitCache(), 20_000);
+    this.prCacheInterval = setInterval(() => this._refreshPRCache(), 120_000);
 
     // Populate git cache BEFORE first session discovery so git info is available
     await this._refreshGitCache();
     await this.discoverSessions();
+    // PR chips otherwise stay blank until the first (now much later) tick.
+    // Not awaited: it's a network call and nothing depends on it to start.
+    void this._refreshPRCache();
 
     logger.info('DirectBridge started (daemon mode)');
   }
@@ -420,7 +562,7 @@ export class DirectBridge {
     this.cachedSessions = sessions;
     const liveIds = new Set(sessions.map(s => s.id));
     for (const id of this.knownSessions) {
-      if (!liveIds.has(id)) { this.knownSessions.delete(id); this.inputBuffers.delete(id); }
+      if (!liveIds.has(id)) { this.knownSessions.delete(id); this.inputBuffers.delete(id); this.clearInputPublish(id); }
     }
     for (const s of sessions) {
       if (!this.knownSessions.has(s.id)) { this.knownSessions.add(s.id); this.persist(); }
@@ -433,7 +575,14 @@ export class DirectBridge {
   /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
   private publishPreviews(): void {
     for (const sess of this.sessions.values()) {
-      const raw = sess.ring.read();
+      // Nothing written since the last tick → the preview cannot have changed.
+      // Idle sessions are the common case, and skipping them here is what keeps
+      // this once-a-second sweep off the keystroke path.
+      if (this.previewVersions.get(sess.id) === sess.ring.version) continue;
+      this.previewVersions.set(sess.id, sess.ring.version);
+
+      // Two lines are all we show, so only the tail is worth decoding.
+      const raw = sess.ring.readTail(PREVIEW_TAIL_BYTES);
       if (!raw) continue;
       // Strip ANSI escapes and get last 2 non-empty lines
       const stripped = stripEscapeSequences(raw);
@@ -495,6 +644,7 @@ export class DirectBridge {
     this.daemon.sendFire({ type: 'kill', id: sessionId });
     this.sessions.delete(sessionId);
     this.inputBuffers.delete(sessionId);
+    this.clearInputPublish(sessionId);
     const ringPath = join(RING_DIR, `${sessionId}.buf`);
     try { if (existsSync(ringPath)) unlinkSync(ringPath); } catch {}
     this.persist();
@@ -527,13 +677,17 @@ export class DirectBridge {
     // Re-establish sticky modes (alt-screen, mouse, …) the running app set
     // before this client connected, in case those bytes have rolled off the
     // ring — otherwise the reconnected terminal is stuck in the wrong mode.
-    // Order: re-assert sticky modes (alt-screen first) → replay snapshot → force
-    // mouse/focus tracking OFF, and drop a stale alternate-screen buffer, so the
-    // reconnected pane lands on the live shell rather than a frozen dead frame or
-    // an input-grabbing mouse state (see MOUSE_FOCUS_RESET / ALT_SCREEN_RESET).
-    const modePrefix = privateModePrefix(sess.modes ?? new Set());
+    // Order: re-assert sticky modes (alt-screen first) → replay snapshot →
+    // settle mouse/focus tracking, and drop a stale alternate-screen buffer, so
+    // the reconnected pane lands on the live shell rather than a frozen dead
+    // frame or an input-grabbing mouse state (see mouseModeTail /
+    // ALT_SCREEN_RESET). The mouse tail comes AFTER the snapshot so stale
+    // disables replayed from the ring can't win.
+    const modes = sess.modes ?? new Set<number>();
+    const modePrefix = privateModePrefix(modes);
     const altReset = altScreenStale(snapshot) ? ALT_SCREEN_RESET : '';
-    if (modePrefix || snapshot) onOutput(modePrefix + snapshot + MOUSE_FOCUS_RESET + altReset);
+    const mouseTail = mouseModeTail(modes, snapshot, sess.liveApp ?? false);
+    if (modePrefix || snapshot) onOutput(modePrefix + snapshot + mouseTail + altReset);
     return unsub;
   }
 
@@ -553,16 +707,39 @@ export class DirectBridge {
     for (const ch of stripped) {
       if (ch === '\r' || ch === '\n') {
         this.inputBuffers.set(sessionId, '');
-        this.pubsub.publish('__sessions__', { type: 'current_input', session_id: sessionId, input: '' });
       } else if (ch === '\x7f' || ch === '\b') {
         const cur = this.inputBuffers.get(sessionId) ?? '';
         this.inputBuffers.set(sessionId, cur.slice(0, -1));
-        this.pubsub.publish('__sessions__', { type: 'current_input', session_id: sessionId, input: this.inputBuffers.get(sessionId) ?? '' });
       } else if (ch >= ' ' || ch === '\t') {
         this.inputBuffers.set(sessionId, (this.inputBuffers.get(sessionId) ?? '') + ch);
-        this.pubsub.publish('__sessions__', { type: 'current_input', session_id: sessionId, input: this.inputBuffers.get(sessionId) ?? '' });
       }
     }
+    if (stripped) this.publishCurrentInput(sessionId);
+  }
+
+  /** Broadcast the session's in-progress input line, coalesced.
+   *
+   *  The buffer above updates per character, but subscribers only ever want the
+   *  settled line — publishing inside that loop sent one broadcast to EVERY
+   *  connected client per keystroke, and one per character on paste. That is
+   *  work on the same path a keystroke travels, so it showed up as input lag.
+   *  Trailing-edge: the first call schedules, the rest are absorbed, and the
+   *  timer fires with whatever the buffer holds by then. */
+  private publishCurrentInput(sessionId: string): void {
+    if (this.inputPublishTimers.has(sessionId)) return;
+    this.inputPublishTimers.set(sessionId, setTimeout(() => {
+      this.inputPublishTimers.delete(sessionId);
+      this.pubsub.publish('__sessions__', {
+        type: 'current_input',
+        session_id: sessionId,
+        input: this.inputBuffers.get(sessionId) ?? '',
+      });
+    }, INPUT_PUBLISH_MS));
+  }
+
+  private clearInputPublish(sessionId: string): void {
+    const t = this.inputPublishTimers.get(sessionId);
+    if (t) { clearTimeout(t); this.inputPublishTimers.delete(sessionId); }
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
@@ -596,34 +773,81 @@ export class DirectBridge {
 
   // ── Session listing with process detection ───────────────────────────────
 
+  /** Every process on the machine, grouped by parent pid.
+   *
+   *  One `ps` call replaces a `pgrep`+`ps` pair per session. Process spawning is
+   *  expensive (especially on a loaded machine), and this sweep runs every two
+   *  seconds — the per-session version was the dominant remaining source of
+   *  keystroke stalls after the ring-buffer fixes. Works the same on macOS and
+   *  Linux, so the platform branch is gone too. */
+  private async snapshotChildProcesses(wantedParents: Set<number>): Promise<Map<number, ProcSnapshot[]>> {
+    const byParent = new Map<number, ProcSnapshot[]>();
+    if (wantedParents.size === 0) return byParent;
+    try {
+      const { stdout } = await execAsync(nice('ps -axo pid=,ppid=,pcpu=,rss=,args='), {
+        timeout: 5000,
+        maxBuffer: 16 * 1024 * 1024, // a few hundred processes with full argv
+      });
+      for (const line of stdout.split('\n')) {
+        // Hand-parsed rather than regex-matched: on a busy machine this is ~800
+        // lines every couple of seconds, and some argv are kilobytes long
+        // (browsers). Reading the four leading numbers and bailing out before
+        // touching `args` keeps all that string work off the event loop for the
+        // ~99% of processes that aren't a session's child.
+        let i = 0;
+        const num = (): number => {
+          while (line.charCodeAt(i) === 32) i++;
+          const start = i;
+          while (i < line.length && line.charCodeAt(i) !== 32) i++;
+          return start === i ? NaN : Number(line.slice(start, i));
+        };
+        const pid = num();
+        const ppid = num();
+        if (!wantedParents.has(ppid)) continue;
+        const cpu = num();
+        const rssKb = num();
+        if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+        const entry: ProcSnapshot = {
+          pid, cpu: Number.isFinite(cpu) ? cpu : 0,
+          rssKb: Number.isFinite(rssKb) ? rssKb : 0,
+          args: line.slice(i + 1),
+        };
+        const siblings = byParent.get(ppid);
+        if (siblings) siblings.push(entry); else byParent.set(ppid, [entry]);
+      }
+    } catch { /* leave empty — callers treat it as "no children known" */ }
+    return byParent;
+  }
+
   async listSessions(): Promise<Session[]> {
     const username = os.userInfo().username;
-    const isLinux = os.platform() === 'linux';
 
     const pids = [...this.sessions.values()].filter(s => s.pid > 0).map(s => ({ id: s.id, pid: s.pid }));
-    const processInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
 
-    await Promise.all(pids.map(async ({ id, pid }) => {
-      try {
-        const cmd = isLinux
-          ? `ps -o pid=,pcpu=,rss=,args= --ppid ${pid} 2>/dev/null`
-          : `pgrep -P ${pid} 2>/dev/null | xargs -I{} ps -p {} -o pid=,pcpu=,rss=,args= 2>/dev/null`;
-        const { stdout } = await execAsync(cmd, { timeout: 3000 });
+    // The session LIST is published every 2s (so a new pane shows up promptly),
+    // but the per-session process stats behind it cost a `ps` of the whole
+    // machine. Those stats only drive the CPU/mem chips, so they refresh on
+    // their own slower clock and the list reuses the last snapshot in between.
+    if (Date.now() - this.procInfoAt >= PROC_INFO_TTL_MS) {
+      this.procInfoAt = Date.now();
+      const childrenByPid = await this.snapshotChildProcesses(new Set(pids.map(p => p.pid)));
+      this.procInfo.clear();
+      for (const { id, pid } of pids) {
+        const children = childrenByPid.get(pid) ?? [];
         let isClaudeCode = false, isCodex = false, cpuPercent = 0, memMb = 0, busy = false;
-        for (const line of stdout.trim().split('\n').filter(Boolean)) {
-          const parts = line.trim().split(/\s+/);
-          if (parts.length < 4) continue;
-          const cpu = parseFloat(parts[1] ?? '0');
-          const rss = parseInt(parts[2] ?? '0', 10);
-          const comm = parts.slice(3).join(' ');
-          if (/\bclaude\b/i.test(comm)) isClaudeCode = true;
-          if (/\bcodex\b/i.test(comm)) isCodex = true;
-          if (cpu > 5) busy = true;
-          cpuPercent += cpu; memMb += rss / 1024;
+        for (const c of children) {
+          if (/\bclaude\b/i.test(c.args)) isClaudeCode = true;
+          if (/\bcodex\b/i.test(c.args)) isCodex = true;
+          if (c.cpu > 5) busy = true;
+          cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        processInfo.set(id, { isClaudeCode, isCodex, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
-      } catch {}
-    }));
+        this.procInfo.set(id, { isClaudeCode, isCodex, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        // Any child at all means the shell isn't just sitting at a prompt.
+        const sess = this.sessions.get(id);
+        if (sess) sess.liveApp = children.length > 0;
+      }
+    }
+    const processInfo = this.procInfo;
 
     return [...this.sessions.values()].map(sess => {
       const procs = processInfo.get(sess.id);
@@ -657,14 +881,16 @@ export class DirectBridge {
 
   private async _refreshGitCache(): Promise<void> {
     const paths = new Set([...this.sessions.values()].map(s => s.path).filter(Boolean));
-    const results = await Promise.all(Array.from(paths).map(async (cwd) => {
+    const results = await mapLimit(Array.from(paths), EXEC_CONCURRENCY, async (cwd) => {
       try {
-        const [toplevel, commonDir, branch, status] = await Promise.all([
-          execAsync(`git -C ${sh(cwd)} rev-parse --show-toplevel 2>/dev/null`, { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
-          execAsync(`git -C ${sh(cwd)} rev-parse --git-common-dir 2>/dev/null`, { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
-          execAsync(`git -C ${sh(cwd)} rev-parse --abbrev-ref HEAD 2>/dev/null`, { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
-          execAsync(`git -C ${sh(cwd)} status --short 2>/dev/null`, { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
+        // One rev-parse for all three values (it accepts multiple options and
+        // answers in order), and a bounded number of paths in flight — this
+        // sweep used to fire 4 commands × every path at once.
+        const [revs, status] = await Promise.all([
+          execAsync(nice(`git -C ${sh(cwd)} rev-parse --show-toplevel --git-common-dir --abbrev-ref HEAD 2>/dev/null`), { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
+          execAsync(nice(`git -C ${sh(cwd)} status --short 2>/dev/null`), { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => ''),
         ]);
+        const [toplevel = '', commonDir = '', branch = ''] = revs.split('\n').map(l => l.trim());
         if (!toplevel) return { cwd, gitRoot: null, branch: null, dirty: false };
         let gitRoot = toplevel;
         if (commonDir && commonDir !== '.git') {
@@ -673,20 +899,20 @@ export class DirectBridge {
         }
         return { cwd, gitRoot, branch: branch === 'HEAD' ? null : branch || null, dirty: status.length > 0 };
       } catch { return { cwd, gitRoot: null, branch: null, dirty: false }; }
-    }));
+    });
     for (const r of results) this.gitCache.set(r.cwd, { gitRoot: r.gitRoot, branch: r.branch, dirty: r.dirty });
   }
 
   private async _refreshPRCache(): Promise<void> {
     const entries = Array.from(this.gitCache.entries()).filter(([, v]) => v.branch);
-    const results = await Promise.all(entries.map(async ([cwd]) => {
+    const results = await mapLimit(entries, EXEC_CONCURRENCY, async ([cwd]) => {
       try {
-        const { stdout } = await execAsync(`gh pr view --json url,number,state 2>/dev/null`, { cwd, timeout: 5000 });
+        const { stdout } = await execAsync(nice(`gh pr view --json url,number,state 2>/dev/null`), { cwd, timeout: 5000 });
         const pr = JSON.parse(stdout.trim());
         if (pr.number && pr.state) return { cwd, pr: { prNum: pr.number, prState: pr.state, prUrl: pr.url || '' } };
       } catch {}
       return { cwd, pr: null };
-    }));
+    });
     for (const r of results) this.prCache.set(r.cwd, r.pr);
   }
 
@@ -763,9 +989,23 @@ export class DirectBridge {
   private persist(): void {
     const saved: Record<string, SavedDirectSession> = {};
     for (const [id, sess] of this.sessions) {
-      saved[id] = { name: sess.name, path: sess.path, sessionType: sess.sessionType };
+      saved[id] = {
+        name: sess.name, path: sess.path, sessionType: sess.sessionType,
+        modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
+      };
     }
     try { writeFileSync(SESSIONS_FILE, JSON.stringify(saved, null, 2)); } catch {}
+  }
+
+  /** Coalesced persist for mode changes. An interactive shell re-emits
+   *  bracketed-paste (?2004h/l) around every command, so writing the file
+   *  synchronously on each transition would mean two writes per command. */
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.persist();
+    }, PERSIST_DEBOUNCE_MS);
   }
 
   private async restoreSessions(): Promise<void> {
@@ -792,9 +1032,15 @@ export class DirectBridge {
           id, name: info.name, path: ds.cwd || info.path, pid: ds.pid,
           ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
         };
-        // Seed sticky modes from the persisted ring — the app (still alive) set
-        // them before this restart, so reconnect can restore alt-screen/mouse.
-        trackPrivateModes(sess.modes = new Set(), ring.read());
+        // Seed sticky modes from the LAST PERSISTED SET, then replay the ring
+        // over it. The persisted set is what survives a long-running app whose
+        // startup sequences have rolled off the ring; replaying the ring on top
+        // applies anything that changed since (e.g. the app exited and reset
+        // alt-screen). Ring-only seeding silently lost mouse tracking for a
+        // live Claude Code on every server restart — the pane then had no
+        // working scroll until the app itself was restarted.
+        sess.modes = new Set(info.modes ?? []);
+        trackPrivateModes(sess.modes, ring.read());
         this.sessions.set(id, sess);
         await this.daemon.request({ type: 'subscribe', id });
         const num = parseInt(id.replace('direct-', ''), 10);
@@ -818,6 +1064,21 @@ export class DirectBridge {
         }
       }
     }
+
+    // Prime `liveApp` before any client can reconnect. Without this the first
+    // connect after a restart (which is exactly when every pane reconnects)
+    // would see `undefined`, decide "no app running", and force mouse tracking
+    // off on panes whose full-screen app is very much alive.
+    await this.refreshLiveApps();
+  }
+
+  /** Refresh `liveApp` for every session: does its PTY have a child process? */
+  private async refreshLiveApps(): Promise<void> {
+    const pids = new Set([...this.sessions.values()].map(s => s.pid).filter(p => p > 0));
+    const childrenByPid = await this.snapshotChildProcesses(pids);
+    for (const sess of this.sessions.values()) {
+      sess.liveApp = sess.pid > 0 && (childrenByPid.get(sess.pid)?.length ?? 0) > 0;
+    }
   }
 
   private loadSaved(): Record<string, SavedDirectSession> {
@@ -827,9 +1088,20 @@ export class DirectBridge {
     return {};
   }
 
+  /** Persist rings that changed since the last flush.
+   *
+   *  This used to write every session unconditionally — 34 × 256 KB of
+   *  synchronous `writeFileSync` every 10 seconds, which blocked the event loop
+   *  (and therefore keystroke delivery) for hundreds of milliseconds. Idle
+   *  sessions are skipped outright now; `stop()` still calls this to get a final
+   *  flush, so nothing is lost on shutdown. */
   private flushRings(): void {
     for (const [id, sess] of this.sessions) {
-      try { sess.ring.saveTo(join(RING_DIR, `${id}.buf`)); } catch {}
+      if (this.flushedVersions.get(id) === sess.ring.version) continue;
+      try {
+        sess.ring.saveTo(join(RING_DIR, `${id}.buf`));
+        this.flushedVersions.set(id, sess.ring.version);
+      } catch { /* retry on the next tick */ }
     }
   }
 }

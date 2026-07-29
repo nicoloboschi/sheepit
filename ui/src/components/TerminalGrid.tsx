@@ -114,16 +114,31 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
   }, [workspaceId, onCreateSplit]);
 
   const changeLayout = useCallback((newLayout: Layout) => {
-    const current = useStore.getState().workspaces[workspaceId];
+    const store = useStore.getState();
+    const current = store.workspaces[workspaceId];
     if (!current) return;
     const needed = layoutCapacity(newLayout);
     const clampedActive = Math.min(current.activeCell, Math.min(current.cells.length, needed) - 1);
+
+    // Downgrade (e.g. quad → single): the panes past the new capacity would
+    // otherwise stay in `cells` and simply never render — their PTYs alive,
+    // hidden from the sidebar (non-root panes are), and impossible to close.
+    // Re-home them as their own workspaces instead: a layout change shouldn't
+    // silently kill a running agent, and it must not strand a session either.
+    // Back-to-front so the indices stay valid as the array shrinks.
+    const insertAt = store.workspaceOrder.indexOf(workspaceId) + 1;
+    for (let i = current.cells.length - 1; i >= needed; i--) {
+      useStore.getState().extractPaneToNewWorkspace({ sourceId: workspaceId, sourceIdx: i, insertAt });
+    }
+
     // Update layout first so missing cells render as loader placeholders in
     // the correct final shape while ensureCells fills them in.
+    const remaining = useStore.getState().workspaces[workspaceId];
+    if (!remaining) return;
     useStore.getState().setGridState(
       workspaceId,
       newLayout,
-      current.cells,
+      remaining.cells,
       Math.max(0, clampedActive),
     );
     ensureCells(needed);

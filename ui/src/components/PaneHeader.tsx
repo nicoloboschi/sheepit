@@ -5,7 +5,6 @@ import useStore from '../store';
 import * as sharedWs from '../sharedWs';
 import { useDndEnabled } from '../dndEnabled';
 import StatChips from './StatChips';
-import MemoryChip from './MemoryChip';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
@@ -102,8 +101,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
     // Loading placeholder — matches real header height so layout doesn't jump.
     return <div style={{ height: 42, flexShrink: 0, borderBottom: '1px solid var(--border)', background: '#0a0a0a' }} />;
   }
-
-  const isAi = session.isClaudeCode || session.isCodex;
 
   return (
     <div
@@ -324,7 +321,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         fontSize: 10,
       }}>
         <StatChips sessionId={sessionId} send={send} />
-        {isAi && <MemoryChip sessionId={sessionId} />}
       </div>
     </div>
   );

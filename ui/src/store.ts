@@ -510,13 +510,14 @@ const useStore = create<StoreState>((set, get) => ({
       const nextLayout = shrunk
         ? downgradeWorkspaceLayout(ws.layout, prunedCells.length)
         : ws.layout;
-      const nextActive = Math.min(ws.activeCell, prunedCells.length - 1);
-      nextWorkspaces[wsId] = {
-        ...ws,
-        cells: prunedCells,
-        layout: nextLayout,
-        activeCell: Math.max(0, nextActive),
-      };
+      const nextActive = Math.max(0, Math.min(ws.activeCell, prunedCells.length - 1));
+      // Reuse the SAME object when nothing about this workspace changed. This
+      // runs every 2 seconds against every workspace; minting fresh objects
+      // regardless invalidated every selector downstream, so the whole sidebar
+      // re-rendered on a timer even when the session list was identical.
+      nextWorkspaces[wsId] = (!shrunk && nextLayout === ws.layout && nextActive === ws.activeCell)
+        ? ws
+        : { ...ws, cells: prunedCells, layout: nextLayout, activeCell: nextActive };
       nextWorkspaceOrder.push(wsId);
       for (const cid of prunedCells) claimed.add(cid);
     }
@@ -554,7 +555,33 @@ const useStore = create<StoreState>((set, get) => ({
       }
     }
 
-    saveWorkspaces(nextWorkspaces, nextWorkspaceOrder);
+    // Nothing changed? Then don't touch the store at all.
+    //
+    // This is a 2-second timer, and both of the things below are expensive:
+    // `saveWorkspaces` serialises every workspace to localStorage synchronously,
+    // and `set` invalidates the sidebar, every chip, and every mounted pane's
+    // selectors. Measured in the browser, that combination produced periodic
+    // 50–124 ms main-thread stalls with the app sitting completely idle.
+    const prev = get();
+    const workspacesUnchanged =
+      nextWorkspaceOrder.length === prev.workspaceOrder.length &&
+      nextWorkspaceOrder.every((id, i) => prev.workspaceOrder[i] === id && prev.workspaces[id] === nextWorkspaces[id]);
+    const sessionsUnchanged =
+      sorted.length === prev.sessions.length &&
+      sorted.every((s, i) => {
+        const p = prev.sessions[i];
+        // `busy` is deliberately absent: it rides the preview message into
+        // `sessionBusy` and is never read off these objects.
+        return !!p && p.id === s.id && p.name === s.name && p.path === s.path
+          && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
+          && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
+          && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
+          && p.prNum === s.prNum && p.prState === s.prState
+          && p.last_activity === s.last_activity;
+      });
+    if (workspacesUnchanged && sessionsUnchanged && nextCurrentId === prev.currentSessionId) return;
+
+    if (!workspacesUnchanged) saveWorkspaces(nextWorkspaces, nextWorkspaceOrder);
     set({
       sessions: sorted,
       sessionMap,

@@ -9,6 +9,11 @@ import type { Layout } from './TerminalGrid';
 // (see KnowledgeDialog), so this is kept only to sanitize stale persisted state.
 export const NOTES_SESSION_ID = '__notes__';
 
+/** How many workspaces stay mounted at once (see `visitedIds` below). Each one
+ *  holds every pane it contains, so this is a memory ceiling, not a count of
+ *  tabs — 12 covers normal back-and-forth without unbounded growth. */
+const MAX_MOUNTED_WORKSPACES = 12;
+
 interface PaneTerminalProps {
   sessionId: string | null;
   send: (msg: Record<string, unknown>) => void;
@@ -21,11 +26,39 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
   // Keep visited workspaces mounted (hidden) for instant switching. Each id
   // in this list is a workspace id (what `sessionId` holds after the workspace
   // refactor), not a backend session id.
+  //
+  // Bounded, least-recently-used: every mounted pane is a live xterm holding
+  // its full scrollback and streaming output, so an unbounded cache grew into
+  // gigabytes for anyone who visited a lot of workspaces in one page session.
+  // Evicting is cheap to undo — returning to a workspace replays the daemon's
+  // ring buffer, the same path a page reload takes.
   const allWorkspaceIds = useStore(useShallow(s => s.workspaceOrder));
   const [visitedIds, setVisitedIds] = useState<string[]>([]);
+  // Visit order, kept out of state: it changes on every switch but only ever
+  // decides *which* id to evict, so it must not trigger a render on its own.
+  const lastVisitRef = useRef(new Map<string, number>());
+  const visitSeqRef = useRef(0);
   useEffect(() => {
     if (!sessionId || sessionId === NOTES_SESSION_ID) return;
-    setVisitedIds(prev => prev.includes(sessionId) ? prev : [...prev, sessionId]);
+    lastVisitRef.current.set(sessionId, ++visitSeqRef.current);
+    setVisitedIds(prev => {
+      // Already mounted → nothing to add, and nothing to evict either.
+      if (prev.includes(sessionId)) return prev;
+      const next = [...prev, sessionId];
+      while (next.length > MAX_MOUNTED_WORKSPACES) {
+        // Drop the least recently visited — never the one being shown.
+        let lruIdx = -1, lruSeq = Infinity;
+        next.forEach((id, i) => {
+          if (id === sessionId) return;
+          const seq = lastVisitRef.current.get(id) ?? 0;
+          if (seq < lruSeq) { lruSeq = seq; lruIdx = i; }
+        });
+        if (lruIdx < 0) break;
+        lastVisitRef.current.delete(next[lruIdx]!);
+        next.splice(lruIdx, 1);
+      }
+      return next;
+    });
   }, [sessionId]);
   // Drop cached entries for workspaces that no longer exist (e.g. dissolved
   // via drag-out-last-pane).
