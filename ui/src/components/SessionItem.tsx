@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil, Bot } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -107,12 +107,13 @@ interface SessionItemProps {
 // Replaces the old "session icon + mini-grid" duo — each pane can now show
 // its own icon because a split grid can mix AI and plain shells.
 
-type PaneKind = 'claude' | 'codex' | 'terminal';
+type PaneKind = 'claude' | 'codex' | 'opencode' | 'terminal';
 
 function getPaneKind(s: Session | undefined): PaneKind {
   if (!s) return 'terminal';
   if (s.isClaudeCode) return 'claude';
   if (s.isCodex) return 'codex';
+  if (s.isOpencode) return 'opencode';
   return 'terminal';
 }
 
@@ -120,6 +121,7 @@ function PaneIcon({ kind, size }: { kind: PaneKind; size: number }): React.React
   switch (kind) {
     case 'claude':   return <ClaudeIcon size={size} />;
     case 'codex':    return <OpenAIIcon size={size} />;
+    case 'opencode': return <Bot size={size} />;
     default:         return <SquareTerminal size={size} />;
   }
 }

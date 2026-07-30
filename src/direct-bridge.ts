@@ -80,30 +80,104 @@ const MIN_ACTIVE_SPAN_MS = 2000;
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
 
-/** Pull OSC 9 desktop-notification payloads out of a chunk of terminal output.
+/** A desktop notification an app asked the terminal to show. */
+export interface TerminalNotification {
+  /** Notification id, when the protocol carries one (OSC 99 chunks share it). */
+  id: string;
+  text: string;
+  /** False while more chunks of the same notification are still coming. */
+  done: boolean;
+}
+
+/** Pull desktop notifications out of a chunk of terminal output.
  *
  *  This is how coding agents say "I'm done" — explicitly, in-band, rather than
- *  us inferring it from CPU or output timing:
+ *  us inferring it from CPU or output timing. They don't agree on a protocol,
+ *  so all three in use here are handled:
  *
- *    Codex        ESC ] 9 ; <the model's closing message>  BEL
- *    Claude Code  ESC ] 9 ; Claude is waiting for your input  BEL
+ *    OSC 9    Codex        ESC ] 9 ; <the model's closing message>     BEL
+ *             Claude Code  ESC ] 9 ; Claude is waiting for your input  BEL
+ *    OSC 99   opencode     kitty's protocol: ESC ] 99 ; <params> ; <payload> ST
+ *    OSC 777  urxvt's      ESC ] 777 ; notify ; <title> ; <body>       BEL
  *
- *  OSC 9;4 is a different thing sharing the same prefix — the ConEmu progress
- *  protocol (`9;4;<state>;<pct>`, state 3 = busy, 0 = cleared) — so those are
- *  filtered out here and reported separately by parseOscProgress.
+ *  OSC 9;4 shares a prefix with OSC 9 but means something else entirely — the
+ *  ConEmu progress protocol — so it is filtered out here and reported by
+ *  parseOscProgress instead. OSC 99 capability *queries* (`p=?`) are likewise
+ *  not notifications; see parseKittyNotificationQuery.
  *
  *  Terminated by BEL or ST, since both appear in the wild. */
-export function parseOscNotifications(data: string): string[] {
-  if (!data.includes('\x1b]9;')) return [];
-  const out: string[] = [];
-  const re = /\x1b\]9;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(data)) !== null) {
-    const payload = m[1]!;
-    if (payload.startsWith('4;')) continue; // progress, not a notification
-    if (payload.trim()) out.push(payload);
+export function parseOscNotifications(data: string): TerminalNotification[] {
+  const out: TerminalNotification[] = [];
+  if (!data.includes('\x1b]')) return out;
+
+  // OSC 9 — a bare message.
+  if (data.includes('\x1b]9;')) {
+    const re = /\x1b\]9;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(data)) !== null) {
+      const payload = m[1]!;
+      if (payload.startsWith('4;')) continue; // progress, not a notification
+      if (payload.trim()) out.push({ id: '', text: payload, done: true });
+    }
   }
+
+  // OSC 777 — `notify;<title>;<body>`; the body is the interesting half.
+  if (data.includes('\x1b]777;')) {
+    const re = /\x1b\]777;notify;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(data)) !== null) {
+      const [title = '', ...rest] = m[1]!.split(';');
+      const text = (rest.join(';') || title).trim();
+      if (text) out.push({ id: '', text, done: true });
+    }
+  }
+
+  // OSC 99 — kitty's: metadata `key=value` pairs joined by ':', then the
+  // payload. `e=1` marks the payload base64, `d=0` means more chunks follow,
+  // `p=` selects which part (title/body) this chunk carries.
+  if (data.includes('\x1b]99;')) {
+    const re = /\x1b\]99;([^;\x07\x1b]*);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(data)) !== null) {
+      const params = new Map(
+        m[1]!.split(':').filter(Boolean).map(kv => {
+          const i = kv.indexOf('=');
+          return i < 0 ? [kv, ''] as const : [kv.slice(0, i), kv.slice(i + 1)] as const;
+        }),
+      );
+      if (params.get('p') === '?') continue; // capability query, not a notification
+      let text = m[2]!;
+      if (params.get('e') === '1') {
+        try { text = Buffer.from(text, 'base64').toString('utf-8'); } catch { /* keep raw */ }
+      }
+      out.push({ id: params.get('i') ?? '', text, done: params.get('d') !== '0' });
+    }
+  }
+
   return out;
+}
+
+/** The notification id from a kitty capability query (`p=?`), if this chunk has
+ *  one. Apps use it to ask whether the terminal supports OSC 99 notifications
+ *  at all — opencode does this at startup and stays silent unless answered. */
+export function parseKittyNotificationQuery(data: string): string | null {
+  if (!data.includes('\x1b]99;')) return null;
+  const m = /\x1b\]99;([^;\x07\x1b]*);[^\x07\x1b]*(?:\x07|\x1b\\)/.exec(data);
+  if (!m) return null;
+  const params = m[1]!.split(':').filter(Boolean);
+  if (!params.some(kv => kv === 'p=?')) return null;
+  const id = params.find(kv => kv.startsWith('i='));
+  return id ? id.slice(2) : '';
+}
+
+/** Reply that advertises support for kitty desktop notifications.
+ *
+ *  Shaped to satisfy the querying app: opencode accepts any OSC 99 whose
+ *  parameters echo back its `i=` and `p=?`. Answering is what makes it send
+ *  notifications at all — and vipershell genuinely does support them now, in
+ *  the sense that it turns them into sidebar highlights. */
+export function kittyNotificationAck(id: string): string {
+  return `\x1b]99;i=${id}:p=?;\x1b\\`;
 }
 
 /** OSC 9;4 progress state, if this chunk carried one. `true` = the app reports
@@ -128,13 +202,14 @@ export function parseOscProgress(data: string): boolean | null {
  *  `node -e "…isCodex…"`, or grepping for "claude", would flag itself as that
  *  agent. Two tokens is enough for both real shapes: `claude …` (direct binary)
  *  and `node …/bin/codex …` (wrapper script). */
-export function detectAgentApp(args: string): 'claude' | 'codex' | null {
+export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | null {
   const tokens = args.split(/\s+/, 2);
   for (const token of tokens) {
     if (!token) continue;
     const base = token.slice(token.lastIndexOf('/') + 1);
     if (base === 'claude' || base === 'claude-code' || token.includes('/claude/')) return 'claude';
     if (base === 'codex' || token.includes('/codex/') || token.includes('/codex-')) return 'codex';
+    if (base === 'opencode' || token.includes('/opencode/')) return 'opencode';
   }
   return null;
 }
@@ -556,10 +631,12 @@ export class DirectBridge {
   private lastBusy = new Map<string, boolean>();
   /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
   private oscBusy = new Map<string, boolean>();
+  /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
+  private pendingNotes = new Map<string, string>();
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
   private procInfoAt = 0;
 
   constructor() {
@@ -586,8 +663,23 @@ export class DirectBridge {
           // The agent announcing completion is worth more than any heuristic:
           // publish it straight through so the sidebar can light up the moment
           // the model is done, instead of waiting out the silence window.
-          for (const message of parseOscNotifications(data)) {
-            this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message });
+          for (const note of parseOscNotifications(data)) {
+            // OSC 99 splits a notification across chunks; hold the pieces until
+            // the app marks the last one.
+            const key = `${id}:${note.id}`;
+            const text = (this.pendingNotes.get(key) ?? '') + note.text;
+            if (!note.done) { this.pendingNotes.set(key, text); continue; }
+            this.pendingNotes.delete(key);
+            if (text.trim()) {
+              this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message: text });
+            }
+          }
+
+          // Answer "do you support desktop notifications?" — opencode asks at
+          // startup and never notifies unless something answers.
+          const queryId = parseKittyNotificationQuery(data);
+          if (queryId !== null) {
+            this.daemon.sendFire({ type: 'write', id, data: kittyNotificationAck(queryId) });
           }
           const progress = parseOscProgress(data);
           if (progress !== null) this.oscBusy.set(id, progress);
@@ -977,15 +1069,16 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, cpuPercent = 0, memMb = 0, busy = false;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, cpuPercent = 0, memMb = 0, busy = false;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
           else if (app === 'codex') isCodex = true;
+          else if (app === 'opencode') isOpencode = true;
           if (c.cpu > 5) busy = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -997,14 +1090,14 @@ export class DirectBridge {
       const procs = processInfo.get(sess.id);
       const git = this.getGitInfo(sess.path);
       if (procs) {
-        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : null;
+        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : null;
         if (newType && sess.sessionType !== newType) { sess.sessionType = newType; this.persist(); }
       }
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
-        isCodex: procs?.isCodex ?? false,
+        isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0, ...git,
       };
     });

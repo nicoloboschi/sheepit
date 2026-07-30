@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -119,16 +119,17 @@ describe('detectAgentApp', () => {
 describe('parseOscNotifications', () => {
   it('extracts the completion message Codex emits', () => {
     // Codex sends its closing message as the payload.
-    expect(parseOscNotifications('\x1b]9;Fixed. Build passes.\x07')).toEqual(['Fixed. Build passes.'])
+    expect(parseOscNotifications('\x1b]9;Fixed. Build passes.\x07').map(n => n.text))
+      .toEqual(['Fixed. Build passes.'])
   })
 
   it('extracts the completion message Claude Code emits', () => {
-    expect(parseOscNotifications('\x1b]9;Claude is waiting for your input\x07'))
+    expect(parseOscNotifications('\x1b]9;Claude is waiting for your input\x07').map(n => n.text))
       .toEqual(['Claude is waiting for your input'])
   })
 
   it('accepts ST as well as BEL as the terminator', () => {
-    expect(parseOscNotifications('\x1b]9;done\x1b\\')).toEqual(['done'])
+    expect(parseOscNotifications('\x1b]9;done\x1b\\').map(n => n.text)).toEqual(['done'])
   })
 
   it('ignores OSC 9;4 progress, which shares the prefix', () => {
@@ -144,7 +145,7 @@ describe('parseOscNotifications', () => {
   })
 
   it('picks up several notifications in one chunk', () => {
-    expect(parseOscNotifications('a\x1b]9;one\x07b\x1b]9;two\x07c')).toEqual(['one', 'two'])
+    expect(parseOscNotifications('a\x1b]9;one\x07b\x1b]9;two\x07c').map(n => n.text)).toEqual(['one', 'two'])
   })
 })
 
@@ -162,5 +163,55 @@ describe('parseOscProgress', () => {
 
   it('takes the last state in the chunk', () => {
     expect(parseOscProgress('\x1b]9;4;3;\x07 work \x1b]9;4;0;\x07')).toBe(false)
+  })
+})
+
+describe('notifications from the other protocols', () => {
+  it('reads urxvt OSC 777, preferring the body over the title', () => {
+    expect(parseOscNotifications('\x1b]777;notify;opencode;Finished the refactor\x07').map(n => n.text))
+      .toEqual(['Finished the refactor'])
+  })
+
+  it('reads a kitty OSC 99 notification', () => {
+    expect(parseOscNotifications('\x1b]99;i=1:d=1;All tests pass\x1b\\').map(n => n.text))
+      .toEqual(['All tests pass'])
+  })
+
+  it('decodes a base64 OSC 99 payload', () => {
+    const b64 = Buffer.from('Done ✅', 'utf-8').toString('base64')
+    expect(parseOscNotifications(`\x1b]99;i=7:e=1:d=1;${b64}\x1b\\`).map(n => n.text))
+      .toEqual(['Done ✅'])
+  })
+
+  it('marks a chunked OSC 99 notification as unfinished until the last chunk', () => {
+    // opencode splits long messages: d=0 means "more coming".
+    const [first] = parseOscNotifications('\x1b]99;i=9:d=0;part one \x1b\\')
+    expect(first!.done).toBe(false)
+    expect(first!.id).toBe('9')
+    const [second] = parseOscNotifications('\x1b]99;i=9:d=1;part two\x1b\\')
+    expect(second!.done).toBe(true)
+  })
+
+  it('does not treat a capability query as a notification', () => {
+    expect(parseOscNotifications('\x1b]99;i=opentui-notifications:p=?;\x1b\\')).toEqual([])
+  })
+})
+
+describe('kitty notification capability handshake', () => {
+  it('recognises opencode’s startup query', () => {
+    expect(parseKittyNotificationQuery('\x1b]99;i=opentui-notifications:p=?;\x1b\\'))
+      .toBe('opentui-notifications')
+  })
+
+  it('ignores actual notifications and unrelated output', () => {
+    expect(parseKittyNotificationQuery('\x1b]99;i=1:d=1;hello\x1b\\')).toBeNull()
+    expect(parseKittyNotificationQuery('\x1b]9;hello\x07')).toBeNull()
+    expect(parseKittyNotificationQuery('plain output')).toBeNull()
+  })
+
+  it('answers in the shape the querying app matches on', () => {
+    const ack = kittyNotificationAck('opentui-notifications')
+    // opencode accepts any OSC 99 echoing back its id and p=?.
+    expect(/\x1b\]99;[^\x07\x1b]*i=opentui-notifications[^\x07\x1b]*p=\?[\s\S]*?(?:\x07|\x1b\\)/.test(ack)).toBe(true)
   })
 })

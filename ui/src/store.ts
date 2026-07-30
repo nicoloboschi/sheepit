@@ -11,6 +11,7 @@ export interface Session {
   last_activity?: number;
   isClaudeCode?: boolean;
   isCodex?: boolean;
+  isOpencode?: boolean;
   cpuPercent?: number;
   memMb?: number;
   gitRoot?: string;
@@ -578,6 +579,7 @@ const useStore = create<StoreState>((set, get) => ({
         return !!p && p.id === s.id && p.name === s.name && p.path === s.path
           && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
           && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
+          && p.isOpencode === s.isOpencode
           && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
           && p.prNum === s.prNum && p.prState === s.prState
           && p.last_activity === s.last_activity;

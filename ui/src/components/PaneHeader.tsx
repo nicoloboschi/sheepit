@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, GripVertical, FolderOpen, Columns2 } from 'lucide-react';
+import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, GripVertical, FolderOpen, Columns2, Bot } from 'lucide-react';
 import { useDraggable } from '@dnd-kit/core';
 import useStore from '../store';
 import * as sharedWs from '../sharedWs';
@@ -150,6 +150,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         <span className={`pane-header-kind-badge${isActive ? ' pane-header-kind-badge-active' : ''}`}>
           {session.isClaudeCode ? <ClaudeIcon size={15} />
             : session.isCodex    ? <OpenAIIcon size={15} />
+            : session.isOpencode ? <Bot size={15} />
             : <SquareTerminal size={15} />}
         </span>
 

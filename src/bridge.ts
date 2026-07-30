@@ -43,6 +43,7 @@ export interface Session {
   busy: boolean;
   isClaudeCode?: boolean;
   isCodex?: boolean;
+  isOpencode?: boolean;
   /** Aggregate CPU % of all child processes */
   cpuPercent?: number;
   /** Aggregate RSS memory in MB of all child processes */
@@ -68,7 +69,7 @@ interface ManagedSession {
   lastPreview: string;
 }
 
-type SessionType = 'claude' | 'codex' | null;
+type SessionType = 'claude' | 'codex' | 'opencode' | null;
 
 interface SavedSession {
   name: string;
