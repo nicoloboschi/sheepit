@@ -101,8 +101,8 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   if (collapsed) {
     return (
       <aside
-        className="hidden md:flex flex-col shrink-0 items-center py-2"
-        style={{ width: 36, background: 'var(--card)', borderRight: '1px solid var(--border)' }}
+        className="sidebar-shell sidebar-shell-collapsed hidden md:flex flex-col shrink-0 items-center py-2"
+        style={{ width: 36 }}
       >
         <button
           onClick={toggleCollapse}
@@ -122,10 +122,11 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
 
   return (
     <aside
-      className="hidden md:flex flex-col shrink-0"
-      style={{ width: sidebarW, background: 'var(--card)', borderRight: '1px solid var(--border)', position: 'relative' }}
+      className="sidebar-shell hidden md:flex flex-col shrink-0"
+      style={{ width: sidebarW, position: 'relative' }}
     >
       <div
+        className="sidebar-resize-handle"
         onMouseDown={onDragStart}
         style={{
           position: 'absolute', top: 0, right: 0, width: 4, height: '100%',
@@ -134,10 +135,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         onMouseEnter={e => { if (!draggingRef.current) (e.currentTarget as HTMLElement).style.background = '#0074d9'; }}
         onMouseLeave={e => { if (!draggingRef.current) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       />
-      <div
-        className="flex items-center justify-between px-4 py-3.5 border-b"
-        style={{ borderColor: 'var(--border)' }}
-      >
+      <div className="sidebar-header flex items-center justify-between px-4 py-3.5">
         <span className="logo"><ViperIcon size={15} color="var(--primary)" /> <span className="brand-gradient-text">vipershell</span></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* Workspace list filter — All / Active / Favourites. */}
@@ -178,10 +176,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         send={send}
       />
 
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 border-t"
-        style={{ borderColor: 'var(--border)' }}
-      >
+      <div className="sidebar-footer flex items-center gap-2 px-4 py-2.5">
         <span id="status-dot" className={`status-dot ${wsStatus}`} />
         <span id="status-text" className="status-text">{statusLabel}</span>
         {version && <span style={{ fontSize: 9, color: 'var(--muted-foreground)', opacity: 0.4, fontFamily: '"JetBrains Mono", monospace' }}>v{version}</span>}

@@ -165,6 +165,7 @@ function PaneCard({
 }): React.ReactElement {
   const session   = useStore(s => s.sessionMap[sessionId]);
   const lastEvent = useStore(s => s.sessionLastEvent[sessionId] ?? null);
+  const busy = useStore(s => !!s.sessionBusy[sessionId]);
   const kind = getPaneKind(session);
   const name = session?.name ?? '\u2026';
   const time = compactRelativeTime(lastEvent);
@@ -220,6 +221,7 @@ function PaneCard({
         'pane-card',
         active && 'pane-card-active',
         unseen && 'pane-card-unseen',
+        busy ? 'pane-card-busy' : 'pane-card-idle',
         tight && 'pane-card-tight',
         'pane-card-draggable',
         isDragging && 'pane-card-dragging',
@@ -245,6 +247,11 @@ function PaneCard({
       </span>
       <div className="pane-card-row">
         <span className="pane-card-name">{name}</span>
+        <span
+          className="pane-card-activity"
+          aria-label={busy ? 'Pane is running' : 'Pane is idle'}
+          title={busy ? 'Running' : 'Idle'}
+        />
       </div>
       {(hasCwd || time) && (
         <div className="pane-card-cwd-row" title={session?.path}>
