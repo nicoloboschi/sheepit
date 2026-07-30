@@ -114,7 +114,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
 
     // Subscribe to session list updates (once per client)
     state.unsubSessions = bridge.pubsub.subscribe('__sessions__', (msg) => {
-      if (msg.type === 'sessions' || msg.type === 'current_input' || msg.type === 'preview') {
+      if (msg.type === 'sessions' || msg.type === 'current_input' || msg.type === 'preview' || msg.type === 'attention') {
         send(msg);
       }
     });

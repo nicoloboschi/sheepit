@@ -80,6 +80,45 @@ const MIN_ACTIVE_SPAN_MS = 2000;
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
 
+/** Pull OSC 9 desktop-notification payloads out of a chunk of terminal output.
+ *
+ *  This is how coding agents say "I'm done" — explicitly, in-band, rather than
+ *  us inferring it from CPU or output timing:
+ *
+ *    Codex        ESC ] 9 ; <the model's closing message>  BEL
+ *    Claude Code  ESC ] 9 ; Claude is waiting for your input  BEL
+ *
+ *  OSC 9;4 is a different thing sharing the same prefix — the ConEmu progress
+ *  protocol (`9;4;<state>;<pct>`, state 3 = busy, 0 = cleared) — so those are
+ *  filtered out here and reported separately by parseOscProgress.
+ *
+ *  Terminated by BEL or ST, since both appear in the wild. */
+export function parseOscNotifications(data: string): string[] {
+  if (!data.includes('\x1b]9;')) return [];
+  const out: string[] = [];
+  const re = /\x1b\]9;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(data)) !== null) {
+    const payload = m[1]!;
+    if (payload.startsWith('4;')) continue; // progress, not a notification
+    if (payload.trim()) out.push(payload);
+  }
+  return out;
+}
+
+/** OSC 9;4 progress state, if this chunk carried one. `true` = the app reports
+ *  itself busy, `false` = it cleared progress. Claude Code drives this while it
+ *  works; Codex does not, which is why it can't be the only signal. */
+export function parseOscProgress(data: string): boolean | null {
+  if (!data.includes('\x1b]9;4;')) return null;
+  // The percentage field is often present but empty — `9;4;3;` is the shape
+  // both agents actually emit, so `\d*` rather than `\d+`.
+  const re = /\x1b\]9;4;(\d+)(?:;(\d*))?(?:\x07|\x1b\\)/g;
+  let m: RegExpExecArray | null, last: boolean | null = null;
+  while ((m = re.exec(data)) !== null) last = m[1] !== '0';
+  return last;
+}
+
 /** Identify a coding agent from a process command line.
  *
  *  Only the first two argv tokens are considered — the interpreter and the
@@ -515,6 +554,8 @@ export class DirectBridge {
   private lastOutputAt = new Map<string, number>();
   private firstOutputAt = new Map<string, number>();
   private lastBusy = new Map<string, boolean>();
+  /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
+  private oscBusy = new Map<string, boolean>();
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
@@ -541,6 +582,16 @@ export class DirectBridge {
             this.firstOutputAt.set(id, outputNow);
           }
           this.lastOutputAt.set(id, outputNow);
+
+          // The agent announcing completion is worth more than any heuristic:
+          // publish it straight through so the sidebar can light up the moment
+          // the model is done, instead of waiting out the silence window.
+          for (const message of parseOscNotifications(data)) {
+            this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message });
+          }
+          const progress = parseOscProgress(data);
+          if (progress !== null) this.oscBusy.set(id, progress);
+
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -628,9 +679,13 @@ export class DirectBridge {
       const lastOut = this.lastOutputAt.get(sess.id) ?? 0;
       const activeSpan = lastOut - (this.firstOutputAt.get(sess.id) ?? lastOut);
       const cached = this.cachedSessions.find(s => s.id === sess.id);
-      const busy =
+      // An app that reports its own progress is authoritative; otherwise fall
+      // back to sustained output, then to CPU.
+      const reported = this.oscBusy.get(sess.id);
+      const busy = reported ?? (
         (now - lastOut < BUSY_SILENCE_MS && activeSpan >= MIN_ACTIVE_SPAN_MS)
-        || (cached?.busy ?? false);
+        || (cached?.busy ?? false)
+      );
 
       // A session that has gone quiet stops bumping its ring version, so the
       // skip below would never let us announce that it finished. Publish

@@ -225,6 +225,11 @@ export default function App() {
       case 'current_input':
         store.setCurrentInput(msg.session_id as string, msg.input as string);
         break;
+      case 'attention':
+        // The app said it's done (OSC 9). Exact, and immediate — no waiting for
+        // the busy heuristics to notice the session went quiet.
+        store.sessionAttention(msg.session_id as string, msg.message as string);
+        break;
       default: break;
     }
   }, [connectSession, resolveHashTarget]);

@@ -161,6 +161,9 @@ export interface StoreState {
   addSessionUrl: (sessionId: string, url: string) => void;
   clearSessionUrls: (sessionId: string) => void;
   setCurrentInput: (sessionId: string, input: string) => void;
+  /** The app in the session asked for attention (OSC 9) — for coding agents,
+   *  the turn finished. */
+  sessionAttention: (sessionId: string, message: string) => void;
   markUnseen: (sessionId: string) => void;
   clearUnseen: (sessionId: string) => void;
 
@@ -698,6 +701,24 @@ const useStore = create<StoreState>((set, get) => ({
 
   setCurrentInput(sessionId: string, input: string) {
     set(s => ({ sessionCurrentInput: { ...s.sessionCurrentInput, [sessionId]: input } }));
+  },
+
+  sessionAttention(sessionId: string, message: string) {
+    const { currentSessionId, workspaces, sessionMap } = get();
+    const ws = currentSessionId ? workspaces[currentSessionId] : undefined;
+    const isVisible = ws?.cells.includes(sessionId) || sessionId === currentSessionId;
+
+    // The app has spoken, so this burst is over: clearing busy here also stops
+    // the slower activity heuristic from firing a second "finished" for the
+    // same turn a few seconds later.
+    const pending = _busyTimers.get(sessionId);
+    if (pending) { clearTimeout(pending); _busyTimers.delete(sessionId); }
+    set(s => ({ sessionBusy: { ...s.sessionBusy, [sessionId]: false } }));
+
+    if (isVisible) return;
+    const name = sessionMap[sessionId]?.name ?? 'terminal';
+    notify('vipershell \u{1F40D}', message.trim() ? `${name}: ${message.slice(0, 120)}` : `${name} finished`);
+    set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
   },
 
   markUnseen(sessionId: string) {

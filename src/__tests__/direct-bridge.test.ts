@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -113,5 +113,54 @@ describe('detectAgentApp', () => {
     expect(detectAgentApp('git commit -m "fix codex thing"')).toBeNull()
     expect(detectAgentApp('vim notes-about-claude.md')).toBeNull()
     expect(detectAgentApp('/bin/zsh -l')).toBeNull()
+  })
+})
+
+describe('parseOscNotifications', () => {
+  it('extracts the completion message Codex emits', () => {
+    // Codex sends its closing message as the payload.
+    expect(parseOscNotifications('\x1b]9;Fixed. Build passes.\x07')).toEqual(['Fixed. Build passes.'])
+  })
+
+  it('extracts the completion message Claude Code emits', () => {
+    expect(parseOscNotifications('\x1b]9;Claude is waiting for your input\x07'))
+      .toEqual(['Claude is waiting for your input'])
+  })
+
+  it('accepts ST as well as BEL as the terminator', () => {
+    expect(parseOscNotifications('\x1b]9;done\x1b\\')).toEqual(['done'])
+  })
+
+  it('ignores OSC 9;4 progress, which shares the prefix', () => {
+    // ConEmu progress protocol — not a notification, and leaking it would fire
+    // a "finished" popup reading "4;3;" every time an agent started working.
+    expect(parseOscNotifications('\x1b]9;4;3;\x07')).toEqual([])
+    expect(parseOscNotifications('\x1b]9;4;0;\x07')).toEqual([])
+  })
+
+  it('ignores unrelated OSC sequences and plain output', () => {
+    expect(parseOscNotifications('\x1b]0;some window title\x07')).toEqual([])
+    expect(parseOscNotifications('just regular output\n')).toEqual([])
+  })
+
+  it('picks up several notifications in one chunk', () => {
+    expect(parseOscNotifications('a\x1b]9;one\x07b\x1b]9;two\x07c')).toEqual(['one', 'two'])
+  })
+})
+
+describe('parseOscProgress', () => {
+  it('reads busy and cleared states', () => {
+    expect(parseOscProgress('\x1b]9;4;3;\x07')).toBe(true)   // indeterminate = working
+    expect(parseOscProgress('\x1b]9;4;0;\x07')).toBe(false)  // cleared = done
+    expect(parseOscProgress('\x1b]9;4;1;40\x07')).toBe(true) // percentage = working
+  })
+
+  it('returns null when the chunk carries no progress', () => {
+    expect(parseOscProgress('\x1b]9;a message\x07')).toBeNull()
+    expect(parseOscProgress('plain output')).toBeNull()
+  })
+
+  it('takes the last state in the chunk', () => {
+    expect(parseOscProgress('\x1b]9;4;3;\x07 work \x1b]9;4;0;\x07')).toBe(false)
   })
 })

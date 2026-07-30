@@ -80,7 +80,10 @@ export type BridgeMessage =
   | { type: 'sessions'; sessions: Session[] }
   | { type: 'output'; data: string }
   | { type: 'preview'; session_id: string; preview: string; busy: boolean }
-  | { type: 'current_input'; session_id: string; input: string };
+  | { type: 'current_input'; session_id: string; input: string }
+  /** The app in the PTY asked for the user's attention (OSC 9) — for coding
+   *  agents this is emitted when a turn completes. */
+  | { type: 'attention'; session_id: string; message: string };
 
 
 export class TmuxBridge {
