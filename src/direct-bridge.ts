@@ -56,6 +56,21 @@ const EXEC_CONCURRENCY = 4;
  *  need a `ps` of every process on the machine, which is the expensive part. */
 const PROC_INFO_TTL_MS = 10_000;
 
+/** How long a session must produce no output before it counts as finished.
+ *
+ *  Agents repaint a spinner/elapsed timer roughly every second while working,
+ *  so this only has to bridge the natural gaps between repaints — long enough
+ *  not to flicker mid-turn, short enough that "done" feels immediate. */
+const BUSY_SILENCE_MS = 3000;
+
+/** How long output must have been flowing before a session counts as "running
+ *  something", rather than just echoing a quick command.
+ *
+ *  Without this, any background `ls` would light up the sidebar and fire a
+ *  "finished" notification three seconds later. A model turn spans many
+ *  seconds of repaints, so it clears this easily. */
+const MIN_ACTIVE_SPAN_MS = 2000;
+
 /** Run a background sweep's command at reduced scheduling priority.
  *
  *  These sweeps (ps / git / gh) are housekeeping: nothing waits on them, and
@@ -64,6 +79,26 @@ const PROC_INFO_TTL_MS = 10_000;
  *  raw `cat` echo showed a 200 ms p90 — letting them compete at normal priority
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
+
+/** Identify a coding agent from a process command line.
+ *
+ *  Only the first two argv tokens are considered — the interpreter and the
+ *  script/binary it runs — and each is matched on its path, never on the rest
+ *  of the arguments. Scanning the whole command line produced false positives
+ *  the moment we started walking the full process tree: a session running
+ *  `node -e "…isCodex…"`, or grepping for "claude", would flag itself as that
+ *  agent. Two tokens is enough for both real shapes: `claude …` (direct binary)
+ *  and `node …/bin/codex …` (wrapper script). */
+export function detectAgentApp(args: string): 'claude' | 'codex' | null {
+  const tokens = args.split(/\s+/, 2);
+  for (const token of tokens) {
+    if (!token) continue;
+    const base = token.slice(token.lastIndexOf('/') + 1);
+    if (base === 'claude' || base === 'claude-code' || token.includes('/claude/')) return 'claude';
+    if (base === 'codex' || token.includes('/codex/') || token.includes('/codex-')) return 'codex';
+  }
+  return null;
+}
 
 /** Map with bounded concurrency, preserving input order in the result. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -290,7 +325,7 @@ interface DirectSession {
   liveApp?: boolean;
 }
 
-/** One row of `ps` output (see snapshotChildProcesses). */
+/** One row of `ps` output (see snapshotDescendants). */
 interface ProcSnapshot {
   pid: number;
   cpu: number;
@@ -475,6 +510,11 @@ export class DirectBridge {
   /** Ring version last used to build a preview / written to disk, per session.
    *  Both periodic sweeps use these to skip sessions that produced no output. */
   private previewVersions = new Map<string, number>();
+  /** When each session last produced output, and the busy state last published
+   *  for it — together these turn "went quiet" into a finished event. */
+  private lastOutputAt = new Map<string, number>();
+  private firstOutputAt = new Map<string, number>();
+  private lastBusy = new Map<string, boolean>();
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
@@ -495,6 +535,12 @@ export class DirectBridge {
           // startup, so a server restart that loses them can't recover from the
           // ring alone (the setup bytes have long rolled off a busy session).
           if (trackPrivateModes(sess.modes ??= new Set(), data)) this.schedulePersist();
+          const outputNow = Date.now();
+          // A gap longer than the silence window starts a new burst.
+          if (outputNow - (this.lastOutputAt.get(id) ?? 0) > BUSY_SILENCE_MS) {
+            this.firstOutputAt.set(id, outputNow);
+          }
+          this.lastOutputAt.set(id, outputNow);
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -569,11 +615,34 @@ export class DirectBridge {
 
   /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
   private publishPreviews(): void {
+    const now = Date.now();
     for (const sess of this.sessions.values()) {
+      // Is this session still producing output? Agents repaint a spinner and an
+      // elapsed timer while they work, so silence is what "finished" looks like.
+      //
+      // This is the signal that drives the sidebar highlight, because CPU alone
+      // can't: Codex is network-bound and sampled at ~0% most instants (with
+      // rare spikes), so it never crossed the busy threshold and its sessions
+      // never lit up when the model was done. CPU is still OR'd in, to cover
+      // work that burns cycles without printing anything.
+      const lastOut = this.lastOutputAt.get(sess.id) ?? 0;
+      const activeSpan = lastOut - (this.firstOutputAt.get(sess.id) ?? lastOut);
+      const cached = this.cachedSessions.find(s => s.id === sess.id);
+      const busy =
+        (now - lastOut < BUSY_SILENCE_MS && activeSpan >= MIN_ACTIVE_SPAN_MS)
+        || (cached?.busy ?? false);
+
+      // A session that has gone quiet stops bumping its ring version, so the
+      // skip below would never let us announce that it finished. Publish
+      // whenever the busy flag flips, regardless of whether the text changed.
+      const busyChanged = this.lastBusy.get(sess.id) !== busy;
+      if (busyChanged) this.lastBusy.set(sess.id, busy);
+
       // Nothing written since the last tick → the preview cannot have changed.
       // Idle sessions are the common case, and skipping them here is what keeps
       // this once-a-second sweep off the keystroke path.
-      if (this.previewVersions.get(sess.id) === sess.ring.version) continue;
+      const versionChanged = this.previewVersions.get(sess.id) !== sess.ring.version;
+      if (!versionChanged && !busyChanged) continue;
       this.previewVersions.set(sess.id, sess.ring.version);
 
       // Two lines are all we show, so only the tail is worth decoding.
@@ -584,17 +653,16 @@ export class DirectBridge {
       const lines = stripped.split('\n').filter(l => l.trim());
       const preview = lines.slice(-2).join('\n');
 
-      // Only publish if changed
+      // Only publish if something changed
       const prev = this.lastPreviews.get(sess.id);
-      if (preview === prev) continue;
+      if (preview === prev && !busyChanged) continue;
       this.lastPreviews.set(sess.id, preview);
 
-      const cached = this.cachedSessions.find(s => s.id === sess.id);
       this.pubsub.publish('__sessions__', {
         type: 'preview',
         session_id: sess.id,
         preview,
-        busy: cached?.busy ?? false,
+        busy,
       });
     }
   }
@@ -768,27 +836,33 @@ export class DirectBridge {
 
   // ── Session listing with process detection ───────────────────────────────
 
-  /** Every process on the machine, grouped by parent pid.
+  /** Every process descended from each of `roots`, not just its direct children.
    *
-   *  One `ps` call replaces a `pgrep`+`ps` pair per session. Process spawning is
-   *  expensive (especially on a loaded machine), and this sweep runs every two
-   *  seconds — the per-session version was the dominant remaining source of
-   *  keystroke stalls after the ring-buffer fixes. Works the same on macOS and
-   *  Linux, so the platform branch is gone too. */
-  private async snapshotChildProcesses(wantedParents: Set<number>): Promise<Map<number, ProcSnapshot[]>> {
-    const byParent = new Map<number, ProcSnapshot[]>();
-    if (wantedParents.size === 0) return byParent;
+   *  Depth matters: Codex runs as a thin Node wrapper (`node .../bin/codex`,
+   *  ~29 MB, ~0% CPU) that spawns the real worker as a GRANDCHILD (~162 MB, and
+   *  the one that actually burns CPU while the model thinks). Summing direct
+   *  children only made every Codex session look permanently idle, so it never
+   *  went busy and never lit up in the sidebar when the model finished. Claude
+   *  Code happened to work because it runs as a direct child.
+   *
+   *  One `ps` call covers the whole machine — the per-session `pgrep`+`ps` pair
+   *  it replaced was the dominant source of keystroke stalls. */
+  private async snapshotDescendants(roots: Set<number>): Promise<Map<number, ProcSnapshot[]>> {
+    const byRoot = new Map<number, ProcSnapshot[]>();
+    if (roots.size === 0) return byRoot;
     try {
       const { stdout } = await execAsync(nice('ps -axo pid=,ppid=,pcpu=,rss=,args='), {
         timeout: 5000,
         maxBuffer: 16 * 1024 * 1024, // a few hundred processes with full argv
       });
+
+      // Pass 1 — numbers only. Hand-parsed rather than regex-matched: this is
+      // ~800 lines on a busy machine and some argv run to kilobytes (browsers),
+      // so the argv substring is taken later, only for the handful of processes
+      // that turn out to belong to a session.
+      const kids = new Map<number, number[]>();
+      const rows = new Map<number, { cpu: number; rssKb: number; line: string; argsAt: number }>();
       for (const line of stdout.split('\n')) {
-        // Hand-parsed rather than regex-matched: on a busy machine this is ~800
-        // lines every couple of seconds, and some argv are kilobytes long
-        // (browsers). Reading the four leading numbers and bailing out before
-        // touching `args` keeps all that string work off the event loop for the
-        // ~99% of processes that aren't a session's child.
         let i = 0;
         const num = (): number => {
           while (line.charCodeAt(i) === 32) i++;
@@ -798,20 +872,39 @@ export class DirectBridge {
         };
         const pid = num();
         const ppid = num();
-        if (!wantedParents.has(ppid)) continue;
         const cpu = num();
         const rssKb = num();
         if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
-        const entry: ProcSnapshot = {
-          pid, cpu: Number.isFinite(cpu) ? cpu : 0,
+        rows.set(pid, {
+          cpu: Number.isFinite(cpu) ? cpu : 0,
           rssKb: Number.isFinite(rssKb) ? rssKb : 0,
-          args: line.slice(i + 1),
-        };
-        const siblings = byParent.get(ppid);
-        if (siblings) siblings.push(entry); else byParent.set(ppid, [entry]);
+          line, argsAt: i + 1,
+        });
+        const siblings = kids.get(ppid);
+        if (siblings) siblings.push(pid); else kids.set(ppid, [pid]);
       }
-    } catch { /* leave empty — callers treat it as "no children known" */ }
-    return byParent;
+
+      // Pass 2 — walk down from each session's shell. `seen` guards against a
+      // malformed tree (pid reuse between the two passes) turning into a loop.
+      for (const root of roots) {
+        const found: ProcSnapshot[] = [];
+        const seen = new Set<number>([root]);
+        const queue = [...(kids.get(root) ?? [])];
+        while (queue.length) {
+          const pid = queue.pop()!;
+          if (seen.has(pid)) continue;
+          seen.add(pid);
+          const row = rows.get(pid);
+          if (row) {
+            found.push({ pid, cpu: row.cpu, rssKb: row.rssKb, args: row.line.slice(row.argsAt) });
+          }
+          const next = kids.get(pid);
+          if (next) queue.push(...next);
+        }
+        if (found.length) byRoot.set(root, found);
+      }
+    } catch { /* leave empty — callers treat it as "no descendants known" */ }
+    return byRoot;
   }
 
   async listSessions(): Promise<Session[]> {
@@ -825,14 +918,15 @@ export class DirectBridge {
     // their own slower clock and the list reuses the last snapshot in between.
     if (Date.now() - this.procInfoAt >= PROC_INFO_TTL_MS) {
       this.procInfoAt = Date.now();
-      const childrenByPid = await this.snapshotChildProcesses(new Set(pids.map(p => p.pid)));
+      const descendantsByPid = await this.snapshotDescendants(new Set(pids.map(p => p.pid)));
       this.procInfo.clear();
       for (const { id, pid } of pids) {
-        const children = childrenByPid.get(pid) ?? [];
+        const children = descendantsByPid.get(pid) ?? [];
         let isClaudeCode = false, isCodex = false, cpuPercent = 0, memMb = 0, busy = false;
         for (const c of children) {
-          if (/\bclaude\b/i.test(c.args)) isClaudeCode = true;
-          if (/\bcodex\b/i.test(c.args)) isCodex = true;
+          const app = detectAgentApp(c.args);
+          if (app === 'claude') isClaudeCode = true;
+          else if (app === 'codex') isCodex = true;
           if (c.cpu > 5) busy = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
@@ -1070,7 +1164,7 @@ export class DirectBridge {
   /** Refresh `liveApp` for every session: does its PTY have a child process? */
   private async refreshLiveApps(): Promise<void> {
     const pids = new Set([...this.sessions.values()].map(s => s.pid).filter(p => p > 0));
-    const childrenByPid = await this.snapshotChildProcesses(pids);
+    const childrenByPid = await this.snapshotDescendants(pids);
     for (const sess of this.sessions.values()) {
       sess.liveApp = sess.pid > 0 && (childrenByPid.get(sess.pid)?.length ?? 0) > 0;
     }

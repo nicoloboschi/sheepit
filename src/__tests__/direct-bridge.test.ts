@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -88,5 +88,30 @@ describe('RingBuffer.readTail', () => {
 
   it('is empty when nothing was written', () => {
     expect(new RingBuffer(32).readTail(8)).toBe('')
+  })
+})
+
+describe('detectAgentApp', () => {
+  it('recognises Claude Code, however it was launched', () => {
+    expect(detectAgentApp('claude --dangerously-skip-permissions')).toBe('claude')
+    expect(detectAgentApp('claude -p --model haiku --output-format json You are naming a session')).toBe('claude')
+    expect(detectAgentApp('/Users/n/.local/share/claude/versions/2.1.220 --foo')).toBe('claude')
+  })
+
+  it('recognises Codex through its wrapper and its vendored binary', () => {
+    // Codex is a Node wrapper that spawns the real worker as a grandchild —
+    // both shapes have to resolve to 'codex' for the session to be labelled.
+    expect(detectAgentApp('node /Users/n/.local/bin/codex --yolo')).toBe('codex')
+    expect(detectAgentApp('/Users/n/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex')).toBe('codex')
+  })
+
+  it('ignores the agent name appearing in ordinary arguments', () => {
+    // Walking the whole process tree means a session's own shell commands show
+    // up here; matching anywhere in argv made a session label itself.
+    expect(detectAgentApp('node -e "const x = isCodex && isClaudeCode"')).toBeNull()
+    expect(detectAgentApp('grep -i codex')).toBeNull()
+    expect(detectAgentApp('git commit -m "fix codex thing"')).toBeNull()
+    expect(detectAgentApp('vim notes-about-claude.md')).toBeNull()
+    expect(detectAgentApp('/bin/zsh -l')).toBeNull()
   })
 })

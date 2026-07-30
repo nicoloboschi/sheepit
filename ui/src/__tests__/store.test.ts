@@ -56,11 +56,18 @@ describe('useStore', () => {
       // re-rendered the whole sidebar and re-serialised every workspace to
       // localStorage on a timer, which showed up as periodic 50–124ms
       // main-thread stalls in the browser with the app sitting idle.
-      const sessions = [makeSession('$0', 'shell'), makeSession('$1', 'dev')]
-      useStore.getState().renderSessions(sessions)
+      // Pin last_activity: makeSession stamps Date.now(), and two calls a
+      // millisecond apart are genuinely different sessions as far as the store
+      // is concerned — which would make this assert nothing.
+      const at = 1_700_000_000_000
+      const list = () => [
+        { ...makeSession('$0', 'shell'), last_activity: at },
+        { ...makeSession('$1', 'dev'), last_activity: at },
+      ]
+      useStore.getState().renderSessions(list())
       const first = useStore.getState()
 
-      useStore.getState().renderSessions([makeSession('$0', 'shell'), makeSession('$1', 'dev')])
+      useStore.getState().renderSessions(list())
       const second = useStore.getState()
 
       // Same references — nothing downstream has any reason to re-render.
