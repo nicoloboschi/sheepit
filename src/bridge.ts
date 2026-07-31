@@ -44,6 +44,10 @@ export interface Session {
   isClaudeCode?: boolean;
   isCodex?: boolean;
   isOpencode?: boolean;
+  isAntigravity?: boolean;
+  isCopilot?: boolean;
+  isGrok?: boolean;
+  isCursor?: boolean;
   /** Aggregate CPU % of all child processes */
   cpuPercent?: number;
   /** Aggregate RSS memory in MB of all child processes */
@@ -69,7 +73,7 @@ interface ManagedSession {
   lastPreview: string;
 }
 
-type SessionType = 'claude' | 'codex' | 'opencode' | null;
+type SessionType = 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | null;
 
 interface SavedSession {
   name: string;
@@ -170,7 +174,7 @@ export class TmuxBridge {
 
     // Detect new sessions and persist them; update type for existing ones
     for (const s of sessions) {
-      const sType: SessionType = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : null;
+      const sType: SessionType = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : s.isOpencode ? 'opencode' : s.isAntigravity ? 'antigravity' : s.isCopilot ? 'copilot' : s.isGrok ? 'grok' : s.isCursor ? 'cursor' : null;
       if (!this.knownSessions.has(s.id)) {
         this.knownSessions.add(s.id);
         this._persistSession(s.id, s.name, s.path, sType);
@@ -313,6 +317,11 @@ export class TmuxBridge {
         let busy = recentOutput;
         let isClaudeCode = false;
         let isCodex = false;
+        let isOpencode = false;
+        let isAntigravity = false;
+        let isCopilot = false;
+        let isGrok = false;
+        let isCursor = false;
         let cpuPercent = 0;
         let memMb = 0;
 
@@ -321,6 +330,11 @@ export class TmuxBridge {
             if (!busy && (c.cpu > 5 || c.hasGrandchildren)) busy = true;
             if (/\bclaude\b/i.test(c.comm)) isClaudeCode = true;
             if (/\bcodex\b/i.test(c.comm)) isCodex = true;
+            if (/\bopencode\b/i.test(c.comm)) isOpencode = true;
+            if (/\bagy\b|\bantigravity\b/i.test(c.comm)) isAntigravity = true;
+            if (/\bcopilot\b/i.test(c.comm)) isCopilot = true;
+            if (/\bgrok(?:-build)?\b/i.test(c.comm)) isGrok = true;
+            if (/^(?:agent|cursor-agent)$/i.test(c.comm)) isCursor = true;
             cpuPercent += c.cpu;
             memMb += c.rss / 1024;
           }
@@ -344,6 +358,11 @@ export class TmuxBridge {
           busy,
           isClaudeCode,
           isCodex,
+          isOpencode,
+          isAntigravity,
+          isCopilot,
+          isGrok,
+          isCursor,
           cpuPercent: Math.round(cpuPercent * 10) / 10,
           memMb: Math.round(memMb),
           ...git,
@@ -635,6 +654,11 @@ export class TmuxBridge {
         const cmdForType: Record<string, string> = {
           claude: 'claude',
           codex: 'codex',
+          opencode: 'opencode',
+          antigravity: 'agy',
+          copilot: 'copilot',
+          grok: 'grok',
+          cursor: 'agent',
         };
         const initCmd = sess.sessionType ? cmdForType[sess.sessionType] : undefined;
         const shellCmd = initCmd

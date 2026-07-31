@@ -117,14 +117,14 @@ interface StatWidgetProps {
 function StatWidget({ label, value, unit, history, color }: StatWidgetProps): React.ReactElement {
   // Inline single-row layout: [LABEL] [value] [sparkline]
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1 }}>
+    <div className="stat-widget" style={{ display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1, minWidth: 0, flexShrink: 1 }}>
       <span style={{ fontSize: 9, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.65 }}>
         {label}
       </span>
       <span style={{ fontSize: 10, color, fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
         {value}{unit}
       </span>
-      <Sparkline data={history} color={color} />
+      <span className="stat-widget-sparkline"><Sparkline data={history} color={color} /></span>
     </div>
   );
 }
@@ -696,7 +696,7 @@ export default function StatChips({ sessionId, send }: StatChipsProps): React.Re
   const hasExtra = (procCount !== null && procCount > 0) || sessionUrls.length > 0;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }}>
+    <div className="stat-chips" style={{ display: 'flex', alignItems: 'center', minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
       <GitChip sessionId={sessionId} send={send} />
       {(hasStats || hasExtra) && (
         <>

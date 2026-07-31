@@ -157,6 +157,49 @@ export function parseOscNotifications(data: string): TerminalNotification[] {
   return out;
 }
 
+/** Reassemble OSC 9 / OSC 777 notifications across PTY reads.
+ *
+ * PTY output has no message boundaries: Codex's short OSC 9 completion notice
+ * is usually one chunk, but it is valid for its introducer, payload, or BEL to
+ * arrive separately. We already stream-reassemble kitty OSC 99 below; this
+ * gives the other supported notification protocols the same guarantee. */
+export function drainOscNotificationFrames(data: string, pending = ''): { frames: string[]; pending: string } {
+  const combined = pending + data;
+  const frames: string[] = [];
+  let pos = 0;
+
+  while (pos < combined.length) {
+    const start = combined.indexOf('\x1b]', pos);
+    if (start < 0) {
+      // Preserve a possible split ESC introducer at the end of this read.
+      return { frames, pending: combined.endsWith('\x1b') ? '\x1b' : '' };
+    }
+    const isOsc9 = combined.startsWith('\x1b]9;', start);
+    const isOsc777 = combined.startsWith('\x1b]777;', start);
+    if (!isOsc9 && !isOsc777) {
+      const tail = combined.slice(start);
+      // The protocol name itself can be split (for example `ESC ] 9` then
+      // `; message BEL`), so retain only prefixes that could still become a
+      // supported notification on the next PTY read.
+      if ('\x1b]9;'.startsWith(tail) || '\x1b]777;'.startsWith(tail)) {
+        return { frames, pending: tail };
+      }
+      pos = start + 2;
+      continue;
+    }
+
+    const bel = combined.indexOf('\x07', start + 3);
+    const st = combined.indexOf('\x1b\\', start + 3);
+    const end = bel < 0 ? st : st < 0 ? bel : Math.min(bel, st);
+    if (end < 0) return { frames, pending: combined.slice(start) };
+
+    const terminatorLength = end === bel ? 1 : 2;
+    frames.push(combined.slice(start, end + terminatorLength));
+    pos = end + terminatorLength;
+  }
+  return { frames, pending: '' };
+}
+
 /** The notification id from a kitty capability query (`p=?`), if this chunk has
  *  one. Apps use it to ask whether the terminal supports OSC 99 notifications
  *  at all — opencode does this at startup and stays silent unless answered. */
@@ -178,6 +221,39 @@ export function parseKittyNotificationQuery(data: string): string | null {
  *  the sense that it turns them into sidebar highlights. */
 export function kittyNotificationAck(id: string): string {
   return `\x1b]99;i=${id}:p=?;\x1b\\`;
+}
+
+/** Pull complete OSC 99 frames from a stream of PTY output.
+ *
+ * PTY reads have no escape-sequence boundaries: either half of the introducer,
+ * the payload, or the two-byte ST terminator can arrive in a later read. Keep
+ * only an incomplete OSC 99 frame (or a prefix of its introducer) for the next
+ * read; all unrelated terminal output continues through the normal path. */
+export function drainOsc99Frames(data: string, pending = ''): { frames: string[]; pending: string } {
+  const input = pending + data;
+  const frames: string[] = [];
+  const introducer = '\x1b]99;';
+  let offset = 0;
+
+  while (true) {
+    const start = input.indexOf(introducer, offset);
+    if (start < 0) break;
+    const bel = input.indexOf('\x07', start + introducer.length);
+    const st = input.indexOf('\x1b\\', start + introducer.length);
+    const end = bel < 0 ? st : st < 0 ? bel : Math.min(bel, st);
+    if (end < 0) return { frames, pending: input.slice(start) };
+    frames.push(input.slice(start, end + (end === st ? 2 : 1)));
+    offset = end + (end === st ? 2 : 1);
+  }
+
+  // Retain a possibly fragmented ESC ] 99 ; introducer for the next read.
+  const tail = input.slice(offset);
+  for (let length = introducer.length - 1; length > 0; length--) {
+    if (tail.endsWith(introducer.slice(0, length))) {
+      return { frames, pending: tail.slice(-length) };
+    }
+  }
+  return { frames, pending: '' };
 }
 
 /** OSC 9;4 progress state, if this chunk carried one. `true` = the app reports
@@ -202,14 +278,20 @@ export function parseOscProgress(data: string): boolean | null {
  *  `node -e "…isCodex…"`, or grepping for "claude", would flag itself as that
  *  agent. Two tokens is enough for both real shapes: `claude …` (direct binary)
  *  and `node …/bin/codex …` (wrapper script). */
-export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | null {
+export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | null {
   const tokens = args.split(/\s+/, 2);
-  for (const token of tokens) {
+  for (const [index, token] of tokens.entries()) {
     if (!token) continue;
     const base = token.slice(token.lastIndexOf('/') + 1);
     if (base === 'claude' || base === 'claude-code' || token.includes('/claude/')) return 'claude';
     if (base === 'codex' || token.includes('/codex/') || token.includes('/codex-')) return 'codex';
     if (base === 'opencode' || token.includes('/opencode/')) return 'opencode';
+    if (base === 'agy' || base === 'antigravity' || token.includes('/antigravity-cli/')) return 'antigravity';
+    if (base === 'copilot' || token.includes('/copilot/')) return 'copilot';
+    if (base === 'grok' || base === 'grok-build' || token.includes('/grok-build/')) return 'grok';
+    // Cursor's documented CLI executable is `agent`. Match that generic name
+    // only as argv[0], while still accepting its explicit binary name/path.
+    if ((index === 0 && base === 'agent') || base === 'cursor-agent' || token.includes('/cursor-agent/')) return 'cursor';
   }
   return null;
 }
@@ -633,10 +715,14 @@ export class DirectBridge {
   private oscBusy = new Map<string, boolean>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
+  /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
+  private pendingOscNotifications = new Map<string, string>();
+  /** Incomplete OSC 99 frames, keyed by session id. */
+  private pendingOsc99 = new Map<string, string>();
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
   private procInfoAt = 0;
 
   constructor() {
@@ -663,24 +749,44 @@ export class DirectBridge {
           // The agent announcing completion is worth more than any heuristic:
           // publish it straight through so the sidebar can light up the moment
           // the model is done, instead of waiting out the silence window.
-          for (const note of parseOscNotifications(data)) {
+          const handleNotification = (note: TerminalNotification): void => {
             // OSC 99 splits a notification across chunks; hold the pieces until
             // the app marks the last one.
             const key = `${id}:${note.id}`;
             const text = (this.pendingNotes.get(key) ?? '') + note.text;
-            if (!note.done) { this.pendingNotes.set(key, text); continue; }
+            if (!note.done) { this.pendingNotes.set(key, text); return; }
             this.pendingNotes.delete(key);
             if (text.trim()) {
               this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message: text });
+            }
+          };
+          // PTY reads can split every supported notification protocol. Reassemble
+          // OSC 9/777 here, then let the existing OSC 99 stream parser handle
+          // kitty's separately framed protocol below.
+          const generic = drainOscNotificationFrames(data, this.pendingOscNotifications.get(id));
+          if (generic.pending) this.pendingOscNotifications.set(id, generic.pending);
+          else this.pendingOscNotifications.delete(id);
+          for (const frame of generic.frames) {
+            for (const note of parseOscNotifications(frame)) handleNotification(note);
+          }
+          const osc99 = drainOsc99Frames(data, this.pendingOsc99.get(id));
+          if (osc99.pending) this.pendingOsc99.set(id, osc99.pending); else this.pendingOsc99.delete(id);
+          for (const frame of osc99.frames) {
+            for (const note of parseOscNotifications(frame)) {
+              handleNotification(note);
+              // OpenCode emits this desktop notification when it needs user
+              // attention, so its completed notification is an authoritative
+              // transition out of the working state.
+              if (note.done) this.oscBusy.set(id, false);
+            }
+            const queryId = parseKittyNotificationQuery(frame);
+            if (queryId !== null) {
+              this.daemon.sendFire({ type: 'write', id, data: kittyNotificationAck(queryId) });
             }
           }
 
           // Answer "do you support desktop notifications?" — opencode asks at
           // startup and never notifies unless something answers.
-          const queryId = parseKittyNotificationQuery(data);
-          if (queryId !== null) {
-            this.daemon.sendFire({ type: 'write', id, data: kittyNotificationAck(queryId) });
-          }
           const progress = parseOscProgress(data);
           if (progress !== null) this.oscBusy.set(id, progress);
 
@@ -690,6 +796,8 @@ export class DirectBridge {
       },
       (id) => {
         this.sessions.delete(id);
+        this.pendingOsc99.delete(id);
+        this.pendingOscNotifications.delete(id);
         this.persist();
         logger.debug(`Session exited: ${id}`);
       },
@@ -1069,16 +1177,20 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, cpuPercent = 0, memMb = 0, busy = false;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0, busy = false;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
           else if (app === 'codex') isCodex = true;
           else if (app === 'opencode') isOpencode = true;
+          else if (app === 'antigravity') isAntigravity = true;
+          else if (app === 'copilot') isCopilot = true;
+          else if (app === 'grok') isGrok = true;
+          else if (app === 'cursor') isCursor = true;
           if (c.cpu > 5) busy = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -1090,14 +1202,14 @@ export class DirectBridge {
       const procs = processInfo.get(sess.id);
       const git = this.getGitInfo(sess.path);
       if (procs) {
-        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : null;
+        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : procs.isAntigravity ? 'antigravity' : procs.isCopilot ? 'copilot' : procs.isGrok ? 'grok' : procs.isCursor ? 'cursor' : null;
         if (newType && sess.sessionType !== newType) { sess.sessionType = newType; this.persist(); }
       }
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
-        isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false,
+        isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0, ...git,
       };
     });

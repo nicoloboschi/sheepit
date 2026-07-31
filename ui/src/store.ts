@@ -12,6 +12,10 @@ export interface Session {
   isClaudeCode?: boolean;
   isCodex?: boolean;
   isOpencode?: boolean;
+  isAntigravity?: boolean;
+  isCopilot?: boolean;
+  isGrok?: boolean;
+  isCursor?: boolean;
   cpuPercent?: number;
   memMb?: number;
   gitRoot?: string;
@@ -123,6 +127,9 @@ export interface StoreState {
   sessionBusy: Record<string, boolean>;
   /** Sessions with unseen output (cleared when you switch to their workspace) */
   sessionHasUnseen: Record<string, boolean>;
+  /** Sessions whose app explicitly requested attention (for example, an agent
+   * finished its turn and is waiting for the user). */
+  sessionNeedsAttention: Record<string, boolean>;
   sessionLastEvent: Record<string, number>;
   sessionOrder: string[];
   sessionMap: Record<string, Session>;
@@ -448,6 +455,7 @@ const useStore = create<StoreState>((set, get) => ({
   sessionPreviews: {},
   sessionBusy: {},
   sessionHasUnseen: {},
+  sessionNeedsAttention: {},
   sessionLastEvent: {},
   sessionOrder: [],
   sessionMap: {},
@@ -579,7 +587,8 @@ const useStore = create<StoreState>((set, get) => ({
         return !!p && p.id === s.id && p.name === s.name && p.path === s.path
           && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
           && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
-          && p.isOpencode === s.isOpencode
+          && p.isOpencode === s.isOpencode && p.isAntigravity === s.isAntigravity
+          && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
           && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
           && p.prNum === s.prNum && p.prState === s.prState
           && p.last_activity === s.last_activity;
@@ -605,17 +614,21 @@ const useStore = create<StoreState>((set, get) => ({
       // a fallback, for the legacy case where `id` isn't registered as a
       // workspace yet — e.g. right after a new session appears but before
       // renderSessions has reconciled it into a workspace).
-      const { sessionHasUnseen, workspaces } = get();
+      const { sessionHasUnseen, sessionNeedsAttention, workspaces } = get();
       const toClear: string[] = [id];
       const ws = workspaces[id];
       if (ws) {
         for (const cid of ws.cells) if (cid && cid !== id) toClear.push(cid);
       }
-      const hasAny = toClear.some(cid => sessionHasUnseen[cid]);
+      const hasAny = toClear.some(cid => sessionHasUnseen[cid] || sessionNeedsAttention[cid]);
       if (hasAny) {
-        const next = { ...sessionHasUnseen };
-        for (const cid of toClear) delete next[cid];
-        set({ sessionHasUnseen: next });
+        const nextUnseen = { ...sessionHasUnseen };
+        const nextAttention = { ...sessionNeedsAttention };
+        for (const cid of toClear) {
+          delete nextUnseen[cid];
+          delete nextAttention[cid];
+        }
+        set({ sessionHasUnseen: nextUnseen, sessionNeedsAttention: nextAttention });
       }
     }
     set({ currentSessionId: id });
@@ -645,6 +658,15 @@ const useStore = create<StoreState>((set, get) => ({
     })();
 
     if (busy === true) {
+      // New work means a previous "waiting for you" request has been acted
+      // on (or otherwise resolved), even if the workspace stays in background.
+      if (get().sessionNeedsAttention[sessionId]) {
+        set(s => {
+          const next = { ...s.sessionNeedsAttention };
+          delete next[sessionId];
+          return { sessionNeedsAttention: next };
+        });
+      }
       if (_busyTimers.has(sessionId)) return;
       _busyTimers.set(sessionId, setTimeout(() => {
         _busyTimers.delete(sessionId);
@@ -720,7 +742,10 @@ const useStore = create<StoreState>((set, get) => ({
     if (isVisible) return;
     const name = sessionMap[sessionId]?.name ?? 'terminal';
     notify('vipershell \u{1F40D}', message.trim() ? `${name}: ${message.slice(0, 120)}` : `${name} finished`);
-    set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
+    set(s => ({
+      sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true },
+      sessionNeedsAttention: { ...s.sessionNeedsAttention, [sessionId]: true },
+    }));
   },
 
   markUnseen(sessionId: string) {

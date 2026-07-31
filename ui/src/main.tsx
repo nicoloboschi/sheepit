@@ -3,10 +3,11 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import 'xterm/css/xterm.css';
 import { initServerUrl, needsConnect, setServerUrl, installFetchInterceptor } from './serverUrl';
-import App from './App';
 import ConnectScreen from './components/ConnectScreen';
+import { initializePreferences, installServerBackedStorage } from './preferences';
 
-// Initialize server URL from localStorage before first render
+// The connection URL is the only browser-local bootstrap setting. Once it is
+// known, every durable Vipershell preference comes from the backend profile.
 initServerUrl();
 installFetchInterceptor();
 
@@ -23,15 +24,17 @@ window.addEventListener('error', (e) => {
   }
 }, true);
 
-function Root() {
+function Root({ App }: { App: React.ComponentType }) {
   const [connected, setConnected] = useState(!needsConnect());
 
   if (!connected) {
     return (
       <ConnectScreen
-        onConnected={(url) => {
+        onConnected={async (url) => {
           setServerUrl(url);
           installFetchInterceptor();
+          await initializePreferences();
+          installServerBackedStorage();
           setConnected(true);
         }}
       />
@@ -41,8 +44,17 @@ function Root() {
   return <App />;
 }
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>
-);
+async function bootstrap(): Promise<void> {
+  if (!needsConnect()) {
+    await initializePreferences();
+    installServerBackedStorage();
+  }
+  const { default: App } = await import('./App');
+  createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <Root App={App} />
+    </React.StrictMode>
+  );
+}
+
+void bootstrap();

@@ -19,6 +19,7 @@ describe('useStore', () => {
       sessionPreviews: {},
       sessionBusy: {},
       sessionHasUnseen: {},
+      sessionNeedsAttention: {},
       sessionLastEvent: {},
       sessionOrder: [],
       sessionMap: {},
@@ -182,6 +183,16 @@ describe('useStore', () => {
       useStore.getState().setCurrentSessionId('$0')
       useStore.getState().markUnseen('$0')
       expect(useStore.getState().sessionHasUnseen['$0']).toBeUndefined()
+    })
+  })
+
+  describe('attention tracking', () => {
+    it('marks an explicit attention request and clears it when opened', () => {
+      useStore.getState().sessionAttention('$0', 'Waiting for input')
+      expect(useStore.getState().sessionNeedsAttention['$0']).toBe(true)
+
+      useStore.getState().setCurrentSessionId('$0')
+      expect(useStore.getState().sessionNeedsAttention['$0']).toBeUndefined()
     })
   })
 
@@ -441,4 +452,3 @@ describe('useStore', () => {
     })
   })
 })
-

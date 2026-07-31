@@ -156,16 +156,6 @@
 .logo { font-size: 15px; font-weight: 700; color: var(--foreground); letter-spacing: -0.5px; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; gap: 5px; }
 .logo .brand-gradient-text { display: inline-block; }
 
-/* ── Status dot ─────────────────────────────────────────────────────────────── */
-.status-dot {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--muted-foreground); flex-shrink: 0; transition: background 0.3s;
-}
-.status-dot.connected    { background: var(--success); }
-.status-dot.disconnected { background: var(--destructive); }
-.status-dot.connecting   { background: var(--warning); }
-.status-text { font-size: 11px; color: var(--muted-foreground); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* ── Workspace sidebar ─────────────────────────────────────────────────────
    The sidebar is a navigation instrument, not a second terminal surface:
    a slight blue/teal ambient wash creates separation while the cards retain
@@ -455,7 +445,7 @@
   padding: 9px 11px 9px 18px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  border-radius: 3px;
   min-width: 0;
   min-height: 0;
   /* overflow MUST be visible so the badge can hang off the top-left corner
@@ -486,7 +476,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: 3px;
   background: #141821;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--muted-foreground);
@@ -509,8 +499,9 @@
 }
 
 /* Per-pane activity is intentionally local: split workspaces can contain a
-   mix of idle shells and running agents. A quiet hollow dot means idle;
-   teal fill and a soft pulse mean that exact pane is busy. */
+   mix of idle shells, work in progress, and turns waiting for the user.
+   Each state uses the same color for its dot and card surface: blue = working,
+   green = ready for input, hollow neutral = idle. */
 .pane-card-activity {
   width: 6px;
   height: 6px;
@@ -521,10 +512,35 @@
   flex: 0 0 auto;
 }
 .pane-card-busy .pane-card-activity {
-  border-color: #2dd4bf;
-  background: #2dd4bf;
-  box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.10), 0 0 9px rgba(45, 212, 191, 0.48);
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 116, 217, 0.10), 0 0 8px rgba(0, 116, 217, 0.34);
+}
+.pane-card-busy:not(.pane-card-active):not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg, rgba(0, 116, 217, 0.13), rgba(0, 146, 150, 0.035));
+  border-color: rgba(0, 116, 217, 0.32);
+  box-shadow: inset 0 1px rgba(153, 211, 255, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
+}
+.pane-card-active.pane-card-busy:not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg, rgba(0, 116, 217, 0.22), rgba(0, 146, 150, 0.10));
+  border-color: rgba(0, 146, 150, 0.48);
+  box-shadow: inset 0 1px rgba(153, 211, 255, 0.10);
+}
+.pane-card-needs-attention .pane-card-activity {
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.12), 0 0 11px rgba(74, 222, 128, 0.55);
   animation: pane-activity-pulse 2.2s ease-in-out infinite;
+}
+.pane-card-needs-attention:not(.pane-card-active) {
+  background: linear-gradient(120deg, rgba(74, 222, 128, 0.15), rgba(74, 222, 128, 0.035));
+  border-color: rgba(74, 222, 128, 0.38);
+  box-shadow: inset 0 1px rgba(187, 247, 208, 0.08), 0 3px 12px rgba(0, 0, 0, 0.12);
+}
+.pane-card-active.pane-card-needs-attention {
+  background: linear-gradient(120deg, rgba(0, 116, 217, 0.15), rgba(74, 222, 128, 0.13));
+  border-color: rgba(74, 222, 128, 0.52);
+  box-shadow: inset 0 1px rgba(187, 247, 208, 0.10);
 }
 .pane-card-tight .pane-card-activity { width: 5px; height: 5px; }
 @keyframes pane-activity-pulse {
@@ -706,12 +722,6 @@
   z-index: 2;
 }
 
-/* Grip handle in pane header — fades in on row hover, cursor swaps while drag. */
-.pane-header-grip { transition: opacity 0.15s, color 0.15s; }
-.pane-header:hover .pane-header-grip { opacity: 0.9; color: var(--foreground); }
-.pane-header-grip:active { cursor: grabbing; }
-.pane-header-grip-dragging { opacity: 0.3; }
-
 /* Session-kind badge in the pane header — mirrors the sidebar .pane-card-badge
    look (rounded square chip with a subtle dark surface and hairline border),
    but rendered inline at a larger size so the pane's identity reads at a
@@ -722,7 +732,7 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: 3px;
   background: #141821;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--muted-foreground);
@@ -740,6 +750,37 @@
     0 2px 8px rgba(0, 116, 217, 0.45),
     0 0 0 1px rgba(0, 116, 217, 0.25);
 }
+
+.pane-footer-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 5px 11px 6px 12px;
+  border-top: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.98));
+  font-size: 10px;
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 -6px 14px rgba(0, 0, 0, 0.24), inset 0 1px rgba(186, 230, 253, 0.07);
+}
+.pane-footer-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.pane-footer-bar > .stat-chips { gap: 2px; }
+.pane-footer-bar .stat-widget-sparkline { display: none; }
+.pane-footer-bar .stat-widget { gap: 3px; }
+.pane-footer-name { color: #e2e8f0; font-weight: 650; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane-footer-path { min-width: 0; color: #94a3b8; font-family: "JetBrains Mono", monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 
 /* Files pane — directory-change transition. Each browse() swaps the whole
    entry list atomically; remounting this wrapper (via a dir-based key) plays
@@ -997,7 +1038,13 @@
   from { opacity: 0; transform: scale(0.98); }
   to   { opacity: 1; transform: scale(1); }
 }
-.terminal-pane { position: absolute; inset: 0; padding: 8px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111111; }
+.terminal-pane { position: absolute; inset: 0; padding: 12px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111111; }
+.terminal-pane > .xterm {
+  /* Keep the first and last terminal rows off the pane edges. The outer
+     container padding alone is consumed by FitAddon's measured viewport. */
+  padding: 8px 0;
+  box-sizing: border-box;
+}
 .terminal-pane .xterm-viewport {
   overflow-y: scroll !important;
   overscroll-behavior: contain;

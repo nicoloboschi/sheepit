@@ -7,6 +7,8 @@ import { useDroppable } from '@dnd-kit/core';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
+import VoiceInputButton from './VoiceInputButton';
+import StatChips from './StatChips';
 import GitDiffPane from './GitDiffPane';
 import FilesPane from './FilesPane';
 
@@ -108,6 +110,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
+  const session = useStore(s => s.sessionMap[sessionId]);
   const isMultiPane = useStore(s => {
     const ws = s.workspaces[gridId];
     return !!ws && ws.layout !== 'single' && ws.cells.length > 1;
@@ -829,11 +832,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       if (wheelDrainRef.current) return;
       wheelDrainRef.current = setInterval(() => {
         const t = termRef.current;
-        // Re-check the gate every tick: the app may have left the alternate
-        // buffer or disabled mouse mode mid-drain, and we must NOT keep firing
-        // wheel reports into a plain shell prompt.
-        if (!t || t.buffer?.active?.type !== 'alternate'
-            || t.modes?.mouseTrackingMode === 'none' || !sgrMouseRef.current
+        // Re-check the gate every tick: an app may disable mouse mode mid-drain,
+        // and we must NOT keep firing wheel reports into a plain shell prompt.
+        // Codex keeps its TUI in the normal buffer, so alternate-buffer state
+        // is not a reliable part of this gate.
+        if (!t || t.modes?.mouseTrackingMode === 'none' || !sgrMouseRef.current
             || wheelPendingRef.current === 0) {
           if (wheelDrainRef.current) clearInterval(wheelDrainRef.current);
           wheelDrainRef.current = null; wheelPendingRef.current = 0;
@@ -855,11 +858,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     const scrollBy = (lines: number): boolean => {
       const t = termRef.current;
       if (!t || lines === 0) return false;
-      if (t.buffer?.active?.type === 'alternate') {
-        // Require BOTH mouse tracking AND SGR encoding (mode 1006): without the
-        // SGR check we could emit `\x1b[<…M` to an app using legacy mouse
-        // encoding (or a stale terminal), where it surfaces as literal text.
-        if (!t.modes || t.modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return false;
+      // Mouse tracking is the authoritative signal that the application owns
+      // wheel input. Codex is a normal-buffer TUI, while Claude Code uses the
+      // alternate buffer; both request SGR wheel reports.
+      if (t.modes?.mouseTrackingMode !== 'none' && sgrMouseRef.current) {
         const MAX = t.rows ?? 20; // at most ~one screen queued
         wheelPendingRef.current = Math.max(-MAX, Math.min(MAX, wheelPendingRef.current + lines));
         startAltDrain();
@@ -960,13 +962,12 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       }
       if (lines === 0) return;
 
-      if (term.buffer?.active?.type === 'alternate') {
-        // Full-screen apps that drive mouse tracking (Claude Code, vim, btop, …)
+      if (term.modes?.mouseTrackingMode !== 'none' && sgrMouseRef.current) {
+        // TUIs that drive mouse tracking (Codex, Claude Code, vim, btop, …)
         // scroll on mouse-wheel events. scrollBy PACES them (accumulate + drain
         // one every ~25ms) so a coalesced burst still registers as real
         // multi-line scrolling. Bail (letting nothing happen) if the app isn't
         // accepting wheel input — same gate scrollBy applies internally.
-        if (!term.modes || term.modes.mouseTrackingMode === 'none' || !sgrMouseRef.current) return;
         e.preventDefault(); e.stopPropagation();
         // Cap lines per wheel event so wildly-varying deltaY isn't hyper-sensitive;
         // the paced drain + accumulation still let a fast flick scroll far.
@@ -975,9 +976,12 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         return;
       }
 
-      // Normal buffer: scroll vipershell's own scrollback.
-      e.preventDefault(); e.stopPropagation();
-      term.scrollLines(lines);
+      // Normal shell scrollback is managed by xterm's own viewport wheel
+      // handler. Let it receive the native event: manually calling
+      // scrollLines from this capture-phase handler can race its viewport
+      // scroll bookkeeping and leave the canvas rows out of order after a
+      // few wheel bursts. The custom path above is only for applications that
+      // explicitly enabled SGR mouse tracking.
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
@@ -1055,7 +1059,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
           ...(isZen ? {
             inset: '40px',
             zIndex: 1000,
-            borderRadius: 14,
+            borderRadius: 4,
             padding: 2,
             background: 'linear-gradient(135deg, rgba(0,116,217,0.7) 0%, rgba(0,146,150,0.7) 100%)',
             boxShadow: '0 0 80px rgba(0,116,217,0.35), 0 0 160px rgba(0,146,150,0.15), 0 20px 60px rgba(0,0,0,0.6)',
@@ -1104,7 +1108,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         flex: 1, minHeight: 0,
         display: 'flex', flexDirection: 'column',
         background: '#0a0a0a',
-        borderRadius: isZen ? 12 : 0,
+        borderRadius: isZen ? 4 : 0,
         overflow: 'hidden',
       }}>
       {/* Per-pane header — identity, stats, zen toggle, close. Rendered in
@@ -1274,13 +1278,21 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       {isMultiPane && isActive && !isPaneDragOver && !fileDragOver && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 15,
-          borderRadius: 8,
+          borderRadius: 2,
           boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(0,116,217,0.35)',
           pointerEvents: 'none',
           transition: 'box-shadow 0.15s ease',
         }} />
       )}
       </div>{/* /pane body */}
+      <div className="pane-footer-bar" onClick={e => e.stopPropagation()}>
+        {isActive && <VoiceInputButton sessionId={sessionId} />}
+        <StatChips sessionId={sessionId} send={sharedWs.send} />
+        <div className="pane-footer-identity">
+          <span className="pane-footer-name">{session?.name ?? 'Terminal'}</span>
+          {session?.path && <span className="pane-footer-path" title={session.path}>{session.path.replace(/^\/Users\/[^/]+/, '~')}</span>}
+        </div>
+      </div>
       </div>{/* /inner wrapper */}
       </div>{/* /outer wrapper */}
     </>

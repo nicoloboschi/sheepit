@@ -73,7 +73,11 @@ interface ClientState {
 
 export async function createApp(bridge: DirectBridge, ai: AIService) {
   const app = express();
-  app.use(express.json());
+  // UI preferences can contain workspace layouts, per-pane tabs, and other
+  // durable state from an established browser profile. The default 100 KB
+  // parser limit rejects a perfectly valid first migration before /api can
+  // validate it, so allow a bounded 2 MB request body instead.
+  app.use(express.json({ limit: '2mb' }));
 
   // REST API
   app.use('/api', createApiRouter(bridge, logBuffer, ai));

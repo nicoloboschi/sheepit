@@ -17,7 +17,6 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onConnect, send }: SidebarProps) {
-  const wsStatus = useStore(s => s.wsStatus);
   const currentSessionId = useStore(s => s.currentSessionId);
   const sessions = useStore(s => s.sessions);
   const workspaceFilter = useStore(s => s.workspaceFilter);
@@ -27,7 +26,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   const [commands, setCommands] = useState(loadCommands);
   const [aiProvider, setAiProvider] = useState<string | null>(null);
   const [claudeCommand, setClaudeCommand] = useState('claude');
-  const [version, setVersion] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('vipershell:sidebar-collapsed') === '1'; } catch { return false; }
   });
@@ -57,20 +55,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }, [sidebarW]);
-
-
-  const statusLabel = {
-    connecting: 'Connecting\u2026',
-    connected: 'Connected',
-    disconnected: 'Disconnected',
-  }[wsStatus] ?? 'Unknown';
-
-  useEffect(() => {
-    fetch('/api/version')
-      .then(r => r.json())
-      .then(d => setVersion(d.version))
-      .catch(() => setVersion('?'));
-  }, []);
 
   // Fetch AI config to show coding agent quick-launch button
   const fetchAIConfig = useCallback(() => {
@@ -177,9 +161,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
       />
 
       <div className="sidebar-footer flex items-center gap-2 px-4 py-2.5">
-        <span id="status-dot" className={`status-dot ${wsStatus}`} />
-        <span id="status-text" className="status-text">{statusLabel}</span>
-        {version && <span style={{ fontSize: 9, color: 'var(--muted-foreground)', opacity: 0.4, fontFamily: '"JetBrains Mono", monospace' }}>v{version}</span>}
         <span style={{ flex: 1 }} />
         <Button variant="ghost" size="icon" title="New session" className="h-7 w-7 text-muted-foreground hover:text-foreground"
           onClick={() => setShowNewSession({ title: 'New Session', icon: <SquarePlus size={15} className="text-primary" /> })}

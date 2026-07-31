@@ -44,6 +44,14 @@ import { tildefy } from './utils';
 
 export default function App() {
   const currentSessionId = useStore(s => s.currentSessionId);
+  const attentionCount = useStore(s => Object.values(s.sessionNeedsAttention).filter(Boolean).length);
+
+  // Keep explicit "waiting for you" requests visible even when the app is in
+  // another browser tab. Generic background output intentionally stays quiet.
+  useEffect(() => {
+    document.title = attentionCount > 0 ? `(${attentionCount}) vipershell 🐍` : 'vipershell 🐍';
+  }, [attentionCount]);
+
   // True while a popstate handler is running — prevents connectSession from
   // pushing another history entry for the same navigation.
   const fromPopstateRef = useRef(false);

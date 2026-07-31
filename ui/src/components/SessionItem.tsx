@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil, Bot } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -31,6 +31,11 @@ function compactRelativeTime(ts: number | null | undefined): string {
 }
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
+import OpenCodeIcon from './OpenCodeIcon';
+import AntigravityIcon from './AntigravityIcon';
+import GitHubCopilotIcon from './GitHubCopilotIcon';
+import GrokIcon from './GrokIcon';
+import CursorIcon from './CursorIcon';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from './ui/dropdown-menu';
@@ -107,13 +112,17 @@ interface SessionItemProps {
 // Replaces the old "session icon + mini-grid" duo — each pane can now show
 // its own icon because a split grid can mix AI and plain shells.
 
-type PaneKind = 'claude' | 'codex' | 'opencode' | 'terminal';
+type PaneKind = 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'terminal';
 
 function getPaneKind(s: Session | undefined): PaneKind {
   if (!s) return 'terminal';
   if (s.isClaudeCode) return 'claude';
   if (s.isCodex) return 'codex';
   if (s.isOpencode) return 'opencode';
+  if (s.isAntigravity) return 'antigravity';
+  if (s.isCopilot) return 'copilot';
+  if (s.isGrok) return 'grok';
+  if (s.isCursor) return 'cursor';
   return 'terminal';
 }
 
@@ -121,7 +130,11 @@ function PaneIcon({ kind, size }: { kind: PaneKind; size: number }): React.React
   switch (kind) {
     case 'claude':   return <ClaudeIcon size={size} />;
     case 'codex':    return <OpenAIIcon size={size} />;
-    case 'opencode': return <Bot size={size} />;
+    case 'opencode': return <OpenCodeIcon size={size} />;
+    case 'antigravity': return <AntigravityIcon size={size} />;
+    case 'copilot':    return <GitHubCopilotIcon size={size} />;
+    case 'grok':       return <GrokIcon size={size} />;
+    case 'cursor':   return <CursorIcon size={size} />;
     default:         return <SquareTerminal size={size} />;
   }
 }
@@ -168,6 +181,7 @@ function PaneCard({
   const session   = useStore(s => s.sessionMap[sessionId]);
   const lastEvent = useStore(s => s.sessionLastEvent[sessionId] ?? null);
   const busy = useStore(s => !!s.sessionBusy[sessionId]);
+  const needsAttention = useStore(s => !!s.sessionNeedsAttention[sessionId]);
   const kind = getPaneKind(session);
   const name = session?.name ?? '\u2026';
   const time = compactRelativeTime(lastEvent);
@@ -224,6 +238,7 @@ function PaneCard({
         active && 'pane-card-active',
         unseen && 'pane-card-unseen',
         busy ? 'pane-card-busy' : 'pane-card-idle',
+        needsAttention && 'pane-card-needs-attention',
         tight && 'pane-card-tight',
         'pane-card-draggable',
         isDragging && 'pane-card-dragging',
@@ -251,8 +266,8 @@ function PaneCard({
         <span className="pane-card-name">{name}</span>
         <span
           className="pane-card-activity"
-          aria-label={busy ? 'Pane is running' : 'Pane is idle'}
-          title={busy ? 'Running' : 'Idle'}
+          aria-label={needsAttention ? 'Pane needs your attention' : busy ? 'Pane is running' : 'Pane is idle'}
+          title={needsAttention ? 'Waiting for your input' : busy ? 'Running' : 'Idle'}
         />
       </div>
       {(hasCwd || time) && (

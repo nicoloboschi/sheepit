@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { rgPath } from '@vscode/ripgrep';
-import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
 import si from 'systeminformation';
@@ -16,6 +16,23 @@ const PKG_VERSION: string = (() => {
   try { return JSON.parse(readFileSync(nodePath.join(__dirname, '..', 'package.json'), 'utf-8')).version; }
   catch { return 'unknown'; }
 })();
+const PREFERENCES_PATH = nodePath.join(os.homedir(), '.config', 'vipershell', 'preferences.json');
+
+function loadPreferences(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(PREFERENCES_PATH, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] =>
+      typeof entry[0] === 'string' && typeof entry[1] === 'string'));
+  } catch { return {}; }
+}
+
+function savePreferences(values: Record<string, string>): void {
+  mkdirSync(nodePath.dirname(PREFERENCES_PATH), { recursive: true });
+  const tempPath = `${PREFERENCES_PATH}.tmp`;
+  writeFileSync(tempPath, JSON.stringify(values, null, 2) + '\n', 'utf8');
+  renameSync(tempPath, PREFERENCES_PATH);
+}
 
 /** Expand a leading `~` to the user's home directory. Shared with server.ts,
  *  which resolves the same user-supplied paths for WebSocket file watches. */
@@ -26,6 +43,30 @@ export function expandHomePath(p: string): string {
 
 export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: AIService): Router {
   const router = Router();
+
+  router.get('/preferences', (_req, res) => {
+    res.json({ values: loadPreferences() });
+  });
+
+  router.patch('/preferences', (req, res) => {
+    const supplied = (req.body as { values?: unknown })?.values;
+    if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
+      return res.status(400).json({ error: 'Expected a preference values object' });
+    }
+    const current = loadPreferences();
+    for (const [key, value] of Object.entries(supplied as Record<string, unknown>)) {
+      if (!key.startsWith('vipershell') || key.length > 200 || typeof value !== 'string' || value.length > 1_000_000) {
+        return res.status(400).json({ error: 'Invalid preference value' });
+      }
+      if (value === '') delete current[key]; else current[key] = value;
+    }
+    try {
+      savePreferences(current);
+      res.json({ values: current });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
 
   /** Get a session's working directory path (replaces tmux display-message) */
   function getSessionCwd(sessionId: string): string {

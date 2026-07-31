@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, GripVertical, FolderOpen, Columns2, Bot } from 'lucide-react';
-import { useDraggable } from '@dnd-kit/core';
+import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, FolderOpen, Columns2 } from 'lucide-react';
 import useStore from '../store';
-import * as sharedWs from '../sharedWs';
-import { useDndEnabled } from '../dndEnabled';
-import StatChips from './StatChips';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
+import OpenCodeIcon from './OpenCodeIcon';
+import AntigravityIcon from './AntigravityIcon';
+import GitHubCopilotIcon from './GitHubCopilotIcon';
+import GrokIcon from './GrokIcon';
+import CursorIcon from './CursorIcon';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 /** Append U+FE0E (text presentation selector) so browsers don't color-swap symbols as emoji. */
@@ -77,29 +78,9 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
     onClose();
   }
 
-  // StatChips wants a `send` callback it uses to spawn new sessions from worktrees.
-  // The shared WebSocket is the canonical channel for that in the rest of the app.
-  const send = (msg: Record<string, unknown>) => sharedWs.send(msg);
-
-  // Drag handle — dnd-kit useDraggable. The same `kind: 'pane'` payload as
-  // sidebar PaneCards, so the central onDragEnd in App.tsx handles drops
-  // uniformly regardless of which surface initiated the drag. Disabled on
-  // mobile (and the grip icon is hidden entirely).
-  const dndEnabled = useDndEnabled();
-  const {
-    attributes: dragAttributes,
-    listeners: dragListeners,
-    setNodeRef: setDragRef,
-    isDragging,
-  } = useDraggable({
-    id: `pane-source:header:${workspaceId}:${paneIndex}`,
-    data: { kind: 'pane', sessionId, workspaceId, paneIdx: paneIndex },
-    disabled: !dndEnabled,
-  });
-
   if (!session) {
     // Loading placeholder — matches real header height so layout doesn't jump.
-    return <div style={{ height: 42, flexShrink: 0, borderBottom: '1px solid var(--border)', background: '#0a0a0a' }} />;
+    return <div style={{ height: 30, flexShrink: 0, borderBottom: '1px solid var(--border)', background: '#0a0a0a' }} />;
   }
 
   return (
@@ -109,48 +90,35 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         display: 'flex', flexDirection: 'column',
         flexShrink: 0, minWidth: 0,
         borderBottom: isActive
-          ? '2px solid var(--primary)'
-          : '1px solid var(--border)',
+          ? '1px solid rgba(77, 171, 247, 0.65)'
+          : '1px solid rgba(148, 163, 184, 0.16)',
         background: isActive
-          ? 'linear-gradient(135deg, rgba(0,116,217,0.18) 0%, rgba(0,146,150,0.14) 100%), #0d1117'
-          : '#0a0a0a',
-        transition: 'background 0.15s ease, border-color 0.15s ease',
+          ? 'linear-gradient(115deg, rgba(31, 111, 235, 0.22), rgba(14, 116, 144, 0.12) 62%, rgba(15, 23, 42, 0.96)), #0d1117'
+          : 'linear-gradient(115deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.92))',
+        borderRadius: '2px 2px 0 0',
+        boxShadow: isActive ? 'inset 0 1px rgba(191, 219, 254, 0.10)' : 'inset 0 1px rgba(255, 255, 255, 0.035)',
+        transition: 'background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease',
         userSelect: 'none',
         color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
       }}
     >
       {/* Row 1: identity + actions */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6,
-        padding: isActive ? '5px 6px 3px 4px' : '3px 6px 2px 4px',
-        minHeight: isActive ? 28 : 22, minWidth: 0,
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: isActive ? '7px 10px 6px 8px' : '6px 10px 5px 8px',
+        minHeight: isActive ? 34 : 30, minWidth: 0,
         fontSize: isActive ? 12 : 11,
         transition: 'padding 0.15s ease, min-height 0.15s ease, font-size 0.15s ease',
       }}>
-        {/* Drag handle — hidden entirely on mobile where dnd-kit is off. */}
-        {dndEnabled && (
-          <span
-            ref={setDragRef}
-            {...dragAttributes}
-            {...dragListeners}
-            onClick={(e) => e.stopPropagation()}
-            title="Drag to move or swap this pane"
-            className="pane-header-grip"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 14, height: 18, flexShrink: 0,
-              color: 'var(--muted-foreground)', opacity: isDragging ? 0.2 : 0.5,
-              cursor: isDragging ? 'grabbing' : 'grab',
-            }}
-          >
-            <GripVertical size={11} />
-          </span>
-        )}
         {/* Session kind icon */}
         <span className={`pane-header-kind-badge${isActive ? ' pane-header-kind-badge-active' : ''}`}>
           {session.isClaudeCode ? <ClaudeIcon size={15} />
             : session.isCodex    ? <OpenAIIcon size={15} />
-            : session.isOpencode ? <Bot size={15} />
+            : session.isOpencode ? <OpenCodeIcon size={15} />
+            : session.isAntigravity ? <AntigravityIcon size={15} />
+            : session.isCopilot  ? <GitHubCopilotIcon size={15} />
+            : session.isGrok     ? <GrokIcon size={15} />
+            : session.isCursor   ? <CursorIcon size={15} />
             : <SquareTerminal size={15} />}
         </span>
 
@@ -314,15 +282,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         </button>
       </div>
 
-      {/* Row 2: git + system stats — single compact row */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 6,
-        padding: '0 8px 2px 10px',
-        height: 18, minWidth: 0,
-        fontSize: 10,
-      }}>
-        <StatChips sessionId={sessionId} send={send} />
-      </div>
     </div>
   );
 }

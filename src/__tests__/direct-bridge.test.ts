@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -105,6 +105,31 @@ describe('detectAgentApp', () => {
     expect(detectAgentApp('/Users/n/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex')).toBe('codex')
   })
 
+  it('recognises OpenCode only when it is the invoked app', () => {
+    expect(detectAgentApp('opencode --continue')).toBe('opencode')
+    expect(detectAgentApp('node /Users/n/.local/bin/opencode')).toBe('opencode')
+    expect(detectAgentApp('git commit -m "support opencode"')).toBeNull()
+  })
+
+  it('recognises Antigravity and GitHub Copilot CLIs', () => {
+    expect(detectAgentApp('agy --resume')).toBe('antigravity')
+    expect(detectAgentApp('/Users/n/.local/bin/agy')).toBe('antigravity')
+    expect(detectAgentApp('copilot --resume')).toBe('copilot')
+    expect(detectAgentApp('git commit -m "support copilot"')).toBeNull()
+  })
+
+  it('recognises Grok Build through its documented launcher', () => {
+    expect(detectAgentApp('grok --resume')).toBe('grok')
+    expect(detectAgentApp('/Users/n/.local/bin/grok-build')).toBe('grok')
+    expect(detectAgentApp('git commit -m "support grok"')).toBeNull()
+  })
+
+  it('recognises Cursor Agent without matching agent as an argument', () => {
+    expect(detectAgentApp('agent --continue')).toBe('cursor')
+    expect(detectAgentApp('/Users/n/.local/bin/cursor-agent --resume last')).toBe('cursor')
+    expect(detectAgentApp('git commit -m "agent support"')).toBeNull()
+  })
+
   it('ignores the agent name appearing in ordinary arguments', () => {
     // Walking the whole process tree means a session's own shell commands show
     // up here; matching anywhere in argv made a session label itself.
@@ -146,6 +171,25 @@ describe('parseOscNotifications', () => {
 
   it('picks up several notifications in one chunk', () => {
     expect(parseOscNotifications('a\x1b]9;one\x07b\x1b]9;two\x07c').map(n => n.text)).toEqual(['one', 'two'])
+  })
+})
+
+describe('drainOscNotificationFrames', () => {
+  it('reassembles a Codex OSC 9 completion split across PTY reads', () => {
+    const first = drainOscNotificationFrames('\x1b]9;Fixed the')
+    expect(first.frames).toEqual([])
+    expect(first.pending).toBe('\x1b]9;Fixed the')
+
+    const second = drainOscNotificationFrames(' build.\x07', first.pending)
+    expect(second.pending).toBe('')
+    expect(parseOscNotifications(second.frames[0]!)).toMatchObject([{ text: 'Fixed the build.' }])
+  })
+
+  it('retains a split OSC introducer', () => {
+    const first = drainOscNotificationFrames('output\x1b')
+    expect(first.pending).toBe('\x1b')
+    const second = drainOscNotificationFrames(']9;Done\x07', first.pending)
+    expect(parseOscNotifications(second.frames[0]!)).toMatchObject([{ text: 'Done' }])
   })
 })
 
@@ -213,5 +257,22 @@ describe('kitty notification capability handshake', () => {
     const ack = kittyNotificationAck('opentui-notifications')
     // opencode accepts any OSC 99 echoing back its id and p=?.
     expect(/\x1b\]99;[^\x07\x1b]*i=opentui-notifications[^\x07\x1b]*p=\?[\s\S]*?(?:\x07|\x1b\\)/.test(ack)).toBe(true)
+  })
+})
+
+describe('drainOsc99Frames', () => {
+  it('keeps a fragmented OpenCode capability probe until its terminator arrives', () => {
+    const first = drainOsc99Frames('\x1b]99;i=opentui-notifications:p=?;\x1b')
+    expect(first.frames).toEqual([])
+    const second = drainOsc99Frames('\\', first.pending)
+    expect(second.pending).toBe('')
+    expect(parseKittyNotificationQuery(second.frames[0]!)).toBe('opentui-notifications')
+  })
+
+  it('keeps a fragmented notification payload until it is complete', () => {
+    const first = drainOsc99Frames('output\x1b]99;i=3:d=1;All ')
+    expect(first.frames).toEqual([])
+    const second = drainOsc99Frames('tests pass\x1b\\', first.pending)
+    expect(parseOscNotifications(second.frames[0]!).map(note => note.text)).toEqual(['All tests pass'])
   })
 })
