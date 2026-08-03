@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   update:
+    concurrency:
+      group: star-history
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
