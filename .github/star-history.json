@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "repository": "nicoloboschi/vipershell",
+  "backfilledAt": "2026-08-03T08:59:46.136Z",
+  "backfill": [
+    {
+      "date": "2026-04-01",
+      "stars": 1
+    },
+    {
+      "date": "2026-04-02",
+      "stars": 2
+    },
+    {
+      "date": "2026-04-28",
+      "stars": 4
+    },
+    {
+      "date": "2026-06-16",
+      "stars": 6
+    },
+    {
+      "date": "2026-06-17",
+      "stars": 9
+    },
+    {
+      "date": "2026-06-18",
+      "stars": 10
+    },
+    {
+      "date": "2026-07-02",
+      "stars": 11
+    },
+    {
+      "date": "2026-07-22",
+      "stars": 12
+    },
+    {
+      "date": "2026-07-23",
+      "stars": 13
+    },
+    {
+      "date": "2026-07-25",
+      "stars": 14
+    }
+  ],
+  "snapshots": [
+    {
+      "date": "2026-08-03",
+      "stars": 14
+    }
+  ]
+}
