@@ -778,8 +778,19 @@
 .pane-footer-bar > .stat-chips { gap: 2px; }
 .pane-footer-bar .stat-widget-sparkline { display: none; }
 .pane-footer-bar .stat-widget { gap: 3px; }
-.pane-footer-name { color: #e2e8f0; font-weight: 650; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pane-footer-path { min-width: 0; color: #94a3b8; font-family: "JetBrains Mono", monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane-footer-path {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #94a3b8; font-family: "JetBrains Mono", monospace; font-size: 10px;
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+}
+.pane-footer-path:hover { color: #dbeafe; text-decoration: underline; text-underline-offset: 2px; }
+.pane-footer-path-popover {
+  position: absolute; left: 10px; bottom: calc(100% + 6px); z-index: 30;
+  max-width: min(680px, calc(100vw - 32px)); padding: 7px 10px;
+  color: #dbeafe; background: #111827; border: 1px solid rgba(125, 211, 252, 0.35);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.38); font: 10px "JetBrains Mono", monospace;
+  white-space: normal; overflow-wrap: anywhere;
+}
 
 
 /* Files pane — directory-change transition. Each browse() swaps the whole

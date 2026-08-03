@@ -202,6 +202,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const pendingResetRef = useRef(false);
   const mountedRef = useRef(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [showFullPath, setShowFullPath] = useState(false);
   /** File-drop state — TerminalCell only handles native file drops via the
    *  HTML5 drag-and-drop API now. Pane drops go through dnd-kit (see
    *  `useDroppable` below) which is a separate event stream and doesn't
@@ -1289,8 +1290,23 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         {isActive && <VoiceInputButton sessionId={sessionId} />}
         <StatChips sessionId={sessionId} send={sharedWs.send} />
         <div className="pane-footer-identity">
-          <span className="pane-footer-name">{session?.name ?? 'Terminal'}</span>
-          {session?.path && <span className="pane-footer-path" title={session.path}>{session.path.replace(/^\/Users\/[^/]+/, '~')}</span>}
+          {session?.path && (
+            <>
+              <button
+                type="button"
+                className="pane-footer-path"
+                title="Show full absolute path"
+                onClick={() => setShowFullPath(value => !value)}
+              >
+                {session.path.replace(/^\/Users\/[^/]+/, '~')}
+              </button>
+              {showFullPath && (
+                <div className="pane-footer-path-popover" onClick={e => e.stopPropagation()}>
+                  {session.path}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
       </div>{/* /inner wrapper */}

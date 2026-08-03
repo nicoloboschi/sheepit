@@ -188,21 +188,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           </PopoverContent>
         </Popover>
 
-        {/* cwd */}
-        {session.path && (
-          <span
-            style={{
-              fontSize: 10, fontFamily: '"JetBrains Mono",monospace',
-              color: 'var(--muted-foreground)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              flexShrink: 1, minWidth: 0, fontWeight: 600,
-            }}
-            title={session.path}
-          >
-            {session.path.replace(/^\/Users\/[^/]+/, '~')}
-          </span>
-        )}
-
         <div style={{ flex: 1 }} />
 
         {/* Per-pane view switch — terminal / git / files, scoped to this pane. */}
