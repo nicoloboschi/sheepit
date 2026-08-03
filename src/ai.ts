@@ -156,6 +156,22 @@ const CONFIG_PATH = join(homedir(), '.config', 'vipershell', 'config.json');
 
 export type AIProvider = 'claude-code' | 'codex';
 
+/** CLI invocation used for one-shot naming. Keep this isolated from the
+ * user's agent customizations: naming should never depend on hooks, skills,
+ * project rules, or a persisted agent conversation. */
+export function buildNamerInvocation(provider: AIProvider, prompt: string): { command: string; args: string[] } {
+  if (provider === 'claude-code') {
+    return {
+      command: 'claude',
+      args: ['-p', '--safe-mode', '--disable-slash-commands', '--model', 'haiku', '--verbose', '--output-format', 'json', prompt],
+    };
+  }
+  return {
+    command: 'codex',
+    args: ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', prompt],
+  };
+}
+
 export interface AIConfig {
   aiEnabled: boolean;
   aiProvider: AIProvider;
@@ -407,9 +423,10 @@ ${snippet}
 
 Session name:`;
 
-      const cli = provider === 'claude-code' ? 'claude' : 'codex';
+      const invocation = buildNamerInvocation(provider, prompt);
+      const cli = invocation.command;
 
-      logger.debug(`AI naming ${sessionId}: calling ${cli} (${snippet.length} chars of terminal)`);
+      logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of terminal)`);
       const t0 = Date.now();
 
       let name: string;
@@ -419,8 +436,8 @@ Session name:`;
         // Run from a dedicated temp cwd so Claude Code doesn't log these
         // one-shot naming prompts into the user's real project history.
         const raw = await runWithStdin(
-          'claude',
-          ['-p', '--model', 'haiku', '--verbose', '--output-format', 'json', prompt],
+          invocation.command,
+          invocation.args,
           '',
           30_000,
           this._namerCwd,
@@ -445,7 +462,7 @@ Session name:`;
           name = raw.trim();
         }
       } else {
-        name = (await runWithStdin('codex', ['-p', prompt], '', 30_000, this._namerCwd)).trim();
+        name = (await runWithStdin(invocation.command, invocation.args, '', 30_000, this._namerCwd)).trim();
       }
 
       logger.debug(`AI naming ${sessionId}: got "${name}" in ${Date.now() - t0}ms`);
