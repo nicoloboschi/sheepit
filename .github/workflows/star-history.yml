@@ -20,10 +20,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           title: ViperShell Star History
+          line-color: '#14b8a6'
       - name: Commit chart
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/star-history.json .github/star-history.svg
+          git rm --ignore-unmatch .github/star-history.json .github/star-history.svg
+          git add .github/star-history/data.json .github/star-history/chart.svg
           git diff --cached --quiet || git commit -m 'chore: update star history'
           git push

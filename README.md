@@ -60,6 +60,10 @@ vipershell
 - **File upload** — drop files from your desktop onto any terminal to upload and paste the path
 - **Unseen output indicator** — highlight on sessions with new output you haven't seen
 
+## Star History
+
+![ViperShell star history](https://raw.githubusercontent.com/nicoloboschi/vipershell/main/.github/star-history/chart.svg)
+
 ## Security
 
 vipershell gives the browser a real shell on the host — it is as powerful as an
