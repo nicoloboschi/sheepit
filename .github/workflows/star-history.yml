@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: nicoloboschi/dyi-github-star-history@v1
+      - uses: nicoloboschi/gh-stars@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           title: ViperShell Star History
