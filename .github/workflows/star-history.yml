@@ -19,7 +19,6 @@ jobs:
       - uses: nicoloboschi/gh-stars@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          title: ViperShell Star History
           line-color: '#14b8a6'
       - name: Commit chart
         run: |
