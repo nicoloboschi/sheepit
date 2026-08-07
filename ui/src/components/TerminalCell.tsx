@@ -283,6 +283,17 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     // bypass the scrollback hijack entirely in alt-buffer mode.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== 'keydown') return true;
+      // Shift+Enter → insert a newline instead of submitting. xterm sends a
+      // plain CR ("\r") for both Enter and Shift+Enter, so the program on the
+      // other end can't tell them apart. Emit the meta-return sequence
+      // (ESC + CR) that Claude Code and other REPLs treat as "insert newline"
+      // — the same thing Option+Enter and `claude /terminal-setup` produce.
+      // Must run before the alt-buffer bailout so it works inside full-screen
+      // TUIs (Claude Code's prompt included).
+      if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        sendRef.current({ type: 'input', data: '\x1b\r' });
+        return false;
+      }
       const inAltBuffer = term.buffer.active.type === 'alternate';
       if (inAltBuffer) return true;
       const rows = term.rows || 20;
