@@ -209,6 +209,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
    *  collide with this. */
   const [fileDragOver, setFileDragOver] = useState(false);
   const fileDragCountRef = useRef(0);
+  /** Brief "Attaching image…" badge shown while a pasted screenshot uploads —
+   *  paste has no drag affordance, so this is the only signal it worked. */
+  const [imgPasteBusy, setImgPasteBusy] = useState(false);
 
   // dnd-kit droppable for pane drops. Same-workspace swap is handled in
   // App.tsx onDragEnd. `isOver` drives the overlay visual. Disabled on
@@ -1011,6 +1014,41 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     };
   }, []);
 
+  // Resolve this session's cwd so uploads land next to the running process
+  // (Claude Code and friends can only attach files they can read on disk).
+  async function resolveSessionCwd(): Promise<string> {
+    try {
+      const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/browse`);
+      const data = await res.json();
+      if (data.cwd) return data.cwd as string;
+    } catch { /* fallback below */ }
+    return '/tmp';
+  }
+
+  // Upload blobs into the session cwd and type their paths into the terminal
+  // (space-separated, shell-escaped). Shared by native file drops and image
+  // paste — in both cases the goal is to hand a real on-disk path to whatever
+  // is running in the pane (e.g. Claude Code, which attaches image paths).
+  async function uploadBlobsAndType(items: Array<{ blob: Blob; name: string }>): Promise<void> {
+    if (items.length === 0) return;
+    const cwd = await resolveSessionCwd();
+    const paths: string[] = [];
+    for (const { blob, name } of items) {
+      try {
+        const res = await fetch(`/api/fs/upload?dir=${encodeURIComponent(cwd)}&name=${encodeURIComponent(name)}`, {
+          method: 'POST',
+          body: blob,
+        });
+        const { ok, path } = await res.json();
+        if (ok && path) paths.push(path);
+      } catch { /* skip failed uploads */ }
+    }
+    if (paths.length > 0) {
+      const escaped = paths.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
+      sendRef.current({ type: 'input', data: escaped });
+    }
+  }
+
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setFileDragOver(false);
@@ -1021,33 +1059,49 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    // Get session CWD
-    let cwd = '/tmp';
-    try {
-      const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/browse`);
-      const data = await res.json();
-      if (data.cwd) cwd = data.cwd;
-    } catch { /* fallback to /tmp */ }
-
-    // Upload each file and type the path
-    const paths: string[] = [];
-    for (const file of files) {
-      try {
-        const res = await fetch(`/api/fs/upload?dir=${encodeURIComponent(cwd)}&name=${encodeURIComponent(file.name)}`, {
-          method: 'POST',
-          body: file,
-        });
-        const { ok, path } = await res.json();
-        if (ok && path) paths.push(path);
-      } catch { /* skip failed uploads */ }
-    }
-
-    // Type the paths into the terminal (space-separated, shell-escaped)
-    if (paths.length > 0) {
-      const escaped = paths.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
-      sendRef.current({ type: 'input', data: escaped });
-    }
+    await uploadBlobsAndType(files.map(f => ({ blob: f, name: f.name })));
   }
+
+  // Image paste — screenshots copied to the clipboard (e.g. macOS
+  // Cmd+Ctrl+Shift+4) arrive as image blobs, not text, so xterm's default
+  // paste silently drops them. Intercept the paste in the capture phase
+  // (before it reaches xterm's hidden textarea), upload the image to the
+  // session cwd, and type the resulting path into the terminal so the running
+  // program — Claude Code in particular — can attach it. Plain-text pastes are
+  // left untouched and flow through to xterm normally.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const images = Array.from(items).filter(it => it.kind === 'file' && it.type.startsWith('image/'));
+      if (images.length === 0) return; // text paste → let xterm handle it
+      // Stop xterm (and the browser) from also processing this paste.
+      e.preventDefault();
+      e.stopPropagation();
+      const stamp = Date.now();
+      const blobs = images
+        .map((it, i) => {
+          const blob = it.getAsFile();
+          if (!blob) return null;
+          const ext = (it.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+          // Screenshots come in with no/generic names; synthesize a stable,
+          // unique one so repeated pastes don't overwrite each other.
+          const name = blob.name && !/^image\.\w+$/i.test(blob.name)
+            ? blob.name
+            : `pasted-${stamp}${images.length > 1 ? `-${i + 1}` : ''}.${ext}`;
+          return { blob, name };
+        })
+        .filter((b): b is { blob: File; name: string } => b !== null);
+      if (blobs.length === 0) return;
+      setImgPasteBusy(true);
+      void uploadBlobsAndType(blobs).finally(() => setImgPasteBusy(false));
+    };
+    el.addEventListener('paste', onPaste, { capture: true });
+    return () => el.removeEventListener('paste', onPaste, { capture: true } as EventListenerOptions);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>
@@ -1149,6 +1203,23 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         ref={containerRef}
         className="terminal-pane"
       />
+      {imgPasteBusy && (
+        <div style={{
+          position: 'absolute', bottom: 16, right: 16, zIndex: 21,
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '6px 12px', borderRadius: 20,
+          border: '1px solid var(--border)',
+          background: 'rgba(22, 27, 34, 0.92)',
+          backdropFilter: 'blur(8px)',
+          color: 'var(--foreground)', fontSize: 11, fontWeight: 600,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+          pointerEvents: 'none',
+          animation: 'fade-in 0.15s ease',
+        }}>
+          <Upload size={12} />
+          Attaching image…
+        </div>
+      )}
       {(isPaneDragOver || fileDragOver) && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20,
