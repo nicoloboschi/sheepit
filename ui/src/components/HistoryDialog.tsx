@@ -3,15 +3,8 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { DialogHeader, DialogTitle } from './ui/dialog';
 import ConfigDialog from './ConfigDialog';
-
-const TERMINAL_THEME = {
-  background: '#0c0c0c', foreground: '#d4d4d8', cursor: '#0074d9', cursorAccent: '#ffffff',
-  selectionBackground: 'rgba(0,116,217,0.25)',
-  black: '#3B3B3B', brightBlack: '#525252', red: '#F87171', brightRed: '#FCA5A5',
-  green: '#4ADE80', brightGreen: '#86EFAC', yellow: '#FACC15', brightYellow: '#FDE68A',
-  blue: '#60A5FA', brightBlue: '#93C5FD', magenta: '#C084FC', brightMagenta: '#D8B4FE',
-  cyan: '#22D3EE', brightCyan: '#67E8F9', white: '#D4D4D8', brightWhite: '#F4F4F5',
-};
+import useStore from '../store';
+import { TERMINAL_THEMES } from '../theme';
 
 interface HistoryDialogProps {
   sessionId: string;
@@ -20,6 +13,9 @@ interface HistoryDialogProps {
 
 export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Shared with the live panes, so history honours the light theme too — it
+  // used to carry its own copy of the dark palette.
+  const theme = useStore(s => s.theme);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -29,7 +25,7 @@ export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps
       fontSize: 13,
       lineHeight: 1.2,
       scrollback: 50000,
-      theme: TERMINAL_THEME,
+      theme: TERMINAL_THEMES[theme],
       disableStdin: true,
       cursorBlink: false,
       convertEol: true,
@@ -57,7 +53,7 @@ export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps
       ro.disconnect();
       term.dispose();
     };
-  }, [sessionId]);
+  }, [sessionId, theme]);
 
   return (
     <ConfigDialog open onClose={onClose}>
@@ -66,7 +62,7 @@ export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps
             History &mdash; {sessionId}
           </DialogTitle>
         </DialogHeader>
-        <div ref={containerRef} className="flex-1 min-h-0 p-2" style={{ background: '#0c0c0c' }} />
+        <div ref={containerRef} className="flex-1 min-h-0 p-2" style={{ background: 'var(--background)' }} />
     </ConfigDialog>
   );
 }

@@ -109,16 +109,16 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
         key={index}
         onClick={() => { onSelect(index); onJump(path); }}
         style={{
-          padding: '4px 10px', paddingLeft: 10 + depth * 12, cursor: 'pointer', borderBottom: '1px solid #111111',
+          padding: '4px 10px', paddingLeft: 10 + depth * 12, cursor: 'pointer', borderBottom: '1px solid var(--card)',
           display: 'flex', alignItems: 'center', gap: 6,
-          background: isFocused ? '#1f3a56' : 'transparent',
+          background: isFocused ? 'var(--accent)' : 'transparent',
           borderLeft: isFocused ? '2px solid #0074d9' : '2px solid transparent',
         }}
-        onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = '#111111'; }}
+        onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'var(--card)'; }}
         onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'transparent'; }}
       >
-        {file.isNew ? <FilePlus size={11} color="#4ADE80" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#F87171" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="#525252" style={{ flexShrink: 0 }} />}
-        <span style={{ fontSize: 11, color: '#F4F4F5', fontFamily: '"JetBrains Mono",monospace', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
+        {file.isNew ? <FilePlus size={11} color="#4ADE80" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#F87171" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
+        <span style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
           {name}
         </span>
         <StatBar add={file.additions} del={file.deletions} />
@@ -126,9 +126,9 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
           <button
             title="Open in Files tab"
             onClick={(e) => { e.stopPropagation(); onOpenFile(path); }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: '#484f58', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: 'var(--muted-foreground)', flexShrink: 0, display: 'flex', alignItems: 'center' }}
             onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = '#93C5FD'; }}
-            onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = '#484f58'; }}
+            onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = 'var(--muted-foreground)'; }}
           >
             <FolderOpen size={11} />
           </button>
@@ -168,20 +168,20 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
             display: 'flex', alignItems: 'center', gap: 5,
             padding: '4px 10px', paddingLeft: 10 + depth * 12,
             cursor: 'pointer', userSelect: 'none',
-            borderBottom: '1px solid #111111',
-            background: '#0a0a0a',
+            borderBottom: '1px solid var(--card)',
+            background: 'var(--background)',
           }}
-          onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = '#111111'; }}
-          onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = '#0a0a0a'; }}
+          onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--card)'; }}
+          onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--background)'; }}
         >
           {collapsed
-            ? <ChevronRight size={11} color="#525252" style={{ flexShrink: 0 }} />
-            : <ChevronDown size={11} color="#525252" style={{ flexShrink: 0 }} />}
-          <FolderOpen size={11} color="#737373" style={{ flexShrink: 0 }} />
-          <span style={{ fontSize: 11, color: '#a1a1aa', fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+            ? <ChevronRight size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />
+            : <ChevronDown size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
+          <FolderOpen size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: 'var(--muted-foreground)', fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
             {dirLabel}
           </span>
-          <span style={{ fontSize: 9, color: '#525252', flexShrink: 0 }}>
+          <span style={{ fontSize: 9, color: 'var(--muted-foreground)', flexShrink: 0 }}>
             {node.fileCount}
           </span>
         </div>
@@ -199,8 +199,8 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#0c0c0c' }}>
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', fontSize: 11, color: '#525252', display: 'flex', gap: 6, alignItems: 'center', position: 'sticky', top: 0, zIndex: 1 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--background)' }}>
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', fontSize: 11, color: 'var(--muted-foreground)', display: 'flex', gap: 6, alignItems: 'center', position: 'sticky', top: 0, zIndex: 1 }}>
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
         <span style={{ color: '#4ADE80' }}>+{totalAdd}</span>
         <span style={{ color: '#F87171' }}>-{totalDel}</span>
@@ -225,8 +225,8 @@ function FullLog({ sessionId }: { sessionId: string }) {
       .finally(() => setLoading(false));
   }, [sessionId]);
 
-  if (loading) return <div style={{ padding: 16, color: '#525252', fontSize: 12 }}>Loading…</div>;
-  if (commits.length === 0) return <div style={{ padding: 16, color: '#484f58', fontSize: 12 }}>No commits</div>;
+  if (loading) return <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading…</div>;
+  if (commits.length === 0) return <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>No commits</div>;
 
   // Group by date
   const grouped = new Map<string, typeof commits>();
@@ -241,18 +241,18 @@ function FullLog({ sessionId }: { sessionId: string }) {
       {[...grouped.entries()].map(([date, cs]) => (
         <div key={date}>
           <div style={{
-            padding: '6px 16px', fontSize: 11, fontWeight: 600, color: '#525252',
-            background: '#111111', borderBottom: '1px solid #222222',
+            padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--muted-foreground)',
+            background: 'var(--card)', borderBottom: '1px solid var(--border)',
             position: 'sticky', top: 0, zIndex: 1,
           }}>
             {date}
           </div>
           {cs.map(c => (
-            <div key={c.hash} style={{ padding: '8px 16px', borderBottom: '1px solid #111111', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div key={c.hash} style={{ padding: '8px 16px', borderBottom: '1px solid var(--card)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
               <GitCommitHorizontal size={13} color="#4ADE80" style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: '#F4F4F5', marginBottom: 2 }}>{c.subject}</div>
-                <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#525252' }}>
+                <div style={{ fontSize: 12, color: 'var(--foreground)', marginBottom: 2 }}>{c.subject}</div>
+                <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'var(--muted-foreground)' }}>
                   <span style={{ fontFamily: '"JetBrains Mono",monospace', color: '#93C5FD' }}>{c.short}</span>
                   <span>{c.author}</span>
                   <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{c.relDate}</span>
@@ -495,19 +495,19 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0 }}>
           <div style={{ flex: 1 }} />
           {files !== null && !loading && (
-            <span style={{ fontSize: 11, color: '#525252' }}>
+            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
               {files.length} file{files.length !== 1 ? 's' : ''}
               {totalAdd > 0 && <span style={{ color: '#4ADE80', marginLeft: 6 }}>+{totalAdd}</span>}
               {totalDel > 0 && <span style={{ color: '#F87171', marginLeft: 4 }}>-{totalDel}</span>}
             </span>
           )}
-          {loading && <RefreshCw size={11} color="#525252" className="animate-spin" />}
+          {loading && <RefreshCw size={11} color="var(--muted-foreground)" className="animate-spin" />}
         </div>
 
         {/* File list (top) + diff content (bottom) — stacked vertically */}
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
           {showSidebar && (
-            <div className="hidden md:flex flex-col" style={{ height: 220, flexShrink: 0, borderBottom: '1px solid #222222' }}>
+            <div className="hidden md:flex flex-col" style={{ height: 220, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
               <FileSidebar
                 files={files}
                 focusedIndex={focusedFileIdx}
@@ -520,7 +520,7 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
 
           {/* Diff content */}
           <div ref={diffRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
-            {loading && <div style={{ color: '#525252', fontSize: 13 }}>Loading…</div>}
+            {loading && <div style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>Loading…</div>}
             {error   && <div style={{ color: '#F87171', fontSize: 13 }}>Error: {error}</div>}
             {!loading && files !== null && files.length === 0 && (
               <div style={{ color: '#4ADE80', fontSize: 13 }}>✓  No changes</div>

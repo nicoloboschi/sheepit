@@ -89,11 +89,11 @@ export default function NotesPane(): JSX.Element {
   };
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, background: '#0c0c0c' }}>
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--background)' }}>
       {/* Left sidebar — sheets as a filesystem-style list */}
       <div style={{
         width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column',
-        borderRight: '1px solid var(--border)', background: '#111111',
+        borderRight: '1px solid var(--border)', background: 'var(--card)',
       }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -125,7 +125,7 @@ export default function NotesPane(): JSX.Element {
                   padding: '5px 8px 5px 12px', cursor: 'pointer', userSelect: 'none',
                   fontSize: 12, fontFamily: '"JetBrains Mono", monospace',
                   color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
-                  background: active ? '#1f3a56' : 'transparent',
+                  background: active ? 'var(--accent)' : 'transparent',
                   borderLeft: active ? '2px solid var(--primary)' : '2px solid transparent',
                 }}
                 onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}

@@ -178,7 +178,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
       return (
         <div style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: '#0c0c0c', color: 'var(--muted-foreground)',
+          background: 'var(--background)', color: 'var(--muted-foreground)',
         }}>
           <Loader2 size={20} className="animate-spin" />
         </div>
@@ -204,7 +204,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 4,
-            padding: '4px 6px', background: '#111111',
+            padding: '4px 6px', background: 'var(--card)',
             borderBottom: '1px solid var(--border)', flexShrink: 0,
           }}>
             {cells.map((_, i) => (
@@ -406,7 +406,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         flexDirection: 'column',
         overflow: 'hidden',
         padding: layout === 'single' ? 0 : 8,
-        background: '#0c0c0c',
+        background: 'var(--background)',
       }}
     >
       {renderLayout()}

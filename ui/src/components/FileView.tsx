@@ -102,20 +102,20 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
   }
   return (
     <div style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 12 }}>
-      <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: '#1b2d41', borderBottom: '1px solid #222222' }}>
+      <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
         <span style={{ color: '#93C5FD', userSelect: 'none' }}>{hunk.header}</span>
-        {hunk.context && <span style={{ color: '#525252' }}>{hunk.context}</span>}
+        {hunk.context && <span style={{ color: 'var(--muted-foreground)' }}>{hunk.context}</span>}
       </div>
       {rows.map((row, i) => {
         const isAdd = row.type === 'add', isDel = row.type === 'del';
         return (
-          <div key={i} style={{ display: 'flex', background: isAdd ? '#0d2818' : isDel ? '#2d0f0f' : 'transparent', borderBottom: '1px solid #0c0c0c' }}>
-            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: '#525252', userSelect: 'none', flexShrink: 0, borderRight: '1px solid #222222' }}>{row.oldNum ?? ''}</div>
-            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: '#525252', userSelect: 'none', flexShrink: 0, borderRight: '1px solid #222222' }}>{row.newNum ?? ''}</div>
-            <div style={{ width: 20, padding: '1px 4px', textAlign: 'center', color: isAdd ? '#4ADE80' : isDel ? '#F87171' : '#525252', userSelect: 'none', flexShrink: 0 }}>
+          <div key={i} style={{ display: 'flex', background: isAdd ? 'var(--diff-add-bg)' : isDel ? 'var(--diff-del-bg)' : 'transparent', borderBottom: '1px solid var(--background)' }}>
+            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0, borderRight: '1px solid var(--border)' }}>{row.oldNum ?? ''}</div>
+            <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0, borderRight: '1px solid var(--border)' }}>{row.newNum ?? ''}</div>
+            <div style={{ width: 20, padding: '1px 4px', textAlign: 'center', color: isAdd ? '#4ADE80' : isDel ? '#F87171' : 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0 }}>
               {isAdd ? '+' : isDel ? '-' : ' '}
             </div>
-            <pre style={{ margin: 0, padding: '1px 8px 1px 0', color: isAdd ? '#aff5b4' : isDel ? '#ffdcd7' : '#d4d4d8', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0 }}>
+            <pre style={{ margin: 0, padding: '1px 8px 1px 0', color: isAdd ? 'var(--diff-add-fg)' : isDel ? 'var(--diff-del-fg)' : 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0 }}>
               {row.content}
             </pre>
           </div>
@@ -468,7 +468,7 @@ export default function FileView({
   const copy = (text: string, set: (v: boolean) => void) => navigator.clipboard.writeText(text).then(() => { set(true); setTimeout(() => set(false), 1500); });
 
   if (!path && !hunks) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#484f58', fontSize: 13 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--muted-foreground)', fontSize: 13 }}>
       Select a file to view
     </div>
   );
@@ -486,7 +486,7 @@ export default function FileView({
   // Shown while the file's content is being fetched, across all text modes so
   // there's always a clear "loading" cue (not just a blank pane that fills in).
   const loadingEl = (
-    <div style={{ flex: fill ? 1 : undefined, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#525252', fontSize: 12, padding: 24 }}>
+    <div style={{ flex: fill ? 1 : undefined, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--muted-foreground)', fontSize: 12, padding: 24 }}>
       <Loader2 size={14} className="animate-spin" /> Loading…
     </div>
   );
@@ -494,11 +494,11 @@ export default function FileView({
   const containerStyle: React.CSSProperties = zen
     ? {
         position: 'fixed', inset: 32, zIndex: 1000, display: 'flex', flexDirection: 'column',
-        background: '#0a0a0a', border: '1px solid #0074d9', borderRadius: 12, overflow: 'hidden',
+        background: 'var(--background)', border: '1px solid #0074d9', borderRadius: 12, overflow: 'hidden',
         boxShadow: '0 0 80px rgba(0,116,217,0.35), 0 20px 60px rgba(0,0,0,0.6)',
       }
     : collapsible
-      ? { border: `1px solid ${isFocused ? '#0074d9' : '#222222'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+      ? { border: `1px solid ${isFocused ? '#0074d9' : 'var(--border)'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
       : { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 };
 
   return (
@@ -511,16 +511,16 @@ export default function FileView({
       )}
       <div style={containerStyle}>
       {/* Header — filename, stats, actions, and the content/diff toggle. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: showBody ? '1px solid #222222' : 'none', background: '#111111', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: showBody ? '1px solid var(--border)' : 'none', background: 'var(--card)', flexShrink: 0 }}>
         {collapsible && (
           <div onClick={() => setCollapsed(c => !c)} style={{ display: 'flex', cursor: 'pointer', flexShrink: 0 }}>
-            {collapsed ? <ChevronRight size={13} color="#525252" /> : <ChevronDown size={13} color="#525252" />}
+            {collapsed ? <ChevronRight size={13} color="var(--muted-foreground)" /> : <ChevronDown size={13} color="var(--muted-foreground)" />}
           </div>
         )}
         {isNew ? <FilePlus size={13} color="#4ADE80" style={{ flexShrink: 0 }} />
           : isDeleted ? <FileMinus size={13} color="#F87171" style={{ flexShrink: 0 }} />
-          : <FileCode size={13} color="#525252" style={{ flexShrink: 0 }} />}
-        <span title={shownPath} style={{ fontSize: 11, color: '#cdd3da', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          : <FileCode size={13} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
+        <span title={shownPath} style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
         {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}
@@ -530,40 +530,40 @@ export default function FileView({
 
         {path && (
           <>
-            <button onClick={() => copy(path, setCopied)} title="Copy path" style={iconBtn(copied ? '#4ADE80' : '#525252')}>
+            <button onClick={() => copy(path, setCopied)} title="Copy path" style={iconBtn(copied ? '#4ADE80' : 'var(--muted-foreground)')}>
               {copied ? <Check size={12} /> : <Copy size={12} />}
             </button>
             {textFile && (
-              <button onClick={() => copy(content, setCopiedContent)} title="Copy file content" style={iconBtn(copiedContent ? '#4ADE80' : '#525252')}>
+              <button onClick={() => copy(content, setCopiedContent)} title="Copy file content" style={iconBtn(copiedContent ? '#4ADE80' : 'var(--muted-foreground)')}>
                 {copiedContent ? <Check size={12} /> : <ClipboardCopy size={12} />}
               </button>
             )}
-            <button onClick={openNative} title="Open in native app" style={iconBtn('#525252')}><ExternalLink size={12} /></button>
-            {onDelete && <button onClick={deleteFile} title="Delete file" style={iconBtn('#525252')}><Trash2 size={12} /></button>}
+            <button onClick={openNative} title="Open in native app" style={iconBtn('var(--muted-foreground)')}><ExternalLink size={12} /></button>
+            {onDelete && <button onClick={deleteFile} title="Delete file" style={iconBtn('var(--muted-foreground)')}><Trash2 size={12} /></button>}
           </>
         )}
 
-        <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#0074d9' : '#525252')}>
+        <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#0074d9' : 'var(--muted-foreground)')}>
           {zen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
         </button>
 
         {/* Fixed-width save-status slot — icon only, always reserved so it never
             shifts the surrounding header icons as it appears/clears. */}
         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, flexShrink: 0 }} title={saveMsg ?? (saving ? 'Saving…' : undefined)}>
-          {saving ? <Loader2 size={12} className="animate-spin" style={{ color: '#525252' }} />
+          {saving ? <Loader2 size={12} className="animate-spin" style={{ color: 'var(--muted-foreground)' }} />
             : saveMsg?.startsWith('Error') ? <AlertCircle size={12} style={{ color: '#F87171' }} />
             : saveMsg ? <Check size={12} style={{ color: '#4ADE80' }} />
             : null}
         </span>
 
         {textFile && toggleBtns.length > 1 && (
-          <div style={{ display: 'flex', border: '1px solid #222222', borderRadius: 5, overflow: 'hidden', flexShrink: 0 }}>
+          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', flexShrink: 0 }}>
             {toggleBtns.map(({ id, icon, label }, i) => (
               <button key={id} onClick={() => setMode(id)} style={{
                 display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 8px',
                 background: mode === id ? 'var(--accent)' : 'none',
                 color: mode === id ? 'var(--foreground)' : 'var(--muted-foreground)',
-                border: 'none', borderRight: i < toggleBtns.length - 1 ? '1px solid #222222' : 'none', cursor: 'pointer',
+                border: 'none', borderRight: i < toggleBtns.length - 1 ? '1px solid var(--border)' : 'none', cursor: 'pointer',
               }}>{icon}{label}</button>
             ))}
           </div>
@@ -571,8 +571,8 @@ export default function FileView({
         {textFile && editable && mode === 'edit' && !autoSave && (
           <button onClick={save} disabled={saving || !isDirty} title="Save (⌘S)" style={{
             display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 5,
-            background: isDirty ? '#1f6feb' : 'none', border: isDirty ? 'none' : '1px solid #222222',
-            color: isDirty ? '#fff' : '#484f58', cursor: isDirty && !saving ? 'pointer' : 'default', flexShrink: 0,
+            background: isDirty ? '#1f6feb' : 'none', border: isDirty ? 'none' : '1px solid var(--border)',
+            color: isDirty ? '#fff' : 'var(--muted-foreground)', cursor: isDirty && !saving ? 'pointer' : 'default', flexShrink: 0,
           }}><Save size={11} />{saving ? 'Saving…' : 'Save'}</button>
         )}
       </div>
@@ -583,7 +583,7 @@ export default function FileView({
         <>
           {imgFile && path && mode !== 'diff' && (
             <div style={{ padding: 16, overflow: 'auto', flex: fill ? 1 : undefined }}>
-              <img src={`/api/fs/raw?path=${encodeURIComponent(path)}`} alt={name} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid #222222' }} />
+              <img src={`/api/fs/raw?path=${encodeURIComponent(path)}`} alt={name} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--border)' }} />
             </div>
           )}
           {pdfFile && path && mode !== 'diff' && (
@@ -591,10 +591,10 @@ export default function FileView({
           )}
 
           {mode === 'diff' && (
-            <div ref={bodyRef} style={{ ...(fill ? { flex: 1, minHeight: 0 } : {}), overflow: 'auto', background: '#0c0c0c', ...(bodyVisible ? {} : { minHeight: estHeight }) }}>
+            <div ref={bodyRef} style={{ ...(fill ? { flex: 1, minHeight: 0 } : {}), overflow: 'auto', background: 'var(--background)', ...(bodyVisible ? {} : { minHeight: estHeight }) }}>
               {bodyVisible && (
-                isBinary ? <div style={{ padding: '10px 14px', color: '#525252', fontSize: 12, fontStyle: 'italic' }}>Binary file changed</div>
-                : diffHunks.length === 0 ? <div style={{ padding: 16, color: '#525252', fontSize: 12 }}>{(!hunks && fetchedHunks === null) ? 'Loading…' : 'No diff to show'}</div>
+                isBinary ? <div style={{ padding: '10px 14px', color: 'var(--muted-foreground)', fontSize: 12, fontStyle: 'italic' }}>Binary file changed</div>
+                : diffHunks.length === 0 ? <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>{(!hunks && fetchedHunks === null) ? 'Loading…' : 'No diff to show'}</div>
                 : diffHunks.map((hunk, i) => <HunkView key={i} hunk={hunk} />)
               )}
             </div>
@@ -618,14 +618,14 @@ export default function FileView({
           {textFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               {noHighlight ? (
-                <pre style={{ margin: 0, padding: '8px 12px', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace', color: '#d4d4d8', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                <pre style={{ margin: 0, padding: '8px 12px', background: 'var(--background)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace', color: 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {content}
                 </pre>
               ) : (
                 <SyntaxHighlighter
                   language={getLang(name)} style={vscDarkPlus} showLineNumbers wrapLongLines
-                  lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: '#484f58', userSelect: 'none' }}
-                  customStyle={{ margin: 0, padding: '8px 0', background: '#0c0c0c', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
+                  lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: 'var(--muted-foreground)', userSelect: 'none' }}
+                  customStyle={{ margin: 0, padding: '8px 0', background: 'var(--background)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
                   lineProps={highlightLine == null ? undefined : (lineNum: number) => {
                     const isTarget = lineNum === highlightLine;
                     return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(210,153,34,0.15)', display: 'block' } : { display: 'block' } };
@@ -646,7 +646,7 @@ export default function FileView({
                       ),
                     }}
                   >{content}</Markdown></div>
-                : <div style={{ color: '#525252', fontSize: 12, fontStyle: 'italic' }}>Empty note — switch to Edit to start writing.</div>}
+                : <div style={{ color: 'var(--muted-foreground)', fontSize: 12, fontStyle: 'italic' }}>Empty note — switch to Edit to start writing.</div>}
             </div>
           )}
         </>

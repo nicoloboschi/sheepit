@@ -132,6 +132,12 @@
   /* Semantic extras — green stays for success/healthy/additions */
   --success:                #4ADE80;
   --warning:                #FACC15;
+  /* Diff add/remove rows. Semantic green/red, but the surface has to flip with
+     the theme or the diff renders as dark blocks on a light page. */
+  --diff-add-bg:            #0d2818;
+  --diff-add-fg:            #aff5b4;
+  --diff-del-bg:            #2d0f0f;
+  --diff-del-fg:            #ffdcd7;
   --session-active-bg:      #0b1a24;
 }
 
@@ -157,6 +163,10 @@
   --warning:                #a16207;
   --session-active-bg:      #e6f3ff;
   --dark-surface-gradient:  linear-gradient(135deg, #ffffff 0%, #f2f5f8 100%);
+  --diff-add-bg:            #e6ffec;
+  --diff-add-fg:            #04260f;
+  --diff-del-bg:            #ffebe9;
+  --diff-del-fg:            #4d0f0f;
 }
 
 :root[data-theme='light'] .sidebar-shell,

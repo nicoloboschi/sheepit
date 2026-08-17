@@ -44,8 +44,8 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0c0c0c',
-        color: '#d4d4d8',
+        background: 'var(--background)',
+        color: 'var(--foreground)',
         fontFamily: "'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
         padding: 24,
         gap: 24,
@@ -54,12 +54,12 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
       <div style={{ textAlign: 'center', marginBottom: 8 }}>
         <div style={{ marginBottom: 8 }}><ViperIcon size={40} color="#0074d9" /></div>
         <h1 className="brand-gradient-text" style={{ fontSize: 20, fontWeight: 700, margin: 0, fontFamily: "'Space Grotesk', sans-serif", letterSpacing: '-0.5px' }}>vipershell</h1>
-        <p style={{ fontSize: 13, color: '#737373', margin: '6px 0 0' }}>Connect to your server</p>
+        <p style={{ fontSize: 13, color: 'var(--muted-foreground)', margin: '6px 0 0' }}>Connect to your server</p>
       </div>
 
       <div style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ position: 'relative' }}>
-          <Wifi size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#484f58' }} />
+          <Wifi size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
           <input
             type="url"
             value={url}
@@ -71,9 +71,9 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
               width: '100%',
               padding: '10px 12px 10px 34px',
               borderRadius: 8,
-              border: '1px solid #222222',
-              background: '#111111',
-              color: '#F4F4F5',
+              border: '1px solid var(--border)',
+              background: 'var(--card)',
+              color: 'var(--foreground)',
               fontSize: 14,
               fontFamily: '"JetBrains Mono",monospace',
               outline: 'none',
@@ -93,8 +93,8 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
             padding: '10px 0',
             borderRadius: 8,
             border: 'none',
-            background: testing ? '#1a1a1a' : 'linear-gradient(135deg, #0074d9 0%, #009296 100%)',
-            color: testing ? '#737373' : '#ffffff',
+            background: testing ? 'var(--secondary)' : 'linear-gradient(135deg, #0074d9 0%, #009296 100%)',
+            color: testing ? 'var(--muted-foreground)' : '#ffffff',
             fontSize: 14,
             fontWeight: 600,
             cursor: testing ? 'default' : 'pointer',
@@ -109,7 +109,7 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
         </button>
       </div>
 
-      <p style={{ fontSize: 11, color: '#484f58', textAlign: 'center', maxWidth: 280, lineHeight: 1.5 }}>
+      <p style={{ fontSize: 11, color: 'var(--muted-foreground)', textAlign: 'center', maxWidth: 280, lineHeight: 1.5 }}>
         Enter the IP and port of your vipershell server.
         Find it in the terminal where you started vipershell.
       </p>

@@ -193,7 +193,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
         placeholder="Workspace name"
         style={{
           fontSize: 11, padding: '2px 7px', borderRadius: 5,
-          border: '1px solid var(--ring)', background: '#0c0c0c',
+          border: '1px solid var(--ring)', background: 'var(--background)',
           color: 'var(--foreground)', outline: 'none', width: 140, fontFamily: 'inherit',
         }}
       />
