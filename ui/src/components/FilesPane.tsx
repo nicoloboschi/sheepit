@@ -1151,7 +1151,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: '#0c0c0c', position: 'relative' }}
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--background)', position: 'relative' }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1176,7 +1176,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       {uploadMsg && (
         <div style={{
           position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
-          background: '#111111', border: '1px solid #222222', borderRadius: 6,
+          background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6,
           padding: '6px 14px', fontSize: 12, zIndex: 40, whiteSpace: 'nowrap', pointerEvents: 'none',
           color: uploadMsg.includes('failed') ? '#F87171' : '#4ADE80',
         }}>

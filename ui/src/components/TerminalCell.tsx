@@ -11,6 +11,82 @@ import VoiceInputButton from './VoiceInputButton';
 import StatChips from './StatChips';
 import GitDiffPane from './GitDiffPane';
 import FilesPane from './FilesPane';
+import { TERMINAL_THEMES } from '../theme';
+import type { AppTheme } from '../theme';
+
+/**
+ * Answer OSC 10/11 colour queries ("what is your foreground/background?").
+ *
+ * TUIs like Claude Code pick their own palette from the terminal's reported
+ * background — that is how they decide whether to draw a light or dark input
+ * box. xterm.js does not answer these queries on its own, and vipershell never
+ * told the PTY anything about the theme (the spawn env is just TERM=
+ * xterm-256color, with no COLORFGBG). So an app assumed dark, drew a dark box
+ * with grey text, and in light mode that came out unreadable.
+ *
+ * Answering the query is better than exporting COLORFGBG at spawn: it is read
+ * at query time, so it stays correct for sessions that were already running
+ * when the theme changed.
+ */
+function registerColorQueryHandlers(
+  term: Terminal,
+  getTheme: () => AppTheme,
+  reply: (data: string) => void,
+): void {
+  // OSC responses use 16-bit-per-channel hex: rgb:RRRR/GGGG/BBBB.
+  const toOscColor = (hex: string): string | null => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) return null;
+    const v = m[1]!;
+    const dup = (i: number) => (v.slice(i, i + 2) + v.slice(i, i + 2)).toLowerCase();
+    return `rgb:${dup(0)}/${dup(2)}/${dup(4)}`;
+  };
+
+  const answer = (osc: 10 | 11) => (data: string): boolean => {
+    // Only a query ("?") gets a reply; a set request is left to xterm.
+    if (data !== '?') return false;
+    const palette = TERMINAL_THEMES[getTheme()];
+    const colour = toOscColor((osc === 11 ? palette.background : palette.foreground) ?? '');
+    // BEL-terminated, which is the form every consumer accepts.
+    if (colour) reply(`\x1b]${osc};${colour}\x07`);
+    return true;
+  };
+
+  term.parser.registerOscHandler(10, answer(10));
+  term.parser.registerOscHandler(11, answer(11));
+}
+
+/**
+ * Swap xterm's default DOM renderer for the WebGL one.
+ *
+ * xterm 5.x renders to DOM nodes unless a renderer addon is loaded — roughly a
+ * node per cell, re-laid-out on every frame. That is survivable on a desktop
+ * and painful in an Android WebView, where a repainting TUI (Claude Code,
+ * btop, vim) drops frames badly.
+ *
+ * Loaded after term.open() because the addon needs a rendered element to
+ * attach its canvas to. Failure is non-fatal on purpose: some WebViews and VMs
+ * have no usable WebGL context, and a lost context can be reported later at
+ * runtime (GPU reset, app backgrounded). In both cases we dispose the addon
+ * and xterm silently falls back to the DOM renderer — slower, but correct.
+ */
+function enableWebglRenderer(term: Terminal, onReady: (addon: WebglLike) => void): void {
+  void import('xterm-addon-webgl').then(({ WebglAddon }) => {
+    try {
+      const addon = new WebglAddon();
+      // Guarded: the terminal may already be tearing down, and disposing twice
+      // walks into the same torn-down RenderService described below.
+      addon.onContextLoss(() => { try { addon.dispose(); } catch { /* already gone */ } });
+      term.loadAddon(addon);
+      onReady(addon);
+    } catch {
+      /* No WebGL here — stay on the DOM renderer. */
+    }
+  }).catch(() => { /* chunk failed to load; DOM renderer still works */ });
+}
+
+/** Minimal shape we need; avoids importing the addon type eagerly. */
+interface WebglLike { dispose(): void }
 
 /** Per-pane view — each pane independently shows its terminal, git diff, or
  *  file browser, all scoped to that pane's own session/cwd. Persisted so a
@@ -65,6 +141,52 @@ const stripAnsi = (s: string) => s.replace(/\x1b(?:\[[0-9;]*[a-zA-Z]|\].*?(?:\x0
  *  would replay. */
 const MAX_PARKED_OUTPUT = 256 * 1024;
 
+/** Some terminal apps (notably Codex's composer) paint their own controls with
+ * truecolor black/white rather than ANSI palette entries. In Light mode those
+ * exact extremes become unreadable, so remap only the near-extreme SGR values.
+ * Everything else, including app branding and syntax colours, passes through. */
+function makeLightTruecolorReadable(data: string): string {
+  // ISO 8613-6's colon form is common in Claude Code's Ink renderer. Normalize
+  // it to the equivalent semicolon form so the palette handling below is shared.
+  const normalized = data.replace(
+    /\x1b\[([\d;]*)(38|48):2(?::)?:(\d+):(\d+):(\d+)m/g,
+    (_whole, prefix: string, kind: string, red: string, green: string, blue: string) =>
+      `\x1b[${prefix}${kind};2;${red};${green};${blue}m`,
+  );
+  return normalized.replace(/\x1b\[([\d;]*)m/g, (whole, sequence: string) => {
+    const codes = sequence.split(';');
+    let changed = false;
+    for (let i = 0; i < codes.length; i++) {
+      // Claude's composer also uses the basic black background / the dark end
+      // of the 256-colour grayscale ramp. On a light terminal they are UI
+      // surfaces, not semantic colours, so make them the terminal white.
+      if (codes[i] === '40') { codes[i] = '107'; changed = true; continue; }
+      if (codes[i] === '48' && codes[i + 1] === '5') {
+        const index = Number(codes[i + 2]);
+        if (index === 0 || (index >= 232 && index <= 245)) {
+          codes[i + 2] = '231'; changed = true;
+        }
+        i += 2;
+        continue;
+      }
+      const kind = codes[i];
+      if ((kind !== '38' && kind !== '48') || codes[i + 1] !== '2' || i + 4 >= codes.length) continue;
+      const red = Number(codes[i + 2]);
+      const green = Number(codes[i + 3]);
+      const blue = Number(codes[i + 4]);
+      if (![red, green, blue].every(Number.isFinite)) continue;
+      const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+      if (kind === '48' && brightness < 48) {
+        codes.splice(i + 2, 3, '255', '255', '255'); changed = true;
+      } else if (kind === '38' && brightness > 235) {
+        codes.splice(i + 2, 3, '31', '41', '55'); changed = true;
+      }
+      i += 4;
+    }
+    return changed ? `\x1b[${codes.join(';')}m` : whole;
+  });
+}
+
 // Convert a `file://` URI (as emitted by Claude Code's OSC 8 hyperlinks) to a
 // local filesystem path. Handles the empty-host form `file:///abs/path` and the
 // RFC 8089 host form `file://host.local/abs/path` (CC emits both). Returns null
@@ -80,15 +202,6 @@ function fileUriToPath(uri: string): string | null {
   try { rest = decodeURIComponent(rest); } catch { /* keep percent-encoded */ }
   return rest || null;
 }
-
-const TERMINAL_THEME = {
-  background: '#111111', foreground: '#d4d4d8', cursor: '#0074d9', cursorAccent: '#ffffff',
-  selectionBackground: 'rgba(0,116,217,0.25)',
-  black: '#3B3B3B', brightBlack: '#525252', red: '#F87171', brightRed: '#FCA5A5',
-  green: '#4ADE80', brightGreen: '#86EFAC', yellow: '#FACC15', brightYellow: '#FDE68A',
-  blue: '#60A5FA', brightBlue: '#93C5FD', magenta: '#C084FC', brightMagenta: '#D8B4FE',
-  cyan: '#22D3EE', brightCyan: '#67E8F9', white: '#D4D4D8', brightWhite: '#F4F4F5',
-};
 
 interface TerminalCellProps {
   sessionId: string;
@@ -110,6 +223,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
+  const theme = useStore(s => s.theme);
   const session = useStore(s => s.sessionMap[sessionId]);
   const isMultiPane = useStore(s => {
     const ws = s.workspaces[gridId];
@@ -142,6 +256,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const [termPct, setTermPct] = useState(() => readSplitPct(sessionId) ?? 60);
   const paneBodyRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { savePaneView(sessionId, view); }, [view, sessionId]);
+  // Mirrored into a ref so the create-once terminal effect can read the live
+  // theme when answering OSC colour queries.
+  const themeRef = useRef(theme);
+  useEffect(() => {
+    const term = termRef.current;
+    themeRef.current = theme;
+    if (!term) return;
+    term.options.theme = TERMINAL_THEMES[theme];
+    term.refresh(0, term.rows - 1);
+  }, [theme]);
 
   // While this pane is active, the global Cmd+Arrow shortcut cycles ITS view.
   useEffect(() => {
@@ -250,7 +374,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       fontSize: initialFontSize,
       lineHeight: 1.2,
       scrollback: isMobile ? 1000 : 5000,
-      theme: TERMINAL_THEME,
+      theme: TERMINAL_THEMES[theme],
       // OSC 8 hyperlinks (Claude Code emits file references as these). A local
       // `file://` link opens in this pane's Files view; anything else opens
       // externally. `allowNonHttpProtocols` is required for `file:` to reach us.
@@ -345,6 +469,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     let opened = false;
     let renderDispose: { dispose: () => void } | null = null;
     let openObserver: ResizeObserver | null = null;
+    let webglAddon: WebglLike | null = null;
 
     const tryOpen = () => {
       if (disposed || opened) return;
@@ -355,6 +480,17 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       openObserver = null;
 
       term.open(el);
+      // themeRef, not the captured `theme`: this effect runs once, and a
+      // session that outlives a theme switch must still answer with the
+      // palette that is actually on screen.
+      registerColorQueryHandlers(term, () => themeRef.current, (data) => sendRef.current({ type: 'input', data }));
+      enableWebglRenderer(term, (addon) => {
+        // The import is async, so the cell may already have unmounted by the
+        // time it resolves — in which case dispose it immediately rather than
+        // leaving a live WebGL context attached to a dead terminal.
+        if (disposed) { try { addon.dispose(); } catch { /* already gone */ } return; }
+        webglAddon = addon;
+      });
 
       renderDispose = term.onRender(() => {
         renderDispose?.dispose();
@@ -489,6 +625,14 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       disposed = true;
       openObserver?.disconnect();
       renderDispose?.dispose();
+      // Dispose the WebGL addon BEFORE the terminal. xterm's AddonManager
+      // disposes addons as part of term.dispose(), by which point the
+      // RenderService is gone and WebglAddon.dispose() throws
+      // "Cannot read properties of undefined (reading 'onRequestRedraw')",
+      // which React then surfaces as an unmount error. Disposing it here
+      // unregisters it from the AddonManager, so term.dispose() skips it.
+      try { webglAddon?.dispose(); } catch { /* already gone */ }
+      webglAddon = null;
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
@@ -561,7 +705,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     }
     outputBufRef.current = '';
     try {
-      t.write(batch, () => {
+      t.write(theme === 'light' ? makeLightTruecolorReadable(batch) : batch, () => {
         if (isRestoringRef.current) {
           isRestoringRef.current = false;
           // Wait a frame after write completes so xterm's viewport has
@@ -667,7 +811,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       if (flushRafRef.current) { cancelAnimationFrame(flushRafRef.current); flushRafRef.current = 0; }
       outputBufRef.current = '';
     };
-  }, [sessionId]);
+  }, [sessionId, theme]);
 
   // Resize handling
   useEffect(() => {
@@ -1132,7 +1276,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             animation: 'zen-enter 0.25s ease-out',
           } : {}),
           display: 'flex', flexDirection: 'column',
-          background: isZen ? undefined : '#0c0c0c',
+          background: isZen ? undefined : 'var(--background)',
           overflow: 'hidden',
           outline: (fileDragOver || isPaneDragOver)
             ? '2px solid var(--primary)'
@@ -1173,7 +1317,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         position: 'relative',
         flex: 1, minHeight: 0,
         display: 'flex', flexDirection: 'column',
-        background: '#0a0a0a',
+        background: 'var(--card)',
         borderRadius: isZen ? 4 : 0,
         overflow: 'hidden',
       }}>
@@ -1224,7 +1368,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(13,17,23,0.85)',
+          // Scrim over the terminal while dragging. color-mix keeps it a
+          // translucent veil of the current surface instead of a fixed near-
+          // black, which washed out to an opaque dark block in light mode.
+          background: 'color-mix(in srgb, var(--card) 85%, transparent)',
           pointerEvents: 'none',
         }}>
           <div style={{
@@ -1264,9 +1411,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             padding: '6px 14px',
             borderRadius: 20,
             border: '1px solid var(--border)',
-            background: 'rgba(22, 27, 34, 0.92)',
+            // Token, not a hardcoded dark: this was rgba(22,27,34,.92), which
+            // in light mode put --foreground's dark text on a near-black pill.
+            background: 'var(--popover)',
             backdropFilter: 'blur(8px)',
-            color: 'var(--foreground)',
+            color: 'var(--popover-foreground)',
             fontSize: 11,
             cursor: 'pointer',
             boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
@@ -1288,9 +1437,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
           <div
             onMouseDown={startSplitDrag}
             className="terminal-resize-handle terminal-resize-handle-horizontal"
-            style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: '#161b22' }}
+            style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
           />
-          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
             <FilesPane
               sessionId={sessionId}
               openFileRef={openFileRef}
@@ -1305,13 +1454,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       {/* Unified Git view — Working tree / Files / Git log, sharing one sub-
           switcher. Scoped to this pane's session; mounted on demand. */}
       {view !== 'terminal' && view !== 'split' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0a0a0a' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--card)' }}>
           {/* Sub-switcher — the grouped Working / Files / Git Log tabs, full width. */}
           <div
-            style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid #222222', background: '#0d1117', flexShrink: 0 }}
+            style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid var(--border)', background: 'var(--secondary)', flexShrink: 0 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', width: '100%', border: '1px solid #222222', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', width: '100%', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
               {([
                 { id: 'working', icon: <Diff size={11} />,       label: 'Working tree' },
                 { id: 'files',   icon: <FolderOpen size={11} />, label: 'Files' },
@@ -1323,9 +1472,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                     flex: 1, fontSize: 11, padding: '4px 9px',
-                    background: view === id ? '#1f6feb' : 'none',
-                    color: view === id ? '#fff' : '#737373',
-                    border: 'none', borderRight: id !== 'log' ? '1px solid #222222' : 'none',
+                    background: view === id ? 'var(--primary)' : 'none',
+                    color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+                    border: 'none', borderRight: id !== 'log' ? '1px solid var(--border)' : 'none',
                     cursor: 'pointer',
                   }}
                 >

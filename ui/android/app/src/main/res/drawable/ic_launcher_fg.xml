@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon foreground: the ViperIcon glyph from
+  ui/src/components/ViperIcon.tsx (jaw as a `>` prompt, fang as the cursor dot).
+
+  The glyph is authored in a 24x24 box; the group below maps it into the
+  centre of the 108x108 adaptive canvas. Its drawn extent is x 2.75..19.8,
+  y 4.75..19.25 (centre ~11.3,12), so at scale 2.7 it spans ~46x39 units and
+  stays inside the 66-unit safe zone that launchers may mask down to.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:translateX="23.5"
+        android:translateY="21.6"
+        android:scaleX="2.7"
+        android:scaleY="2.7">
+
+        <path
+            android:pathData="M4,6 L14,12 L4,18"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+
+        <path
+            android:pathData="M18,16 m-1.8,0 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0 z"
+            android:fillColor="#FFFFFF" />
+    </group>
+</vector>

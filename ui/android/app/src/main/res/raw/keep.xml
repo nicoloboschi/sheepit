@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The release build runs shrinkResources, which drops resources nothing
+  references statically. ic_stat_vipershell is only ever named as a string
+  ("smallIcon" in capacitor.config.ts / native.ts) and resolved at runtime via
+  Resources.getIdentifier, so the shrinker cannot see the reference and would
+  strip it — leaving notifications with a blank or default icon in release
+  builds only. Keep it explicitly.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_vipershell" />

@@ -211,6 +211,16 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
           case 'create_session': {
             let path = msg.path as string | undefined;
             const initCommand = msg.init_command as string | undefined;
+            const isHeadless = msg.headless === true;
+            // A headless session is a singleton: callers can safely ask for one
+            // repeatedly without accidentally accumulating hidden PTYs.
+            if (isHeadless) {
+              const existing = (await bridge.listSessions()).find(s => s.isHeadless);
+              if (existing) {
+                send({ type: 'session_created', session_id: existing.id, path: existing.path, headless: true, existing: true });
+                break;
+              }
+            }
             if (path === '__vibe__') {
               const { mkdirSync } = await import('fs');
               const { join } = await import('path');
@@ -225,8 +235,8 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             }
             const cols = msg.cols as number | undefined;
             const rows = msg.rows as number | undefined;
-            const sessionId = await bridge.createSession(path, cols, rows);
-            send({ type: 'session_created', session_id: sessionId, path: path || null });
+            const sessionId = await bridge.createSession(path, cols, rows, isHeadless);
+            send({ type: 'session_created', session_id: sessionId, path: path || null, headless: isHeadless });
             if (initCommand) {
               await bridge.sendKeys(sessionId, initCommand);
             }

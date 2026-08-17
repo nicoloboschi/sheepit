@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification small icon: the ViperIcon glyph from
+  ui/src/components/ViperIcon.tsx.
+
+  Android draws notification small icons as a silhouette — only the alpha
+  channel survives, and the system tints it (iconColor in capacitor.config.ts).
+  Everything here is therefore opaque white; the shapes, not the colours, are
+  what matter. The glyph is inset slightly from the 24dp edge so it does not
+  collide with the status bar's own padding.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <group
+        android:translateX="2.9"
+        android:translateY="2.6"
+        android:scaleX="0.79"
+        android:scaleY="0.79">
+
+        <path
+            android:pathData="M4,6 L14,12 L4,18"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+
+        <path
+            android:pathData="M18,16 m-1.8,0 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0 z"
+            android:fillColor="#FFFFFF" />
+    </group>
+</vector>

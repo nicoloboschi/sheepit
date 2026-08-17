@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ConfigDialog from './ConfigDialog';
+import { apiUrl } from '../serverUrl';
 
 interface LogEntry {
   ts: string;
@@ -16,7 +17,12 @@ export function LogsContent() {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const es = new EventSource('/api/logs/stream');
+    // apiUrl() rather than a bare path: when the UI is detached from the
+    // server that served it (installed PWA, Android APK) a relative URL points
+    // at the app bundle, not the dataplane. Note that EventSource is one of
+    // the few requests CapacitorHttp does not proxy, so this stays subject to
+    // CORS and will stay empty against a server that sends no CORS headers.
+    const es = new EventSource(apiUrl('/api/logs/stream'));
     es.onmessage = (e) => {
       const entry: LogEntry = JSON.parse(e.data);
       setLogs(prev => {

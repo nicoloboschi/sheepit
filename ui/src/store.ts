@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { notify } from './utils';
+import { applyTheme, readTheme, type AppTheme } from './theme';
 
 // ── Core types ──────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ export interface Session {
   prNum?: number;
   prState?: string;
   prUrl?: string;
+  /** Background-only session; kept alive by the backend but not shown as a workspace. */
+  isHeadless?: boolean;
 }
 
 export interface ConfirmState {
@@ -144,6 +147,9 @@ export interface StoreState {
   zenSessionId: string | null;
   /** Global terminal font size — applies to every pane in every workspace. */
   fontSize: number;
+  /** Global UI and terminal palette. Shared profile persistence is handled by
+   * the storage compatibility layer installed before React mounts. */
+  theme: AppTheme;
   /** @deprecated per-workspace zoom, superseded by the global `fontSize`. Still
    *  written by drag/move bookkeeping but no longer read for terminal sizing. */
   workspaceZooms: Record<string, number>;
@@ -236,6 +242,7 @@ export interface StoreState {
   setFontSize: (size: number) => void;
   adjustFontSize: (delta: number) => void;
   resetFontSize: () => void;
+  setTheme: (theme: AppTheme) => void;
 }
 
 export const DEFAULT_FONT_SIZE = (): number => 12;
@@ -466,6 +473,7 @@ const useStore = create<StoreState>((set, get) => ({
   workspaceOrder: _initialWorkspaces.order,
   zenSessionId: null,
   fontSize: loadFontSize(),
+  theme: readTheme(),
   workspaceZooms: loadWorkspaceZooms(),
   wsStatus: 'connecting',
   sheetOpen: false,
@@ -495,8 +503,12 @@ const useStore = create<StoreState>((set, get) => ({
 
     const sessionMap = Object.fromEntries(sessions.map(s => [s.id, s]));
     const liveSessionIds = new Set(sessions.map(s => s.id));
+    const workspaceSessions = sessions.filter(s => !s.isHeadless);
 
-    const sorted = [...sessions].sort((a, b) =>
+    const sorted = [...workspaceSessions].sort((a, b) =>
+      (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0)
+    );
+    const allSorted = [...sessions].sort((a, b) =>
       (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0)
     );
 
@@ -579,8 +591,8 @@ const useStore = create<StoreState>((set, get) => ({
       nextWorkspaceOrder.length === prev.workspaceOrder.length &&
       nextWorkspaceOrder.every((id, i) => prev.workspaceOrder[i] === id && prev.workspaces[id] === nextWorkspaces[id]);
     const sessionsUnchanged =
-      sorted.length === prev.sessions.length &&
-      sorted.every((s, i) => {
+      allSorted.length === prev.sessions.length &&
+      allSorted.every((s, i) => {
         const p = prev.sessions[i];
         // `busy` is deliberately absent: it rides the preview message into
         // `sessionBusy` and is never read off these objects.
@@ -591,13 +603,13 @@ const useStore = create<StoreState>((set, get) => ({
           && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
           && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
           && p.prNum === s.prNum && p.prState === s.prState
-          && p.last_activity === s.last_activity;
+          && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless;
       });
     if (workspacesUnchanged && sessionsUnchanged && nextCurrentId === prev.currentSessionId) return;
 
     if (!workspacesUnchanged) saveWorkspaces(nextWorkspaces, nextWorkspaceOrder);
     set({
-      sessions: sorted,
+      sessions: allSorted,
       sessionMap,
       sessionOrder,
       currentSessionId: nextCurrentId,
@@ -1184,6 +1196,12 @@ const useStore = create<StoreState>((set, get) => ({
   resetFontSize() {
     saveFontSize(DEFAULT_FONT_SIZE());
     set({ fontSize: DEFAULT_FONT_SIZE() });
+  },
+
+  setTheme(theme: AppTheme) {
+    try { localStorage.setItem('vipershell:theme', theme); } catch { /* quota */ }
+    applyTheme(theme);
+    set({ theme });
   },
 }));
 

@@ -64,6 +64,8 @@ export interface Session {
   prState?: string;
   /** PR URL */
   prUrl?: string;
+  /** A background-only session. It stays running but is not presented as a workspace. */
+  isHeadless?: boolean;
 }
 
 interface ManagedSession {

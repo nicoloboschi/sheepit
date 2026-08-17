@@ -2,14 +2,24 @@
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-visual" />
+    <!-- viewport-fit=cover lets the page extend under the system bars and, in
+         exchange, makes env(safe-area-inset-*) report their real sizes — which
+         is how style.css derives --safe-top / --safe-bottom. Required for the
+         Android app, where the window always draws edge-to-edge.
+         interactive-widget=resizes-visual keeps the keyboard as a *visual*
+         viewport change, which App.tsx already tracks. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-visual, viewport-fit=cover" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐍</text></svg>" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <meta name="theme-color" content="#0c0c0c" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Self-hosted (see ui/public/fonts, regenerate with scripts/selfhost-fonts.py).
+         Loading these from fonts.googleapis.com would block first paint on a
+         network round-trip, and the Android APK often talks to a dataplane on a
+         LAN with no internet route, where that request just times out. -->
+    <link rel="preload" href="/fonts/jetbrains-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/space-grotesk-600-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/fonts/fonts.css" />
     <title>vipershell 🐍</title>
     <style>:root { --vvh: 100dvh; }</style>
   </head>

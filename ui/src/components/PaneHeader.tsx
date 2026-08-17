@@ -46,6 +46,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
   const session     = useStore(s => s.sessionMap[sessionId]);
   const showConfirm = useStore(s => s.showConfirm);
   const isZen       = useStore(s => s.zenSessionId === sessionId);
+  const theme       = useStore(s => s.theme);
   const toggleZen   = useStore(s => s.toggleZen);
   const [editing, setEditing]     = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -80,7 +81,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
 
   if (!session) {
     // Loading placeholder — matches real header height so layout doesn't jump.
-    return <div style={{ height: 30, flexShrink: 0, borderBottom: '1px solid var(--border)', background: '#0a0a0a' }} />;
+    return <div style={{ height: 30, flexShrink: 0, borderBottom: '1px solid var(--border)', background: 'var(--card)' }} />;
   }
 
   return (
@@ -93,8 +94,10 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           ? '1px solid rgba(77, 171, 247, 0.65)'
           : '1px solid rgba(148, 163, 184, 0.16)',
         background: isActive
-          ? 'linear-gradient(115deg, rgba(31, 111, 235, 0.22), rgba(14, 116, 144, 0.12) 62%, rgba(15, 23, 42, 0.96)), #0d1117'
-          : 'linear-gradient(115deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.92))',
+          ? theme === 'light'
+            ? 'linear-gradient(115deg, rgba(0, 116, 217, 0.16), rgba(0, 146, 150, 0.08) 62%, var(--card))'
+            : 'linear-gradient(115deg, rgba(31, 111, 235, 0.22), rgba(14, 116, 144, 0.12) 62%, rgba(15, 23, 42, 0.96)), #0d1117'
+          : theme === 'light' ? 'var(--secondary)' : 'linear-gradient(115deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.92))',
         borderRadius: '2px 2px 0 0',
         boxShadow: isActive ? 'inset 0 1px rgba(191, 219, 254, 0.10)' : 'inset 0 1px rgba(255, 255, 255, 0.035)',
         transition: 'background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease',

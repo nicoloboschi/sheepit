@@ -124,6 +124,17 @@ describe('useStore', () => {
       expect(state.sessionMap['$1']!.name).toBe('dev')
     })
 
+    it('keeps a headless session live in state without creating a workspace for it', () => {
+      const headless = { ...makeSession('$headless', 'background'), isHeadless: true }
+      useStore.getState().renderSessions([makeSession('$0', 'shell'), headless])
+
+      const state = useStore.getState()
+      expect(state.sessions).toHaveLength(2)
+      expect(state.sessionMap.$headless?.isHeadless).toBe(true)
+      expect(state.workspaceOrder).toHaveLength(1)
+      expect(state.workspaces[state.workspaceOrder[0]!]!.cells).toEqual(['$0'])
+    })
+
     it('builds sessionOrder sorted by id', () => {
       const sessions = [makeSession('$2', 'c'), makeSession('$0', 'a'), makeSession('$1', 'b')]
       useStore.getState().renderSessions(sessions)

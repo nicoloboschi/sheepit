@@ -100,6 +100,7 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
         sessionId={sessionId}
         layout={gridLayout}
         onLayoutChange={(l) => changeLayoutRef.current?.(l)}
+        onCreateSession={(headless) => send({ type: 'create_session', path: null, ...(headless ? { headless: true } : {}) })}
       />
       {/* Each workspace renders its own grid of panes. The terminal/git/files
           switch lives inside each pane (see PaneHeader / TerminalCell). */}

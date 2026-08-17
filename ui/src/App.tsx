@@ -19,6 +19,7 @@ import { requestNotificationPermission } from './utils';
 import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
+import TerminalCell from './components/TerminalCell';
 import KnowledgeDialog from './components/KnowledgeDialog';
 import MobileKeybar from './components/MobileKeybar';
 import ConfirmDialog from './components/ConfirmDialog';
@@ -164,7 +165,8 @@ export default function App() {
       case 'sessions': {
         store.renderSessions(msg.sessions as any); // eslint-disable-line @typescript-eslint/no-explicit-any
         const sessionList = msg.sessions as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
-        if (sessionList.length === 0) break;
+        const visibleSessionList = sessionList.filter(session => !session.isHeadless);
+        if (visibleSessionList.length === 0) break;
 
         // The URL hash wins over the persisted last workspace, but only on the
         // first `sessions` message — after that the user's own navigation owns
@@ -186,7 +188,7 @@ export default function App() {
           // Priority: localStorage > first session
           const lastId = localStorage.getItem('vipershell-last-session');
           const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
-          const targetId = lastTarget ?? sessionList[0]?.id;
+          const targetId = lastTarget ?? visibleSessionList[0]?.id;
           if (targetId) connectSession(targetId);
         }
         break;
@@ -194,6 +196,14 @@ export default function App() {
       case 'session_created': {
         const newId = msg.session_id as string;
         const path = msg.path as string | null;
+        // Headless sessions are intentionally not given a workspace or selected.
+        // They remain backend-live and can only exist once (enforced server-side).
+        if (msg.headless === true) {
+          // It has no workspace row by design, so its only presentation is Zen.
+          // The following sessions refresh fills sessionMap for TerminalCell.
+          if (useStore.getState().zenSessionId !== newId) store.toggleZen(newId);
+          break;
+        }
         // Optimistically add session to the store so it appears in sidebar immediately
         if (!store.sessionMap[newId]) {
           const optimistic = {
@@ -263,6 +273,19 @@ export default function App() {
     let lastH = 0;
     const update = () => {
       const h = vv.height + vv.offsetTop;
+
+      // An open keyboard sits on top of the navigation bar, so once the visual
+      // viewport has already shrunk by the keyboard height, subtracting the
+      // bottom safe-area inset as well would leave a dead gap the height of
+      // the nav bar. Collapse it while the keyboard is up. Computed before the
+      // early-returns below so it stays correct even when they skip the --vvh
+      // write.
+      const keyboardOpen = window.innerHeight - vv.height > 120;
+      document.documentElement.style.setProperty(
+        '--safe-bottom-eff',
+        keyboardOpen ? '0px' : 'var(--safe-bottom)',
+      );
+
       if (document.querySelector('[data-radix-popper-content-wrapper],[data-radix-dialog-content]')) return;
       if (Math.abs(h - lastH) < 10 && lastH !== 0) return;
       lastH = h;
@@ -541,8 +564,16 @@ export default function App() {
       <div
         className="flex overflow-hidden"
         style={{
-          height: 'var(--vvh, 100dvh)', transition: 'height 0.25s ease',
-          background: '#0c0c0c', color: '#d4d4d8',
+          // --safe-* come from env(safe-area-inset-*) (see style.css): 0 in a
+          // desktop browser, the real system-bar sizes in the Android app and
+          // on notched phones. Without them the workspace header hides under
+          // the status bar and the mobile keybar under the gesture pill.
+          // --safe-bottom-eff collapses to 0 while the keyboard is open, since
+          // --vvh has already shrunk past the navigation bar by then.
+          height: 'calc(var(--vvh, 100dvh) - var(--safe-top) - var(--safe-bottom-eff, var(--safe-bottom)))',
+          marginTop: 'var(--safe-top)',
+          transition: 'height 0.25s ease',
+          background: 'var(--background)', color: 'var(--foreground)',
           fontFamily: "'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", fontSize: 13,
         }}
       >
@@ -555,6 +586,7 @@ export default function App() {
             sessionId={currentSessionId}
             send={send}
           />
+          <HeadlessZenTerminal send={send} />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
         </div>
@@ -572,6 +604,28 @@ export default function App() {
       </DragOverlay>
     </DndContext>
     </DndEnabledContext.Provider>
+  );
+}
+
+/** Headless sessions deliberately have no workspace, but Zen gives their
+ * terminal a focused, full-screen surface immediately after creation. */
+function HeadlessZenTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
+  const sessionId = useStore(s => s.zenSessionId);
+  const isHeadless = useStore(s => !!(s.zenSessionId && s.sessionMap[s.zenSessionId]?.isHeadless));
+
+  if (!sessionId || !isHeadless) return null;
+  return (
+    <TerminalCell
+      sessionId={sessionId}
+      gridId={`__headless__:${sessionId}`}
+      paneIndex={0}
+      isActive
+      onActivate={() => {}}
+      onClose={() => {
+        useStore.getState().exitZen();
+        send({ type: 'close_session', session_id: sessionId });
+      }}
+    />
   );
 }
 
@@ -800,6 +854,20 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => useStore.getState().setKnowledgeOpen(true)}>
                 <BookOpen size={14} /> Knowledge
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>
+                <SquarePlus size={14} /> New session
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={sessions.some(s => s.isHeadless)}
+                onClick={() => send({ type: 'create_session', path: null, headless: true })}
+              >
+                <TerminalSquare size={14} />
+                {sessions.some(s => s.isHeadless) ? 'Headless session running' : 'New headless session'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowCommands(true)}>
+                <Zap size={14} /> Saved commands
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { rgPath } from '@vscode/ripgrep';
-import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync } from 'fs';
+import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
 import si from 'systeminformation';
@@ -27,8 +27,34 @@ function loadPreferences(): Record<string, string> {
   } catch { return {}; }
 }
 
+/** Rolling backups of preferences.json, newest first. */
+const PREFERENCES_BACKUPS = 5;
+
+/**
+ * Rotate a copy of the current preferences aside before overwriting.
+ *
+ * The profile is shared by every client on this machine, and a single
+ * misbehaving one can rewrite structural keys (workspace layouts, tab
+ * assignments) in one PATCH. Because the save below is an atomic rename there
+ * is otherwise no previous version left on disk to recover from. Keeping a few
+ * generations makes that mistake undoable.
+ */
+function rotatePreferenceBackups(): void {
+  try {
+    if (!existsSync(PREFERENCES_PATH)) return;
+    for (let i = PREFERENCES_BACKUPS - 1; i >= 1; i--) {
+      const from = `${PREFERENCES_PATH}.${i}.bak`;
+      if (existsSync(from)) renameSync(from, `${PREFERENCES_PATH}.${i + 1}.bak`);
+    }
+    copyFileSync(PREFERENCES_PATH, `${PREFERENCES_PATH}.1.bak`);
+  } catch {
+    // A failed backup must never block the write itself.
+  }
+}
+
 function savePreferences(values: Record<string, string>): void {
   mkdirSync(nodePath.dirname(PREFERENCES_PATH), { recursive: true });
+  rotatePreferenceBackups();
   const tempPath = `${PREFERENCES_PATH}.tmp`;
   writeFileSync(tempPath, JSON.stringify(values, null, 2) + '\n', 'utf8');
   renameSync(tempPath, PREFERENCES_PATH);

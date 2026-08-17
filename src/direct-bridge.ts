@@ -512,6 +512,8 @@ interface DirectSession {
   rows: number;
   createdAt: number;
   sessionType?: string | null;
+  /** Background-only sessions are deliberately omitted from the workspace UI. */
+  isHeadless?: boolean;
   /** Active sticky DEC private modes, tracked from output (see above). */
   modes?: Set<number>;
   /** Whether the PTY currently has a child process — i.e. something is running
@@ -533,6 +535,7 @@ interface SavedDirectSession {
   name: string;
   path: string;
   sessionType?: string | null;
+  isHeadless?: boolean;
   /** Sticky DEC private modes active at the last write. Persisted because the
    *  ring can't be trusted to still hold an app's one-time setup sequences. */
   modes?: number[];
@@ -924,7 +927,7 @@ export class DirectBridge {
 
   // ── Session lifecycle ────────────────────────────────────────────────────
 
-  async createSession(path?: string, initialCols?: number, initialRows?: number): Promise<string> {
+  async createSession(path?: string, initialCols?: number, initialRows?: number, isHeadless = false): Promise<string> {
     const sessionPath = path ?? os.homedir();
     const baseName = sessionPath.split('/').filter(Boolean).pop() ?? 'shell';
 
@@ -949,6 +952,7 @@ export class DirectBridge {
     const sess: DirectSession = {
       id, name, path: sessionPath, pid: resp.pid ?? 0, ring,
       cols, rows, createdAt: Date.now(),
+      isHeadless,
     };
     this.sessions.set(id, sess);
     await this.daemon.request({ type: 'subscribe', id });
@@ -1210,7 +1214,8 @@ export class DirectBridge {
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
-        cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0, ...git,
+        cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
+        isHeadless: sess.isHeadless, ...git,
       };
     });
   }
@@ -1340,6 +1345,7 @@ export class DirectBridge {
     for (const [id, sess] of this.sessions) {
       saved[id] = {
         name: sess.name, path: sess.path, sessionType: sess.sessionType,
+        isHeadless: sess.isHeadless,
         modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
       };
     }
@@ -1380,6 +1386,7 @@ export class DirectBridge {
         const sess: DirectSession = {
           id, name: info.name, path: ds.cwd || info.path, pid: ds.pid,
           ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
+          isHeadless: info.isHeadless,
         };
         // Seed sticky modes from the LAST PERSISTED SET, then replay the ring
         // over it. The persisted set is what survives a long-running app whose
@@ -1402,6 +1409,7 @@ export class DirectBridge {
           const sess: DirectSession = {
             id, name: info.name, path: info.path, pid: resp.pid ?? 0,
             ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
+            isHeadless: info.isHeadless,
           };
           this.sessions.set(id, sess);
           await this.daemon.request({ type: 'subscribe', id });

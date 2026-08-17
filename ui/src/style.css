@@ -7,6 +7,34 @@
   inherits: true;
 }
 
+/*
+ * System-bar / display-cutout insets, straight from the platform.
+ *
+ * These come from env(safe-area-inset-*), which reports real values once the
+ * viewport is declared viewport-fit=cover (see index.html). They are 0 in a
+ * normal desktop browser and non-zero in the Android app and on notched
+ * phones, with no native code involved.
+ *
+ * Deliberately NOT sourced from the native side: the keyboard is already
+ * handled by App.tsx's visualViewport listener, and feeding the IME inset in
+ * here as well subtracted the keyboard height twice.
+ */
+:root {
+  /* Overwritten by MainActivity in the Android app; stay 0 in a browser. */
+  --safe-top-native: 0px;
+  --safe-bottom-native: 0px;
+  --safe-left-native: 0px;
+  --safe-right-native: 0px;
+
+  /* max() because neither source is complete on its own: env() misses the
+     Android gesture navigation bar (reports 0), and the native values only
+     exist inside the app. Whichever is larger is the real inset. */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-top-native));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-bottom-native));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-left-native));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-right-native));
+}
+
 @layer base {
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -14,7 +42,7 @@
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
-    background: #0c0c0c;
+    background: var(--background);
   }
 
   #root { height: 100%; overflow: hidden; }
@@ -106,6 +134,40 @@
   --warning:                #FACC15;
   --session-active-bg:      #0b1a24;
 }
+
+:root[data-theme='light'] {
+  --background:             #f7f8fa;
+  --foreground:             #1f2937;
+  --card:                   #ffffff;
+  --card-foreground:        #1f2937;
+  --popover:                #ffffff;
+  --popover-foreground:     #1f2937;
+  --secondary:              #f1f3f5;
+  --secondary-foreground:   #1f2937;
+  --muted:                  #eef0f3;
+  --muted-foreground:       #64748b;
+  --accent:                 #e8f1fa;
+  --accent-foreground:      #172033;
+  --destructive:            #c92a2a;
+  --destructive-foreground: #ffffff;
+  --border:                 #d7dce3;
+  --input:                  #cbd2da;
+  --ring:                   #0074d9;
+  --success:                #16803d;
+  --warning:                #a16207;
+  --session-active-bg:      #e6f3ff;
+  --dark-surface-gradient:  linear-gradient(135deg, #ffffff 0%, #f2f5f8 100%);
+}
+
+:root[data-theme='light'] .sidebar-shell,
+:root[data-theme='light'] .sidebar-shell-collapsed {
+  background: linear-gradient(180deg, #f8fbff 0%, var(--card) 30%, #f4f7fa 100%);
+  border-right-color: rgba(15, 23, 42, 0.12);
+  box-shadow: inset -1px 0 rgba(0, 116, 217, 0.12), 10px 0 28px rgba(15, 23, 42, 0.08);
+}
+:root[data-theme='light'] .terminal-pane { background: var(--card); }
+:root[data-theme='light'] .pane-header { color: var(--foreground); }
+:root[data-theme='light'] .md-preview { color: var(--foreground); }
 
 @theme inline {
   --color-background:             var(--background);
@@ -790,6 +852,18 @@
   color: #dbeafe; background: #111827; border: 1px solid rgba(125, 211, 252, 0.35);
   box-shadow: 0 8px 24px rgba(0,0,0,0.38); font: 10px "JetBrains Mono", monospace;
   white-space: normal; overflow-wrap: anywhere;
+}
+
+:root[data-theme='light'] .pane-footer-bar {
+  border-top-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  background: linear-gradient(180deg, #f8fbff, #edf3f8);
+  box-shadow: 0 -5px 12px rgba(15, 23, 42, 0.08), inset 0 1px rgba(255,255,255,0.85);
+}
+:root[data-theme='light'] .pane-footer-path { color: #475569; }
+:root[data-theme='light'] .pane-footer-path:hover { color: var(--primary); }
+:root[data-theme='light'] .pane-footer-path-popover {
+  color: var(--foreground); background: var(--popover); border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(15,23,42,0.16);
 }
 
 

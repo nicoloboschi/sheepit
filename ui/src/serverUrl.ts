@@ -6,6 +6,8 @@
  * PWA/TWA, the user configures the server URL on first launch.
  */
 
+import { isStandalone } from './platform';
+
 const LS_KEY = 'vipershell:server-url';
 
 let _serverUrl = '';
@@ -15,9 +17,7 @@ export function getServerUrl(): string {
 }
 
 export function initServerUrl(): void {
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-    || (navigator as unknown as { standalone?: boolean }).standalone === true;
-  if (isStandalone) {
+  if (isStandalone()) {
     _serverUrl = localStorage.getItem(LS_KEY) ?? '';
   }
 }
@@ -33,9 +33,7 @@ export function clearServerUrl(): void {
 }
 
 export function needsConnect(): boolean {
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-    || (navigator as unknown as { standalone?: boolean }).standalone === true;
-  if (!isStandalone) return false;
+  if (!isStandalone()) return false;
   return !localStorage.getItem(LS_KEY);
 }
 

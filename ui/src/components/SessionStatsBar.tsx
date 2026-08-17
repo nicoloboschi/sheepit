@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen } from 'lucide-react';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
 import useStore from '../store';
 import type { Layout } from './TerminalGrid';
+import SettingsDialog from './SettingsDialog';
 
 // Workspace-level toolbar: workspace name (click to rename) + actions (Knowledge)
 // on the left; layout picker + zoom on the right. The terminal/git/files switch
@@ -10,9 +11,10 @@ interface SessionStatsBarProps {
   sessionId: string | null;
   layout?: Layout;
   onLayoutChange?: (layout: Layout) => void;
+  onCreateSession?: (headless: boolean) => void;
 }
 
-export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: SessionStatsBarProps) {
+export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onCreateSession }: SessionStatsBarProps) {
   // Terminal font size is a single global value shared by every pane.
   const fontSize          = useStore(s => s.fontSize);
   const adjustFontSize    = useStore(s => s.adjustFontSize);
@@ -20,6 +22,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: S
   const renameWorkspace   = useStore(s => s.renameWorkspace);
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
+  const hasHeadlessSession = useStore(s => s.sessions.some(session => session.isHeadless));
   // Display name for the active workspace: its title, else its root pane's name.
   const workspaceName = useStore(s => {
     const ws = sessionId ? s.workspaces[sessionId] : undefined;
@@ -29,6 +32,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: S
   });
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (!sessionId) return null;
 
@@ -225,6 +229,29 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: S
       <BookOpen size={13} />Knowledge
     </button>
   );
+  const newSessionButtons = onCreateSession && <>
+    <button
+      onClick={() => onCreateSession(false)}
+      title="New session"
+      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
+    >
+      <SquarePlus size={13} />New
+    </button>
+    <button
+      onClick={() => onCreateSession(true)}
+      title={hasHeadlessSession ? 'Open headless session' : 'New headless session'}
+      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
+    >
+      <TerminalSquare size={13} />{hasHeadlessSession ? 'Open headless' : 'Headless'}
+    </button>
+    <button
+      onClick={() => setSettingsOpen(true)}
+      title="Settings"
+      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
+    >
+      <Settings size={13} />Settings
+    </button>
+  </>;
 
   // Desktop only (hidden on mobile, where splits/zoom aren't shown).
   // Left: workspace name + actions (Notes). Right: layout picker + zoom.
@@ -236,9 +263,11 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange }: S
       {nameControl}
       {nameControl && <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />}
       {knowledgeButton}
+      {newSessionButtons}
       <div style={{ flex: 1 }} />
       {layoutButtons && <div>{layoutButtons}</div>}
       {zoomButtons && <div>{zoomButtons}</div>}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

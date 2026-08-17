@@ -484,7 +484,7 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
   const totalDel = files?.reduce((s, f) => s + f.deletions, 0) ?? 0;
 
   return (
-    <div ref={containerRef} tabIndex={0} onKeyDown={handleKeyDown} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: '#0c0c0c', outline: 'none' }}>
+    <div ref={containerRef} tabIndex={0} onKeyDown={handleKeyDown} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--background)', color: 'var(--foreground)', outline: 'none' }}>
 
       {/* Body */}
       {mode === 'log' && sessionId ? (
@@ -492,7 +492,7 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
       ) : (
       <>
         {/* Toolbar — working-tree stats */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid #222222', background: '#111111', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0 }}>
           <div style={{ flex: 1 }} />
           {files !== null && !loading && (
             <span style={{ fontSize: 11, color: '#525252' }}>
