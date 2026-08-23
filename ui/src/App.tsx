@@ -751,11 +751,8 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               {workspace?.title ? workspace.title
                 : session ? session.name : 'No session'}
             </span>
-            {workspace && workspace.cells.length > 1 && (
-              <span style={{ fontSize: 9, color: 'var(--muted-foreground)', fontWeight: 600, flexShrink: 0, background: 'rgba(255,255,255,0.08)', borderRadius: 3, padding: '1px 4px' }}>
-                {workspace.cells.length} panes
-              </span>
-            )}
+            {/* No pane count here: on a phone the panes are right there on
+                screen, so counting them is a label for something you can see. */}
             {session?.path && (
               <span className="session-path shrink-0" style={{ fontSize: 10, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {tildefy(session.path, username)}
