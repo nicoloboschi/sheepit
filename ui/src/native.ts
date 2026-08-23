@@ -58,8 +58,8 @@ async function initNotifications(): Promise<void> {
           id,
           title,
           body,
-          smallIcon: 'ic_stat_vipershell',
-          iconColor: '#0074d9',
+          smallIcon: 'ic_stat_sheepit',
+          iconColor: '#9cbc7f',
           // No `schedule` field: deliver immediately.
         }],
       }).catch(() => { /* notification failures must never break the terminal */ });

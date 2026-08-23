@@ -695,7 +695,7 @@ const useStore = create<StoreState>((set, get) => ({
       const wasBusy = sessionBusy[sessionId] ?? false;
       if (wasBusy && !isVisible) {
         const name = sessionMap[sessionId]?.name ?? 'terminal';
-        notify('vipershell \u{1F40D}', `${name} finished`);
+        notify('sheepit \u{1F411}', `${name} finished`);
         set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
       }
       set(s => ({ sessionBusy: { ...s.sessionBusy, [sessionId]: false } }));
@@ -753,7 +753,7 @@ const useStore = create<StoreState>((set, get) => ({
 
     if (isVisible) return;
     const name = sessionMap[sessionId]?.name ?? 'terminal';
-    notify('vipershell \u{1F40D}', message.trim() ? `${name}: ${message.slice(0, 120)}` : `${name} finished`);
+    notify('sheepit \u{1F411}', message.trim() ? `${name}: ${message.slice(0, 120)}` : `${name} finished`);
     set(s => ({
       sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true },
       sessionNeedsAttention: { ...s.sessionNeedsAttention, [sessionId]: true },

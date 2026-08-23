@@ -73,8 +73,8 @@ function StatBar({ add, del }: StatBarProps) {
   const redN = BLOCKS - greenN;
   return (
     <span style={{ display: 'inline-flex', gap: 1, flexShrink: 0 }}>
-      {Array.from({ length: greenN }).map((_, i) => <span key={`g${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#4ADE80', display: 'inline-block' }} />)}
-      {Array.from({ length: redN }).map((_, i) => <span key={`r${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#F87171', display: 'inline-block' }} />)}
+      {Array.from({ length: greenN }).map((_, i) => <span key={`g${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#9CBC7F', display: 'inline-block' }} />)}
+      {Array.from({ length: redN }).map((_, i) => <span key={`r${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#E0907B', display: 'inline-block' }} />)}
     </span>
   );
 }
@@ -112,12 +112,12 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
           padding: '4px 10px', paddingLeft: 10 + depth * 12, cursor: 'pointer', borderBottom: '1px solid var(--card)',
           display: 'flex', alignItems: 'center', gap: 6,
           background: isFocused ? 'var(--accent)' : 'transparent',
-          borderLeft: isFocused ? '2px solid #0074d9' : '2px solid transparent',
+          borderLeft: isFocused ? '2px solid #9cbc7f' : '2px solid transparent',
         }}
         onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'var(--card)'; }}
         onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'transparent'; }}
       >
-        {file.isNew ? <FilePlus size={11} color="#4ADE80" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#F87171" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
+        {file.isNew ? <FilePlus size={11} color="#9CBC7F" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#E0907B" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
         <span style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
           {name}
         </span>
@@ -127,7 +127,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
             title="Open in Files tab"
             onClick={(e) => { e.stopPropagation(); onOpenFile(path); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: 'var(--muted-foreground)', flexShrink: 0, display: 'flex', alignItems: 'center' }}
-            onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = '#93C5FD'; }}
+            onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = '#8EBFA2'; }}
             onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = 'var(--muted-foreground)'; }}
           >
             <FolderOpen size={11} />
@@ -202,8 +202,8 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--background)' }}>
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', fontSize: 11, color: 'var(--muted-foreground)', display: 'flex', gap: 6, alignItems: 'center', position: 'sticky', top: 0, zIndex: 1 }}>
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
-        <span style={{ color: '#4ADE80' }}>+{totalAdd}</span>
-        <span style={{ color: '#F87171' }}>-{totalDel}</span>
+        <span style={{ color: '#9CBC7F' }}>+{totalAdd}</span>
+        <span style={{ color: '#E0907B' }}>-{totalDel}</span>
       </div>
       {renderNode(tree, '', '', -1)}
     </div>
@@ -249,11 +249,11 @@ function FullLog({ sessionId }: { sessionId: string }) {
           </div>
           {cs.map(c => (
             <div key={c.hash} style={{ padding: '8px 16px', borderBottom: '1px solid var(--card)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <GitCommitHorizontal size={13} color="#4ADE80" style={{ flexShrink: 0, marginTop: 2 }} />
+              <GitCommitHorizontal size={13} color="#9CBC7F" style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: 'var(--foreground)', marginBottom: 2 }}>{c.subject}</div>
                 <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'var(--muted-foreground)' }}>
-                  <span style={{ fontFamily: '"JetBrains Mono",monospace', color: '#93C5FD' }}>{c.short}</span>
+                  <span style={{ fontFamily: '"JetBrains Mono",monospace', color: '#8EBFA2' }}>{c.short}</span>
                   <span>{c.author}</span>
                   <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{c.relDate}</span>
                 </div>
@@ -497,8 +497,8 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
           {files !== null && !loading && (
             <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
               {files.length} file{files.length !== 1 ? 's' : ''}
-              {totalAdd > 0 && <span style={{ color: '#4ADE80', marginLeft: 6 }}>+{totalAdd}</span>}
-              {totalDel > 0 && <span style={{ color: '#F87171', marginLeft: 4 }}>-{totalDel}</span>}
+              {totalAdd > 0 && <span style={{ color: '#9CBC7F', marginLeft: 6 }}>+{totalAdd}</span>}
+              {totalDel > 0 && <span style={{ color: '#E0907B', marginLeft: 4 }}>-{totalDel}</span>}
             </span>
           )}
           {loading && <RefreshCw size={11} color="var(--muted-foreground)" className="animate-spin" />}
@@ -521,9 +521,9 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
           {/* Diff content */}
           <div ref={diffRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
             {loading && <div style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>Loading…</div>}
-            {error   && <div style={{ color: '#F87171', fontSize: 13 }}>Error: {error}</div>}
+            {error   && <div style={{ color: '#E0907B', fontSize: 13 }}>Error: {error}</div>}
             {!loading && files !== null && files.length === 0 && (
-              <div style={{ color: '#4ADE80', fontSize: 13 }}>✓  No changes</div>
+              <div style={{ color: '#9CBC7F', fontSize: 13 }}>✓  No changes</div>
             )}
             {!loading && files?.map((file, i) => <FileBlock key={i} file={file} gitRoot={gitRoot} sessionId={sessionId} isFocused={i === focusedFileIdx} scrollRoot={diffRef} />)}
           </div>

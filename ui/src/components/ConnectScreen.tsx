@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Wifi, Loader2 } from 'lucide-react';
 import { getServerUrl } from '../serverUrl';
-import ViperIcon from './ViperIcon';
+import SheepIcon from './SheepIcon';
 
 interface ConnectScreenProps {
   onConnected: (serverUrl: string) => void;
@@ -27,7 +27,7 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (!data.version) throw new Error('Not a vipershell server');
+      if (!data.version) throw new Error('Not a sheepit server');
       onConnected(cleaned);
     } catch (e) {
       setError(`Can't connect: ${e instanceof Error ? e.message : String(e)}`);
@@ -52,9 +52,9 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
       }}
     >
       <div style={{ textAlign: 'center', marginBottom: 8 }}>
-        <div style={{ marginBottom: 8 }}><ViperIcon size={40} color="#0074d9" /></div>
-        <h1 className="brand-gradient-text" style={{ fontSize: 20, fontWeight: 700, margin: 0, fontFamily: "'Space Grotesk', sans-serif", letterSpacing: '-0.5px' }}>vipershell</h1>
-        <p style={{ fontSize: 13, color: 'var(--muted-foreground)', margin: '6px 0 0' }}>Connect to your server</p>
+        <div style={{ marginBottom: 8 }}><SheepIcon size={40} color="var(--primary)" /></div>
+        <h1 className="brand-gradient-text" style={{ fontSize: 20, fontWeight: 700, margin: 0, fontFamily: "'Space Grotesk', sans-serif", letterSpacing: '-0.5px' }}>sheepit</h1>
+        <p style={{ fontSize: 13, color: 'var(--muted-foreground)', margin: '6px 0 0' }}>Point it at your flock</p>
       </div>
 
       <div style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -83,7 +83,7 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
         </div>
 
         {error && (
-          <p style={{ fontSize: 12, color: '#F87171', margin: 0, textAlign: 'center' }}>{error}</p>
+          <p style={{ fontSize: 12, color: '#E0907B', margin: 0, textAlign: 'center' }}>{error}</p>
         )}
 
         <button
@@ -93,7 +93,7 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
             padding: '10px 0',
             borderRadius: 8,
             border: 'none',
-            background: testing ? 'var(--secondary)' : 'linear-gradient(135deg, #0074d9 0%, #009296 100%)',
+            background: testing ? 'var(--secondary)' : 'linear-gradient(135deg, #9cbc7f 0%, #6fa98c 100%)',
             color: testing ? 'var(--muted-foreground)' : '#ffffff',
             fontSize: 14,
             fontWeight: 600,
@@ -110,8 +110,8 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
       </div>
 
       <p style={{ fontSize: 11, color: 'var(--muted-foreground)', textAlign: 'center', maxWidth: 280, lineHeight: 1.5 }}>
-        Enter the IP and port of your vipershell server.
-        Find it in the terminal where you started vipershell.
+        Enter the IP and port of your sheepit server.
+        Find it in the terminal where you started sheepit.
       </p>
     </div>
   );

@@ -73,7 +73,7 @@ function truncateBranch(branch: string, maxLen = 22): string {
 }
 
 const PR_STATE_COLORS: Record<string, string> = {
-  OPEN: 'var(--primary)', MERGED: '#C084FC', CLOSED: 'var(--destructive)',
+  OPEN: 'var(--primary)', MERGED: '#B79CCA', CLOSED: 'var(--destructive)',
 };
 
 // ── Favourites persistence ───────────────────────────────────────────────────
@@ -266,8 +266,8 @@ function PaneCard({
         <span className="pane-card-name">{name}</span>
         <span
           className="pane-card-activity"
-          aria-label={needsAttention ? 'Pane needs your attention' : busy ? 'Pane is running' : 'Pane is idle'}
-          title={needsAttention ? 'Waiting for your input' : busy ? 'Running' : 'Idle'}
+          aria-label={needsAttention ? 'Pane is bleating — it wants your input' : busy ? 'Pane is grazing — a command is running' : 'Pane is idle'}
+          title={needsAttention ? 'Bleating — waiting for your input' : busy ? 'Grazing — a command is running' : 'Idle'}
         />
       </div>
       {(hasCwd || time) && (
@@ -485,6 +485,24 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
   );
 }
 
+/** Two-letter tag for a pen, drawn at the head of its row.
+ *
+ *  Multi-word names use the first two initials ("agent-memory-…" -> "am").
+ *  A single word ending in digits uses its first letter plus the last of those
+ *  digits, which is what distinguishes the pens people actually accumulate:
+ *  memlake4 -> "m4", memlake7 -> "m7", where plain initials would give both
+ *  "me". Anything else falls back to the first two characters. */
+function monogram(name: string): string {
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (words.length > 1) return (words[0]![0]! + words[1]![0]!).toLowerCase();
+  const word = words[0] ?? name;
+  const trailingDigits = /(\d+)$/.exec(word)?.[1];
+  const raw = trailingDigits && word.length > trailingDigits.length
+    ? word[0]! + trailingDigits.slice(-1)
+    : word.slice(0, 2);
+  return raw.toLowerCase();
+}
+
 export default function SessionItem({ workspace, isActive, onConnect, send, isFavourite, onToggleFavourite }: SessionItemProps) {
   const showConfirm = useStore(s => s.showConfirm);
   const renameWorkspace = useStore(s => s.renameWorkspace);
@@ -554,8 +572,8 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
     e.stopPropagation();
     const confirmed = await showConfirm(
       workspace.cells.length === 1
-        ? 'Close this workspace?'
-        : `Close this workspace and all ${workspace.cells.length} panes?`
+        ? 'Close this pen?'
+        : `Close this pen and all ${workspace.cells.length} panes?`
     );
     if (!confirmed) return;
     // Jump to the previous workspace before the current one vanishes from
@@ -604,7 +622,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
     workspace.title
     || (firstSession?.path ? firstSession.path.replace(/\/+$/, '').split('/').pop() : undefined)
     || firstSession?.name
-    || 'Workspace';
+    || 'Pen';
 
   // Compose three refs onto the same DOM node: sortable (for workspace
   // reorder), droppable (for pane merge), and elRef (local).
@@ -636,7 +654,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
       {dndEnabled && (
         <div
           className="workspace-grip workspace-grip-top"
-          title="Drag to reorder workspace"
+          title="Drag to reorder this pen"
           onClick={(e) => e.stopPropagation()}
           {...attributes}
           {...listeners}
@@ -656,11 +674,12 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
               if (e.key === 'Escape') cancelRename();
             }}
             onClick={(e) => e.stopPropagation()}
-            placeholder="Workspace title"
+            placeholder="Pen name"
             className="workspace-title-input"
           />
         ) : (
           <div className="workspace-title-row">
+            <span className="pen-monogram" aria-hidden>{monogram(displayName)}</span>
             <span className="workspace-title" title={displayName}>{displayName}</span>
             {onToggleFavourite && (
               <button
@@ -668,9 +687,12 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
                 className={`session-fav-btn${isFavourite ? ' is-fav' : ''}`}
                 title={isFavourite ? 'Remove from favourites' : 'Add to favourites'}
               >
-                <Star size={12} style={isFavourite ? { fill: '#FACC15' } : undefined} />
+                <Star size={12} style={isFavourite ? { fill: 'var(--warning)' } : undefined} />
               </button>
             )}
+            <span className="pen-head-count" title={`${cellCount} ${cellCount === 1 ? 'pane' : 'panes'} in this pen`}>
+              {cellCount}
+            </span>
           </div>
         )}
         <PaneGrid
@@ -718,7 +740,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
               onClick={(e) => { e.stopPropagation(); onToggleFavourite(); }}
               style={{ fontSize: 12, cursor: 'pointer' }}
             >
-              <Star size={13} style={isFavourite ? { fill: '#FACC15', color: '#FACC15' } : {}} />
+              <Star size={13} style={isFavourite ? { fill: 'var(--warning)', color: 'var(--warning)' } : {}} />
               {isFavourite ? 'Unfavourite' : 'Favourite'}
             </DropdownMenuItem>
           )}

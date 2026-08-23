@@ -9,10 +9,15 @@
          interactive-widget=resizes-visual keeps the keyboard as a *visual*
          viewport change, which App.tsx already tracks. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-visual, viewport-fit=cover" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐍</text></svg>" />
+    <!-- Real 🐑 rasterised onto the pasture plate (see ui/public/icon-*.png).
+         An emoji-in-SVG data: favicon depends on the OS emoji font being
+         reachable from the favicon rasteriser, which is not true everywhere —
+         PNGs render the same sheep on every platform. -->
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
-    <meta name="theme-color" content="#0c0c0c" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0b0d0a" />
     <!-- Self-hosted (see ui/public/fonts, regenerate with scripts/selfhost-fonts.py).
          Loading these from fonts.googleapis.com would block first paint on a
          network round-trip, and the Android APK often talks to a dataplane on a
@@ -20,7 +25,7 @@
     <link rel="preload" href="/fonts/jetbrains-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/space-grotesk-600-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/fonts/fonts.css" />
-    <title>vipershell 🐍</title>
+    <title>sheepit 🐑</title>
     <style>:root { --vvh: 100dvh; }</style>
   </head>
   <body class="h-full">

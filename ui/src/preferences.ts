@@ -7,9 +7,14 @@ let pending: PreferenceValues = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let installed = false;
 
+/* The persisted preference namespace predates the sheepit rename and is
+ * deliberately left as `vipershell:` / `vipershell-`. These keys are the
+ * identity of every saved workspace, layout and font size in the server-side
+ * profile; renaming the prefix would orphan all of them. It is an internal
+ * storage namespace and never shown to the user. */
 const SERVER_URL_KEY = 'vipershell:server-url';
 
-function isVipershellKey(key: string): boolean {
+function isPreferenceKey(key: string): boolean {
   return key !== SERVER_URL_KEY && (key.startsWith('vipershell:') || key.startsWith('vipershell-'));
 }
 
@@ -17,7 +22,7 @@ function legacyValues(): PreferenceValues {
   const migrated: PreferenceValues = {};
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (!key || !isVipershellKey(key)) continue;
+    if (!key || !isPreferenceKey(key)) continue;
     const value = localStorage.getItem(key);
     if (value !== null) migrated[key] = value;
   }
@@ -90,16 +95,16 @@ export function installServerBackedStorage(): void {
   const nativeSet = Storage.prototype.setItem;
   const nativeRemove = Storage.prototype.removeItem;
   Storage.prototype.getItem = function(key: string): string | null {
-    return isVipershellKey(key) ? values[key] ?? null : nativeGet.call(this, key);
+    return isPreferenceKey(key) ? values[key] ?? null : nativeGet.call(this, key);
   };
   Storage.prototype.setItem = function(key: string, value: string): void {
-    if (!isVipershellKey(key)) return nativeSet.call(this, key, value);
+    if (!isPreferenceKey(key)) return nativeSet.call(this, key, value);
     values[key] = value;
     pending[key] = value;
     scheduleFlush();
   };
   Storage.prototype.removeItem = function(key: string): void {
-    if (!isVipershellKey(key)) return nativeRemove.call(this, key);
+    if (!isPreferenceKey(key)) return nativeRemove.call(this, key);
     delete values[key];
     pending[key] = '';
     scheduleFlush();

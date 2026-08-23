@@ -20,7 +20,7 @@ const pkgVersion: string = (() => {
 const program = new Command();
 
 program
-  .name('vipershell')
+  .name('sheepit')
   .description('Your machine, anywhere — terminal sessions in your browser')
   .version(pkgVersion)
   .option('--host <host>', 'Host to bind to', config.host)
@@ -57,12 +57,12 @@ program
       } catch { /* advertising is best-effort; the server still works */ }
 
       console.log('');
-      console.log('  \x1b[1m\x1b[32m\u{1F40D} vipershell\x1b[0m');
+      console.log('  \x1b[1m\x1b[32m\u{1F411} sheepit\x1b[0m');
       console.log('');
       console.log(`  \x1b[2mLocal:\x1b[0m   ${url}`);
       if (host === '0.0.0.0') console.log(`  \x1b[2mNetwork:\x1b[0m http://0.0.0.0:${port}`);
       console.log('');
-      logger.info(`vipershell listening on ${url}`);
+      logger.info(`sheepit listening on ${url}`);
     });
 
     // Not awaited: this shells out to the Claude CLI, and nothing about

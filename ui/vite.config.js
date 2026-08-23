@@ -6,9 +6,9 @@ import tailwindcss from '@tailwindcss/vite';
 // (git worktrees, mainly) can run side by side without colliding, and so the
 // UI can be pointed at a backend that is already running somewhere else.
 // dev.sh exports these; the defaults below keep a bare `npx vite` working.
-const uiPort = Number(process.env.VIPERSHELL_UI_PORT ?? 4444);
-const backendHost = process.env.VIPERSHELL_BACKEND_HOST ?? 'localhost';
-const backendPort = Number(process.env.VIPERSHELL_BACKEND_PORT ?? 4445);
+const uiPort = Number(process.env.SHEEPIT_UI_PORT ?? 4444);
+const backendHost = process.env.SHEEPIT_BACKEND_HOST ?? 'localhost';
+const backendPort = Number(process.env.SHEEPIT_BACKEND_PORT ?? 4445);
 
 export default defineConfig({
   plugins: [

@@ -78,7 +78,7 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
         onClick={listening ? stop : start}
         title={listening ? 'Stop listening' : 'Dictate into pane'}
         aria-label={listening ? 'Stop listening' : 'Dictate into pane'}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, border: '1px solid rgba(148,163,184,0.18)', cursor: 'pointer', color: listening ? 'var(--destructive)' : '#cbd5e1', background: listening ? 'rgba(248,113,113,0.16)' : 'rgba(148,163,184,0.08)', boxShadow: 'inset 0 1px rgba(255,255,255,0.06)' }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, border: '1px solid rgba(140, 148, 132,0.18)', cursor: 'pointer', color: listening ? 'var(--destructive)' : '#c3c9bc', background: listening ? 'rgba(224, 144, 123,0.16)' : 'rgba(140, 148, 132,0.08)', boxShadow: 'inset 0 1px rgba(255,255,255,0.06)' }}
       >
         {listening ? <Square size={13} fill="currentColor" /> : <Mic size={17} />}
       </button>

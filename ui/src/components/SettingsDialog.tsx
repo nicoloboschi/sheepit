@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Activity, ScrollText, Keyboard, Sparkles, Zap, Palette, Moon, Sun } from 'lucide-react';
 import { DialogHeader, DialogTitle } from './ui/dialog';
 import ConfigDialog from './ConfigDialog';
-import ViperIcon from './ViperIcon';
+import SheepIcon from './SheepIcon';
 import { DiagnosticsContent } from './DiagnosticsDialog';
 import { LogsContent } from './LogsModal';
 import { ShortcutsContent } from './ShortcutsDialog';
@@ -35,7 +35,7 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
     <ConfigDialog open onClose={onClose}>
       <DialogHeader className="px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
         <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
-          <ViperIcon size={15} color="var(--primary)" />
+          <SheepIcon size={15} color="var(--primary)" />
           Settings
         </DialogTitle>
       </DialogHeader>
@@ -54,7 +54,7 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
                 style={{
                   color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
                   background: active
-                    ? 'linear-gradient(135deg, #0074d9 0%, #009296 100%) right / 2px 100% no-repeat, var(--accent)'
+                    ? 'linear-gradient(135deg, #9cbc7f 0%, #6fa98c 100%) right / 2px 100% no-repeat, var(--accent)'
                     : 'transparent',
                   fontWeight: active ? 600 : 400,
                   borderRight: '2px solid transparent',
@@ -80,7 +80,7 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
               <p className="text-xs text-muted-foreground mb-4">Changes the app and standard ANSI terminal colours immediately, including running Claude Code sessions.</p>
               <div className="flex gap-3">
                 {([
-                  { id: 'dark' as const, label: 'Dark', icon: Moon, preview: '#111111' },
+                  { id: 'dark' as const, label: 'Dark', icon: Moon, preview: '#111411' },
                   { id: 'light' as const, label: 'Light', icon: Sun, preview: '#f7f8fa' },
                 ]).map(({ id, label, icon: Icon, preview }) => (
                   <button key={id} onClick={() => setTheme(id)} className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs" style={{ borderColor: theme === id ? 'var(--primary)' : 'var(--border)', background: theme === id ? 'var(--accent)' : 'var(--card)', color: 'var(--foreground)' }}>

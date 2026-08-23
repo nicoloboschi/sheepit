@@ -1,7 +1,8 @@
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
+import { configDir } from './paths.js';
 import { logger } from './server.js';
 import type { DirectBridge } from './direct-bridge.js';
 
@@ -42,7 +43,7 @@ function simpleHash(s: string): string {
   return h.toString(36);
 }
 
-const CONFIG_PATH = join(homedir(), '.config', 'vipershell', 'config.json');
+const CONFIG_PATH = join(configDir(), 'config.json');
 
 export type AIProvider = 'claude-code' | 'codex';
 
@@ -102,7 +103,7 @@ export class AIService {
    *  bucket their session history per-cwd, so routing these calls through a
    *  throwaway temp dir keeps the user's real project history clean. */
   private readonly _namerCwd: string = (() => {
-    const dir = join(tmpdir(), 'vipershell-ai-namer');
+    const dir = join(tmpdir(), 'sheepit-ai-namer');
     try { mkdirSync(dir, { recursive: true }); } catch { /* dir already exists or tmpdir unwritable */ }
     return dir;
   })();

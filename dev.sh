@@ -18,8 +18,8 @@ Usage: ./dev.sh [options]
   --backend-host <host>  Host Vite proxies /api and /ws to (default: localhost)
   -h, --help             Show this help
 
-The ports are passed to Vite as VIPERSHELL_UI_PORT / VIPERSHELL_BACKEND_PORT /
-VIPERSHELL_BACKEND_HOST, which ui/vite.config.js reads — so a bare `npx vite`
+The ports are passed to Vite as SHEEPIT_UI_PORT / SHEEPIT_BACKEND_PORT /
+SHEEPIT_BACKEND_HOST, which ui/vite.config.js reads — so a bare `npx vite`
 honours them too.
 
 Examples:
@@ -95,9 +95,9 @@ cleanup() {
 trap cleanup INT TERM
 
 # Read by ui/vite.config.js for its own port and the /api + /ws proxy target.
-export VIPERSHELL_UI_PORT="$UI_PORT"
-export VIPERSHELL_BACKEND_PORT="$BACKEND_PORT"
-export VIPERSHELL_BACKEND_HOST="$BACKEND_HOST"
+export SHEEPIT_UI_PORT="$UI_PORT"
+export SHEEPIT_BACKEND_PORT="$BACKEND_PORT"
+export SHEEPIT_BACKEND_HOST="$BACKEND_HOST"
 
 if [ "$UI_ONLY" -eq 0 ]; then
   # Backend (API + WebSocket)
@@ -112,7 +112,7 @@ fi
 VITE_PID=$!
 
 echo ""
-echo "  vipershell dev:"
+echo "  sheepit dev:"
 echo "    UI:      http://localhost:$UI_PORT"
 if [ "$UI_ONLY" -eq 1 ]; then
   echo "    Backend: not started (--ui-only), proxying to http://$BACKEND_HOST:$BACKEND_PORT"

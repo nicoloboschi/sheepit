@@ -13,12 +13,12 @@ vi.mock('os', async () => {
     ...actual,
     default: {
       ...actual,
-      homedir: () => join(os.tmpdir(), `vipershell-test-${process.pid}`, '_home'),
+      homedir: () => join(os.tmpdir(), `sheepit-test-${process.pid}`, '_home'),
       hostname: actual.hostname,
       userInfo: actual.userInfo,
       platform: actual.platform,
     },
-    homedir: () => join(os.tmpdir(), `vipershell-test-${process.pid}`, '_home'),
+    homedir: () => join(os.tmpdir(), `sheepit-test-${process.pid}`, '_home'),
   }
 })
 
@@ -45,7 +45,7 @@ vi.mock('node-pty', () => ({
 }))
 
 // The mocked homedir points here, so bridge.ts will write sessions.json and scrollback/ under it
-const testConfigDir = join(os.tmpdir(), `vipershell-test-${process.pid}`, '_home', '.config', 'vipershell')
+const testConfigDir = join(os.tmpdir(), `sheepit-test-${process.pid}`, '_home', '.config', 'sheepit')
 
 describe('TmuxBridge', () => {
   let bridge: TmuxBridge
@@ -57,7 +57,7 @@ describe('TmuxBridge', () => {
 
   afterEach(() => {
     try { bridge.stop() } catch { /* ignore */ }
-    try { rmSync(join(os.tmpdir(), `vipershell-test-${process.pid}`), { recursive: true, force: true }) } catch { /* ignore */ }
+    try { rmSync(join(os.tmpdir(), `sheepit-test-${process.pid}`), { recursive: true, force: true }) } catch { /* ignore */ }
   })
 
   describe('getScrollbackPath', () => {

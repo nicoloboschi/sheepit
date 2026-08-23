@@ -1,7 +1,7 @@
 /**
  * Server URL management for standalone/TWA mode.
  *
- * When served from the vipershell backend directly (dev or production),
+ * When served from the sheepit backend directly (dev or production),
  * the server URL is empty (same origin). When running as a standalone
  * PWA/TWA, the user configures the server URL on first launch.
  */

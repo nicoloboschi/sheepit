@@ -103,77 +103,100 @@
 /* ── shadcn/ui CSS variables — Hindsight palette (blue → teal) ───────────────── */
 /* See /CLAUDE.md for the full palette spec and usage rules.                    */
 :root {
-  --background:             #0c0c0c;
-  --foreground:             #d4d4d8;
-  --card:                   #111111;
-  --card-foreground:        #d4d4d8;
-  --popover:                #1a1a1a;
-  --popover-foreground:     #d4d4d8;
-  --primary:                #0074d9;
-  --primary-end:            #009296;
-  --primary-foreground:     #ffffff;
-  --primary-gradient:       linear-gradient(135deg, #0074d9 0%, #009296 100%);
-  --primary-gradient-hover: linear-gradient(135deg, #005db0 0%, #007a7d 100%);
-  --primary-tint:           linear-gradient(135deg, rgba(0,116,217,0.10) 0%, rgba(0,146,150,0.10) 100%);
-  --dark-surface-gradient:  linear-gradient(135deg, #0f1419 0%, #0d1117 100%);
-  --secondary:              #1a1a1a;
-  --secondary-foreground:   #d4d4d8;
-  --muted:                  #1a1a1a;
-  --muted-foreground:       #737373;
-  --accent:                 #1f1f1f;
-  --accent-foreground:      #d4d4d8;
-  --destructive:            #F87171;
-  --destructive-foreground: #d4d4d8;
-  --border:                 #222222;
-  --input:                  #222222;
-  --ring:                   #0074d9;
+  --background:             #0b0d0a;
+  --foreground:             #cdd3c6;
+  --card:                   #111411;
+  --card-foreground:        #cdd3c6;
+  --popover:                #181c16;
+  --popover-foreground:     #cdd3c6;
+  --primary:                #9cbc7f;
+  --primary-end:            #6fa98c;
+  --primary-foreground:     #0b0d0a;
+  --primary-gradient:       linear-gradient(135deg, #9cbc7f 0%, #6fa98c 100%);
+  --primary-gradient-hover: linear-gradient(135deg, #b0ce93 0%, #83bc9f 100%);
+  --primary-tint:           linear-gradient(135deg, rgba(156, 188, 127,0.10) 0%, rgba(111, 169, 140,0.10) 100%);
+  --dark-surface-gradient:  linear-gradient(135deg, #151a13 0%, #10130f 100%);
+  --secondary:              #181c16;
+  --secondary-foreground:   #cdd3c6;
+  --muted:                  #181c16;
+  --muted-foreground:       #797e72;
+  --accent:                 #232820;
+  --accent-foreground:      #cdd3c6;
+  --destructive:            #E0907B;
+  --destructive-foreground: #cdd3c6;
+  --border:                 #242a20;
+  --input:                  #242a20;
+  --ring:                   #9cbc7f;
   --radius:                 0.375rem;
 
-  /* Semantic extras — green stays for success/healthy/additions */
-  --success:                #4ADE80;
-  --warning:                #FACC15;
+  /* Semantic extras. The brand is green now, so "healthy" is carried by the
+     brighter meadow tone and "attention" by the amber the flock UI uses for
+     unseen output. */
+  --success:                #9CBC7F;
+  --warning:                #D9B84A;
+  /* Flock status colours — see /CLAUDE.md. bleating = wants you, grazing =
+     working away on its own. */
+  --bleating:               #8EBFA2;
+  --grazing:                #9CBC7F;
+
+  /* Pane chrome — the header above a terminal and the status bar below it are
+     the two halves of one frame, so they share a gradient rather than each
+     inventing their own. PaneHeader and .pane-footer-bar both read these. */
+  --pane-chrome:            linear-gradient(115deg, rgba(24, 28, 22, 0.72), rgba(17, 20, 17, 0.92));
+  --pane-chrome-active:     linear-gradient(115deg, rgba(124, 168, 96, 0.22), rgba(78, 132, 108, 0.12) 62%, rgba(17, 20, 17, 0.96)), #10130f;
   /* Diff add/remove rows. Semantic green/red, but the surface has to flip with
      the theme or the diff renders as dark blocks on a light page. */
-  --diff-add-bg:            #0d2818;
-  --diff-add-fg:            #aff5b4;
-  --diff-del-bg:            #2d0f0f;
-  --diff-del-fg:            #ffdcd7;
-  --session-active-bg:      #0b1a24;
+  --diff-add-bg:            #1a2916;
+  --diff-add-fg:            #c3e0a8;
+  --diff-del-bg:            #2c1613;
+  --diff-del-fg:            #f0c8bc;
+  --session-active-bg:      #1d2618;
 }
 
 :root[data-theme='light'] {
-  --background:             #f7f8fa;
-  --foreground:             #1f2937;
+  --background:             #f7f9f4;
+  --foreground:             #22291f;
   --card:                   #ffffff;
-  --card-foreground:        #1f2937;
+  --card-foreground:        #22291f;
   --popover:                #ffffff;
-  --popover-foreground:     #1f2937;
-  --secondary:              #f1f3f5;
-  --secondary-foreground:   #1f2937;
-  --muted:                  #eef0f3;
-  --muted-foreground:       #64748b;
-  --accent:                 #e8f1fa;
-  --accent-foreground:      #172033;
-  --destructive:            #c92a2a;
+  --popover-foreground:     #22291f;
+  /* On a pale page the meadow green is far too light to sit under white text,
+     so the light theme runs a deeper moss version of the same gradient. */
+  --primary:                #4e7a3b;
+  --primary-end:            #2f6b55;
+  --primary-foreground:     #ffffff;
+  --primary-gradient:       linear-gradient(135deg, #4e7a3b 0%, #2f6b55 100%);
+  --primary-gradient-hover: linear-gradient(135deg, #3f6630 0%, #255846 100%);
+  --primary-tint:           linear-gradient(135deg, rgba(78, 122, 59, 0.10) 0%, rgba(47, 107, 85, 0.10) 100%);
+  --secondary:              #f0f3ec;
+  --secondary-foreground:   #22291f;
+  --muted:                  #edf0e8;
+  --muted-foreground:       #6b7263;
+  --accent:                 #e7efe0;
+  --accent-foreground:      #1b2118;
+  --destructive:            #a8412a;
   --destructive-foreground: #ffffff;
-  --border:                 #d7dce3;
-  --input:                  #cbd2da;
-  --ring:                   #0074d9;
-  --success:                #16803d;
-  --warning:                #a16207;
-  --session-active-bg:      #e6f3ff;
-  --dark-surface-gradient:  linear-gradient(135deg, #ffffff 0%, #f2f5f8 100%);
-  --diff-add-bg:            #e6ffec;
-  --diff-add-fg:            #04260f;
-  --diff-del-bg:            #ffebe9;
-  --diff-del-fg:            #4d0f0f;
+  --border:                 #dae0d3;
+  --input:                  #ced5c6;
+  --ring:                   #4e7a3b;
+  --success:                #41702c;
+  --warning:                #8a6410;
+  --bleating:               #1f6b52;
+  --grazing:                #41702c;
+  --session-active-bg:      #e7f0dd;
+  --dark-surface-gradient:  linear-gradient(135deg, #ffffff 0%, #f2f5ee 100%);
+  --diff-add-bg:            #e9f5df;
+  --diff-add-fg:            #14290a;
+  --diff-del-bg:            #fbeae5;
+  --diff-del-fg:            #4a170c;
+  --pane-chrome:            var(--secondary);
+  --pane-chrome-active:     linear-gradient(115deg, rgba(78, 122, 59, 0.16), rgba(47, 107, 85, 0.08) 62%, var(--card));
 }
 
 :root[data-theme='light'] .sidebar-shell,
 :root[data-theme='light'] .sidebar-shell-collapsed {
-  background: linear-gradient(180deg, #f8fbff 0%, var(--card) 30%, #f4f7fa 100%);
-  border-right-color: rgba(15, 23, 42, 0.12);
-  box-shadow: inset -1px 0 rgba(0, 116, 217, 0.12), 10px 0 28px rgba(15, 23, 42, 0.08);
+  border-right-color: rgba(34, 41, 31, 0.12);
+  box-shadow: inset -1px 0 rgba(78, 122, 59, 0.14), 10px 0 28px rgba(34, 41, 31, 0.08);
 }
 :root[data-theme='light'] .terminal-pane { background: var(--card); }
 :root[data-theme='light'] .pane-header { color: var(--foreground); }
@@ -201,6 +224,8 @@
   --color-ring:                   var(--ring);
   --color-success:                var(--success);
   --color-warning:                var(--warning);
+  --color-bleating:               var(--bleating);
+  --color-grazing:                var(--grazing);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -215,7 +240,7 @@
 }
 
 /* ── Brand gradient text utility ──────────────────────────────────────────── */
-/* Use for hero text / logo wordmarks where you want the blue→teal gradient. */
+/* Use for hero text / logo wordmarks where you want the meadow→moss gradient. */
 .brand-gradient-text {
   background: var(--primary-gradient);
   -webkit-background-clip: text;
@@ -225,23 +250,39 @@
 }
 
 /* ── Logo ───────────────────────────────────────────────────────────────────── */
-.logo { font-size: 15px; font-weight: 700; color: var(--foreground); letter-spacing: -0.5px; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; gap: 5px; }
+.logo { font-size: 15px; font-weight: 700; color: var(--foreground); letter-spacing: -0.5px; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; gap: 6px; }
 .logo .brand-gradient-text { display: inline-block; }
+/* The 🐑 sits a shade lower than the cap height of the wordmark, and emoji
+   render larger than their font-size, hence the trim. */
+.logo-sheep { font-size: 14px; line-height: 1; transform: translateY(0.5px); }
+.flock-sep { padding: 0 3px; opacity: 0.5; }
 
-/* ── Workspace sidebar ─────────────────────────────────────────────────────
-   The sidebar is a navigation instrument, not a second terminal surface:
-   a slight blue/teal ambient wash creates separation while the cards retain
-   enough contrast to make workspace state easy to scan. */
+/* ── Workspace sidebar (the flock) ─────────────────────────────────────────
+   The sidebar is a navigation instrument, not a second terminal surface. It
+   reads as the pasture the flock stands in: a flat olive field with a faint
+   dot texture, so the pen cards on top of it stay the brightest thing in the
+   column and workspace state is easy to scan. */
 .sidebar-shell {
   isolation: isolate;
   background:
-    radial-gradient(ellipse 90% 34% at 22% -8%, rgba(0, 116, 217, 0.18), transparent 68%),
-    linear-gradient(180deg, #13171a 0%, var(--card) 26%, #101112 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: inset -1px 0 rgba(0, 146, 150, 0.13), 10px 0 28px rgba(0, 0, 0, 0.13);
+    radial-gradient(circle at 1px 1px, rgba(156, 188, 127, 0.055) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    radial-gradient(ellipse 90% 30% at 22% -10%, rgba(156, 188, 127, 0.10), transparent 70%),
+    var(--sidebar-field, #181c16);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset -1px 0 rgba(111, 169, 140, 0.12), 10px 0 28px rgba(0, 0, 0, 0.16);
 }
 .sidebar-shell-collapsed {
-  background: linear-gradient(180deg, #13171a, #101112);
+  background:
+    radial-gradient(circle at 1px 1px, rgba(156, 188, 127, 0.055) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    var(--sidebar-field, #181c16);
+}
+:root { --sidebar-field: #181c16; }
+:root[data-theme='light'] { --sidebar-field: #f6faf1; }
+:root[data-theme='light'] .sidebar-shell,
+:root[data-theme='light'] .sidebar-shell-collapsed {
+  background:
+    radial-gradient(circle at 1px 1px, rgba(78, 122, 59, 0.07) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    var(--sidebar-field);
 }
 .sidebar-header,
 .sidebar-footer {
@@ -249,18 +290,173 @@
   border-color: rgba(255, 255, 255, 0.08) !important;
 }
 .sidebar-header {
-  background: linear-gradient(90deg, rgba(0, 116, 217, 0.06), transparent 66%);
-  box-shadow: inset 0 -1px rgba(0, 146, 150, 0.07);
+  background: linear-gradient(90deg, rgba(156, 188, 127, 0.06), transparent 66%);
+  box-shadow: inset 0 -1px rgba(111, 169, 140, 0.07);
 }
 .sidebar-footer {
   background: rgba(0, 0, 0, 0.10);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
 }
+
+/* ── The flock band + footer ───────────────────────────────────────────────
+   The band names the column and reports the flock's size; the footer says
+   which sheep want you, and stands the whole thing on a line of grass. */
+.flock-band {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 9px 13px 8px;
+  font-size: 9.5px; line-height: 1.2;
+  color: var(--muted-foreground);
+  user-select: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+:root[data-theme='light'] .flock-band { border-bottom-color: rgba(34, 41, 31, 0.08); }
+/* Deliberately not the brand green: the band is a label, and colouring it
+   makes it compete with the pen cards it is introducing. */
+.flock-band-title {
+  font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.flock-band-count {
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  opacity: 0.8;
+}
+.flock-band-count .flock-sep { opacity: 0.5; padding: 0 1px; }
+
+.flock-footer {
+  position: relative;
+  flex-shrink: 0;
+  padding: 8px 13px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+:root[data-theme='light'] .flock-footer { border-top-color: rgba(34, 41, 31, 0.09); }
+.flock-footer-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.flock-footer-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  transition: background 0.25s ease;
+}
+.flock-footer-sep { opacity: 0.5; }
+/* The pasture: grass at the back, sheep walking in front of it. Decoration
+   only — it must never intercept a click meant for the last pen card, and it
+   must not add height the list could have used. */
+.flock-pasture {
+  position: relative;
+  height: 32px;
+  margin: 3px -13px 0;
+  pointer-events: none;
+}
+.flock-grass {
+  display: block;
+  position: absolute; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 22px;
+}
+
+/* Sheep stand a few px up from the very bottom so their hooves land in the
+   grass rather than on the window edge. */
+.flock-sheep {
+  position: absolute; left: 0; right: 0; bottom: 3px;
+  height: 20px;
+}
+
+/* Compact pasture for the mobile header, where vertical space is the scarce
+   thing: shorter grass, smaller sheep, no status line above it. */
+.flock-pasture-slim { height: 20px; margin: 0; }
+.flock-pasture-slim .flock-grass { height: 14px; }
+.flock-pasture-slim .flock-sheep { bottom: 2px; height: 14px; }
+.flock-pasture-slim .flock-sheep-body { font-size: calc(var(--size) * 0.8); }
+.flock-sheep-one {
+  position: absolute; bottom: 0;
+  /* `left` positions the lane; the walk animation only ever nudges the sheep
+     around that lane, so two sheep can never drift into the same spot. */
+  animation: sheep-walk var(--walk) ease-in-out var(--delay) infinite alternate;
+  will-change: transform;
+}
+.flock-sheep-body {
+  display: block;
+  font-size: var(--size);
+  line-height: 1;
+  /* The emoji is a white sheep on a near-black strip: knock it back so it sits
+     in the scene instead of glowing out of it. */
+  opacity: 0.55;
+  filter: saturate(0.7) brightness(0.88);
+  animation: sheep-bob var(--bob) ease-in-out infinite;
+}
+.flock-sheep-grazing .flock-sheep-body {
+  /* Head down, nose in the grass. */
+  animation: sheep-graze calc(var(--bob) * 2.2) ease-in-out infinite;
+}
+.flock-sheep-bleating .flock-sheep-body {
+  opacity: 0.92;
+  filter: none;
+  animation: sheep-hop calc(var(--bob) * 1.1) ease-in-out infinite;
+}
+.flock-sheep-baa {
+  position: absolute;
+  left: 100%; bottom: 60%;
+  margin-left: 2px;
+  font-size: 7px; line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--bleating);
+  white-space: nowrap;
+  animation: sheep-baa 3.4s ease-in-out infinite;
+}
+
+/* On the pale field a white sheep would all but vanish, so the light theme
+   trades the knock-back for a soft outline instead. */
+:root[data-theme='light'] .flock-sheep-body {
+  opacity: 0.95;
+  filter: brightness(0.94) drop-shadow(0 0 0.6px rgba(34, 41, 31, 0.55));
+}
+:root[data-theme='light'] .flock-sheep-bleating .flock-sheep-body {
+  opacity: 1;
+  filter: drop-shadow(0 0 0.7px rgba(34, 41, 31, 0.7));
+}
+
+@keyframes sheep-walk {
+  from { transform: translateX(calc(var(--roam) * -0.5)) scaleX(1); }
+  49.9% { transform: translateX(calc(var(--roam) * 0.5)) scaleX(1); }
+  /* Flip at the turn so the sheep faces where it is going. */
+  50%  { transform: translateX(calc(var(--roam) * 0.5)) scaleX(-1); }
+  to   { transform: translateX(calc(var(--roam) * 0.5)) scaleX(-1); }
+}
+@keyframes sheep-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-1px) rotate(-1.5deg); }
+}
+@keyframes sheep-graze {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35%      { transform: translateY(1px) rotate(7deg); }
+  65%      { transform: translateY(1px) rotate(5deg); }
+}
+@keyframes sheep-hop {
+  0%, 62%, 100% { transform: translateY(0) rotate(0deg); }
+  72%           { transform: translateY(-4px) rotate(-6deg); }
+  84%           { transform: translateY(0) rotate(0deg); }
+  90%           { transform: translateY(-2px); }
+}
+@keyframes sheep-baa {
+  0%, 58%, 100% { opacity: 0; transform: translateY(2px); }
+  70%, 84%      { opacity: 0.9; transform: translateY(-1px); }
+}
+
+/* A field of animals bouncing in the corner is exactly the sort of thing
+   reduced-motion is for. Keep the flock, lose the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .flock-sheep-one,
+  .flock-sheep-body,
+  .flock-sheep-baa { animation: none; }
+  .flock-sheep-baa { opacity: 0.9; }
+}
 .sidebar-resize-handle {
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 .sidebar-resize-handle:hover {
-  box-shadow: 0 0 12px rgba(0, 116, 217, 0.56);
+  box-shadow: 0 0 12px rgba(156, 188, 127, 0.56);
 }
 
 /* ── Full-screen config dialogs ────────────────────────────────────────────── */
@@ -276,7 +472,7 @@
   overflow: hidden !important;
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(0, 116, 217, 0.12) !important;
+    0 0 0 1px rgba(156, 188, 127, 0.12) !important;
 }
 
 /* ── Desktop session list ───────────────────────────────────────────────────── */
@@ -301,22 +497,22 @@
    sidebar header next to the collapse button. */
 .ws-filter-toggle {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  overflow: hidden;
+  gap: 1px;
+  border-radius: 7px;
   flex-shrink: 0;
 }
 .ws-filter-toggle button {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 3px 6px;
+  width: 22px; height: 22px;
+  border-radius: 6px;
   background: none; border: none; cursor: pointer;
   color: var(--muted-foreground);
+  transition: background 0.12s, color 0.12s;
 }
-.ws-filter-toggle button:hover:not(.active) { background: rgba(255,255,255,0.05); color: var(--foreground); }
-.ws-filter-toggle button + button { border-left: 1px solid var(--border); }
+.ws-filter-toggle button:hover:not(.active) { background: rgba(255,255,255,0.06); color: var(--foreground); }
 .ws-filter-toggle button.active {
-  background: var(--primary-gradient);
-  color: #fff;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
 }
 
 /* Quick-favourite star on each workspace row — revealed on hover, pinned when
@@ -352,15 +548,15 @@
   /* Inset the row so the card has breathing room on both sides. The extra
      top padding leaves room for the workspace-grip-top strip to sit on the
      top edge without overlapping the PaneGrid below. */
-  padding: 14px 8px 8px 12px;
-  margin: 0 6px 6px 6px;
+  padding: 14px 10px 10px 11px;
+  margin: 0 7px 8px 7px;
   cursor: pointer;
   /* Subtle card look for inactive rows — flat dark background + hairline
      border + rounded corners. Each workspace reads as its own card even
      when nothing is selected. */
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 7px;
+  border-radius: 10px;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
   min-width: 0;
   overflow: hidden;
@@ -372,15 +568,15 @@
 }
 .session-item:hover {
   background: linear-gradient(105deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
-  border-color: rgba(122, 199, 222, 0.22);
+  border-color: rgba(156, 188, 127, 0.22);
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.025);
   transform: translateY(-1px);
 }
 .session-item.active {
   /* Selected row: surface and border carry the state without a menu-like rail. */
-  background: linear-gradient(105deg, rgba(0, 116, 217, 0.18), rgba(0, 146, 150, 0.075));
-  border-color: rgba(0, 145, 187, 0.48);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(137, 220, 238, 0.08);
+  background: linear-gradient(105deg, rgba(156, 188, 127, 0.18), rgba(111, 169, 140, 0.075));
+  border-color: rgba(156, 188, 127, 0.48);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(142, 191, 162, 0.08);
 }
 
 /* ── Unseen notification ────────────────────────────────────────────────────
@@ -394,8 +590,8 @@
   width: 5px;
   height: 5px;
   border-radius: 999px;
-  background: #d29922;
-  box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.10), 0 0 8px rgba(210, 153, 34, 0.42);
+  background: var(--warning);
+  box-shadow: 0 0 0 2px rgba(217, 184, 74, 0.10), 0 0 8px rgba(217, 184, 74, 0.42);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -516,8 +712,8 @@
      half; the other half hangs off the card's top-left edge. */
   padding: 9px 11px 9px 18px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
   min-width: 0;
   min-height: 0;
   /* overflow MUST be visible so the badge can hang off the top-left corner
@@ -527,8 +723,8 @@
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .pane-card-active {
-  background: rgba(0, 116, 217, 0.10);
-  border-color: rgba(0, 116, 217, 0.40);
+  background: rgba(156, 188, 127, 0.10);
+  border-color: rgba(156, 188, 127, 0.40);
   box-shadow: none;
 }
 /* Unseen output gets a subtle amber badge border; the workspace itself also
@@ -548,8 +744,8 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 3px;
-  background: #141821;
+  border-radius: 6px;
+  background: #1b2018;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--muted-foreground);
   flex-shrink: 0;
@@ -559,15 +755,15 @@
   transition: color 0.12s, background 0.12s, border-color 0.12s, transform 0.12s;
 }
 .pane-card-active .pane-card-badge {
-  color: #ffffff;
+  color: var(--primary-foreground);
   background: var(--primary-gradient);
   border-color: color-mix(in srgb, var(--primary-end) 65%, transparent);
   box-shadow:
-    0 2px 8px rgba(0, 116, 217, 0.45),
-    0 0 0 1px rgba(0, 116, 217, 0.25);
+    0 2px 8px rgba(156, 188, 127, 0.45),
+    0 0 0 1px rgba(156, 188, 127, 0.25);
 }
 .pane-card-unseen .pane-card-badge {
-  border-color: rgba(210, 153, 34, 0.45);
+  border-color: rgba(217, 184, 74, 0.45);
 }
 
 /* Per-pane activity is intentionally local: split workspaces can contain a
@@ -577,42 +773,46 @@
 .pane-card-activity {
   width: 6px;
   height: 6px;
-  border: 1px solid rgba(212, 212, 216, 0.34);
+  border: 1px solid rgba(205, 211, 198, 0.34);
   border-radius: 999px;
   background: transparent;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.30);
   flex: 0 0 auto;
 }
+/* Grazing (a command is running) is the meadow green; bleating (the pane wants
+   you) is the moss teal and pulses. Before the rebrand these were blue and
+   green — with a green brand they have to be told apart by hue *and* by the
+   pulse, or a busy pane and a waiting one look identical. */
 .pane-card-busy .pane-card-activity {
-  border-color: var(--primary);
-  background: var(--primary);
-  box-shadow: 0 0 0 2px rgba(0, 116, 217, 0.10), 0 0 8px rgba(0, 116, 217, 0.34);
+  border-color: var(--grazing);
+  background: var(--grazing);
+  box-shadow: 0 0 0 2px rgba(156, 188, 127, 0.10), 0 0 8px rgba(156, 188, 127, 0.34);
 }
 .pane-card-busy:not(.pane-card-active):not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg, rgba(0, 116, 217, 0.13), rgba(0, 146, 150, 0.035));
-  border-color: rgba(0, 116, 217, 0.32);
-  box-shadow: inset 0 1px rgba(153, 211, 255, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(120deg, rgba(156, 188, 127, 0.11), rgba(156, 188, 127, 0.03));
+  border-color: rgba(156, 188, 127, 0.30);
+  box-shadow: inset 0 1px rgba(199, 224, 168, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .pane-card-active.pane-card-busy:not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg, rgba(0, 116, 217, 0.22), rgba(0, 146, 150, 0.10));
-  border-color: rgba(0, 146, 150, 0.48);
-  box-shadow: inset 0 1px rgba(153, 211, 255, 0.10);
+  background: linear-gradient(120deg, rgba(156, 188, 127, 0.22), rgba(156, 188, 127, 0.09));
+  border-color: rgba(156, 188, 127, 0.48);
+  box-shadow: inset 0 1px rgba(199, 224, 168, 0.10);
 }
 .pane-card-needs-attention .pane-card-activity {
-  border-color: var(--success);
-  background: var(--success);
-  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.12), 0 0 11px rgba(74, 222, 128, 0.55);
+  border-color: var(--bleating);
+  background: var(--bleating);
+  box-shadow: 0 0 0 2px rgba(142, 191, 162, 0.12), 0 0 11px rgba(142, 191, 162, 0.55);
   animation: pane-activity-pulse 2.2s ease-in-out infinite;
 }
 .pane-card-needs-attention:not(.pane-card-active) {
-  background: linear-gradient(120deg, rgba(74, 222, 128, 0.15), rgba(74, 222, 128, 0.035));
-  border-color: rgba(74, 222, 128, 0.38);
-  box-shadow: inset 0 1px rgba(187, 247, 208, 0.08), 0 3px 12px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(120deg, rgba(142, 191, 162, 0.16), rgba(142, 191, 162, 0.04));
+  border-color: rgba(142, 191, 162, 0.40);
+  box-shadow: inset 0 1px rgba(182, 214, 194, 0.08), 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .pane-card-active.pane-card-needs-attention {
-  background: linear-gradient(120deg, rgba(0, 116, 217, 0.15), rgba(74, 222, 128, 0.13));
-  border-color: rgba(74, 222, 128, 0.52);
-  box-shadow: inset 0 1px rgba(187, 247, 208, 0.10);
+  background: linear-gradient(120deg, rgba(142, 191, 162, 0.22), rgba(142, 191, 162, 0.12));
+  border-color: rgba(142, 191, 162, 0.55);
+  box-shadow: inset 0 1px rgba(182, 214, 194, 0.10);
 }
 .pane-card-tight .pane-card-activity { width: 5px; height: 5px; }
 @keyframes pane-activity-pulse {
@@ -739,33 +939,33 @@
 .session-item.pane-drop-target {
   outline: 1.5px dashed var(--primary);
   outline-offset: -2px;
-  background: rgba(0, 116, 217, 0.10);
+  background: rgba(156, 188, 127, 0.10);
 }
 .session-item.pane-drop-target .pane-grid {
-  box-shadow: 0 0 0 1px rgba(0, 116, 217, 0.4), 0 0 12px rgba(0, 116, 217, 0.25);
+  box-shadow: 0 0 0 1px rgba(156, 188, 127, 0.4), 0 0 12px rgba(156, 188, 127, 0.25);
   border-radius: 4px;
   transition: box-shadow 0.12s;
 }
 .session-item.pane-drop-target-full {
   outline-color: var(--destructive);
-  background: rgba(248, 113, 113, 0.10);
+  background: rgba(224, 144, 123, 0.10);
 }
 .session-item.pane-drop-target-full .pane-grid { box-shadow: none; }
 
 /* Per-card drop highlight — shown when hovering a pane card with another
  * pane in flight (intra-workspace swap or cross-workspace insert). */
 .pane-card-drop-target {
-  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 10px rgba(0, 116, 217, 0.35);
-  background: rgba(0, 116, 217, 0.12);
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 10px rgba(156, 188, 127, 0.35);
+  background: rgba(156, 188, 127, 0.12);
 }
 
 /* Empty "drop here" placeholder slot rendered when a foreign pane is being
  * dragged over a workspace with room for one more pane. Looks distinct from
  * a real PaneCard so the user understands it's a target, not content. */
 .pane-card-placeholder {
-  background: rgba(0, 116, 217, 0.10);
-  border: 1.5px dashed rgba(0, 116, 217, 0.55);
-  box-shadow: inset 0 0 12px rgba(0, 116, 217, 0.10);
+  background: rgba(156, 188, 127, 0.10);
+  border: 1.5px dashed rgba(156, 188, 127, 0.55);
+  box-shadow: inset 0 0 12px rgba(156, 188, 127, 0.10);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -782,15 +982,15 @@
   opacity: 0.85;
 }
 @keyframes pane-card-placeholder-pulse {
-  0%, 100% { box-shadow: inset 0 0 12px rgba(0, 116, 217, 0.10); border-color: rgba(0, 116, 217, 0.55); }
-  50%      { box-shadow: inset 0 0 18px rgba(0, 116, 217, 0.22); border-color: rgba(0, 116, 217, 0.85); }
+  0%, 100% { box-shadow: inset 0 0 12px rgba(156, 188, 127, 0.10); border-color: rgba(156, 188, 127, 0.55); }
+  50%      { box-shadow: inset 0 0 18px rgba(156, 188, 127, 0.22); border-color: rgba(156, 188, 127, 0.85); }
 }
 
 /* Active pane header — stronger visual presence so the focused pane is
    unmistakable in multi-pane layouts. The bottom border glow bleeds into
    the terminal surface just enough to draw the eye. */
 .pane-header-active {
-  box-shadow: 0 2px 16px rgba(0, 116, 217, 0.30), 0 1px 6px rgba(0, 116, 217, 0.20);
+  box-shadow: 0 2px 16px rgba(156, 188, 127, 0.30), 0 1px 6px rgba(156, 188, 127, 0.20);
   z-index: 2;
 }
 
@@ -804,8 +1004,8 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 3px;
-  background: #141821;
+  border-radius: 6px;
+  background: #1b2018;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--muted-foreground);
   flex-shrink: 0;
@@ -815,12 +1015,12 @@
   transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 .pane-header-kind-badge-active {
-  color: #ffffff;
-  background: var(--primary-gradient);
-  border-color: color-mix(in srgb, var(--primary-end) 65%, transparent);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
   box-shadow:
-    0 2px 8px rgba(0, 116, 217, 0.45),
-    0 0 0 1px rgba(0, 116, 217, 0.25);
+    0 2px 8px rgba(156, 188, 127, 0.45),
+    0 0 0 1px rgba(156, 188, 127, 0.25);
 }
 
 .pane-footer-bar {
@@ -831,49 +1031,77 @@
   min-height: 30px;
   margin-top: 6px;
   padding: 5px 11px 6px 12px;
-  border-top: 1px solid rgba(125, 211, 252, 0.28);
-  border-radius: 0 0 2px 2px;
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.98));
+  border-top: 1px solid rgba(140, 148, 132, 0.16);
+  border-radius: 0 0 6px 6px;
+  background: var(--pane-chrome);
+  color: var(--muted-foreground);
   font-size: 10px;
   position: relative;
   z-index: 1;
-  box-shadow: 0 -6px 14px rgba(0, 0, 0, 0.24), inset 0 1px rgba(186, 230, 253, 0.07);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
+.pane-footer-bar-active {
+  border-top-color: rgba(156, 188, 127, 0.65);
+  background: var(--pane-chrome-active);
+  color: var(--foreground);
+  box-shadow: inset 0 -1px rgba(199, 217, 186, 0.10);
+}
+/* The cwd is the pane's "where am I" anchor, so it hangs off the right edge
+   of the bar rather than trailing the stats — same as in the design. */
 .pane-footer-identity {
   display: flex;
   align-items: baseline;
+  justify-content: flex-end;
   gap: 6px;
   min-width: 0;
   flex: 1;
   overflow: hidden;
 }
-.pane-footer-bar > .stat-chips { gap: 2px; }
-.pane-footer-bar .stat-widget-sparkline { display: none; }
-.pane-footer-bar .stat-widget { gap: 3px; }
+.stat-chips {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; flex-shrink: 1; overflow: hidden;
+}
+/* The one handle left from the old cpu/mem/urls cluster: it opens the process
+   list and the detected-link list, and only renders when one of them has
+   something in it. */
+.pane-footer-more {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 16px; flex-shrink: 0;
+  border: none; border-radius: 4px;
+  background: none; cursor: pointer;
+  color: var(--muted-foreground);
+  opacity: 0.65;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.pane-footer-more:hover {
+  opacity: 1; color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
 .pane-footer-path {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: #94a3b8; font-family: "JetBrains Mono", monospace; font-size: 10px;
+  color: var(--muted-foreground); font-family: "JetBrains Mono", monospace; font-size: 10px;
   background: none; border: none; padding: 0; cursor: pointer; text-align: left;
 }
-.pane-footer-path:hover { color: #dbeafe; text-decoration: underline; text-underline-offset: 2px; }
+.pane-footer-path:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
 .pane-footer-path-popover {
   position: absolute; left: 10px; bottom: calc(100% + 6px); z-index: 30;
   max-width: min(680px, calc(100vw - 32px)); padding: 7px 10px;
-  color: #dbeafe; background: #111827; border: 1px solid rgba(125, 211, 252, 0.35);
+  color: var(--foreground); background: var(--popover); border: 1px solid rgba(156, 188, 127, 0.35);
   box-shadow: 0 8px 24px rgba(0,0,0,0.38); font: 10px "JetBrains Mono", monospace;
   white-space: normal; overflow-wrap: anywhere;
 }
 
 :root[data-theme='light'] .pane-footer-bar {
   border-top-color: color-mix(in srgb, var(--primary) 28%, var(--border));
-  background: linear-gradient(180deg, #f8fbff, #edf3f8);
-  box-shadow: 0 -5px 12px rgba(15, 23, 42, 0.08), inset 0 1px rgba(255,255,255,0.85);
+  background: linear-gradient(180deg, #f8fbf2, #eff4e8);
+  box-shadow: 0 -5px 12px rgba(17, 20, 17, 0.08), inset 0 1px rgba(255,255,255,0.85);
 }
-:root[data-theme='light'] .pane-footer-path { color: #475569; }
+:root[data-theme='light'] .pane-footer-path { color: var(--muted-foreground); }
 :root[data-theme='light'] .pane-footer-path:hover { color: var(--primary); }
 :root[data-theme='light'] .pane-footer-path-popover {
   color: var(--foreground); background: var(--popover); border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(15,23,42,0.16);
+  box-shadow: 0 8px 24px rgba(17, 20, 17,0.16);
 }
 
 
@@ -908,7 +1136,7 @@
    on disk` (amber warning) means it changed under unsaved edits and was NOT
    overwritten. */
 @keyframes file-updated-flash {
-  0%   { background-color: rgba(0, 116, 217, 0.22); }
+  0%   { background-color: rgba(156, 188, 127, 0.22); }
   100% { background-color: transparent; }
 }
 .file-updated-flash { animation: file-updated-flash 1.4s ease-out; }
@@ -920,8 +1148,8 @@
 }
 .file-disk-changed-badge {
   font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 10px;
-  color: #f0b429; border: 1px solid rgba(240, 180, 41, 0.5);
-  background: rgba(240, 180, 41, 0.12);
+  color: #f0b429; border: 1px solid rgba(217, 184, 74, 0.5);
+  background: rgba(217, 184, 74, 0.12);
   animation: fade-in 0.15s ease; cursor: help;
 }
 
@@ -961,10 +1189,10 @@
 }
 .session-item:hover .workspace-grip-top { opacity: 0.7; }
 .session-item:hover .workspace-grip-top:hover { opacity: 1; color: var(--foreground); }
-.session-item:hover .workspace-grip-top:hover::before { background: rgba(0, 116, 217, 0.45); }
+.session-item:hover .workspace-grip-top:hover::before { background: rgba(156, 188, 127, 0.45); }
 .session-item.active .workspace-grip-top { opacity: 0.6; color: var(--primary); }
 .session-item.active:hover .workspace-grip-top { opacity: 1; color: var(--primary); }
-.session-item.active:hover .workspace-grip-top::before { background: rgba(0, 116, 217, 0.55); }
+.session-item.active:hover .workspace-grip-top::before { background: rgba(156, 188, 127, 0.55); }
 .workspace-grip-top:active { cursor: grabbing; }
 
 /* Floating preview rendered by dnd-kit's DragOverlay. It's NOT inside the
@@ -972,14 +1200,14 @@
 .session-item-overlay {
   width: 260px;
   cursor: grabbing !important;
-  background: rgba(0, 116, 217, 0.16);
-  border: 1px solid rgba(0, 116, 217, 0.6);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 116, 217, 0.4),
-              0 0 28px rgba(0, 116, 217, 0.35);
+  background: rgba(156, 188, 127, 0.16);
+  border: 1px solid rgba(156, 188, 127, 0.6);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(156, 188, 127, 0.4),
+              0 0 28px rgba(156, 188, 127, 0.35);
   transform: rotate(-1.2deg);
 }
 .workspace-grip-overlay { opacity: 1 !important; color: var(--primary) !important; }
-.workspace-grip-overlay::before { background: rgba(0, 116, 217, 0.55) !important; }
+.workspace-grip-overlay::before { background: rgba(156, 188, 127, 0.55) !important; }
 
 /* ── Gap drop zone (single, at the bottom of the sidebar) ─────────────────
  *  Lives below the last workspace row. Invisible and zero-hit when idle;
@@ -1029,8 +1257,8 @@
   pointer-events: auto;
 }
 .gap-drop-zone-armed .gap-drop-zone-line {
-  border-color: rgba(0, 116, 217, 0.50);
-  background: rgba(0, 116, 217, 0.06);
+  border-color: rgba(156, 188, 127, 0.50);
+  background: rgba(156, 188, 127, 0.06);
 }
 .gap-drop-zone-armed .gap-drop-zone-label {
   opacity: 0.85;
@@ -1044,13 +1272,13 @@
 .gap-drop-zone-hover .gap-drop-zone-line {
   border-color: var(--primary);
   border-style: solid;
-  background: rgba(0, 116, 217, 0.18);
-  box-shadow: 0 0 16px rgba(0, 116, 217, 0.45), inset 0 0 12px rgba(0, 116, 217, 0.18);
+  background: rgba(156, 188, 127, 0.18);
+  box-shadow: 0 0 16px rgba(156, 188, 127, 0.45), inset 0 0 12px rgba(156, 188, 127, 0.18);
 }
 .gap-drop-zone-hover .gap-drop-zone-label {
   opacity: 1;
   color: var(--foreground);
-  text-shadow: 0 0 10px rgba(0, 116, 217, 0.6);
+  text-shadow: 0 0 10px rgba(156, 188, 127, 0.6);
 }
 
 /* ── Pane card overlay (DragOverlay floating preview) ─────────────────────
@@ -1060,10 +1288,10 @@
 .pane-card-overlay {
   width: 220px;
   cursor: grabbing !important;
-  background: rgba(0, 116, 217, 0.18);
-  border: 1px solid rgba(0, 116, 217, 0.6);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 116, 217, 0.4),
-              0 0 28px rgba(0, 116, 217, 0.35);
+  background: rgba(156, 188, 127, 0.18);
+  border: 1px solid rgba(156, 188, 127, 0.6);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(156, 188, 127, 0.4),
+              0 0 28px rgba(156, 188, 127, 0.35);
   transform: rotate(-1.5deg);
 }
 
@@ -1088,19 +1316,44 @@
 .workspace-title-row .session-fav-btn { width: 16px; height: 16px; }
 .session-item.active .workspace-title { color: var(--foreground); }
 
+/* Two-letter tag at the head of a pen row, and the pane tally at its far
+   right — together they let a pen be identified without reading the name. */
+.pen-monogram {
+  flex-shrink: 0;
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+  border-radius: 4px;
+  padding: 0 3.5px; line-height: 14px;
+  margin-right: 3px;
+}
+.session-item.active .pen-monogram {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+}
+.pen-head-count {
+  flex-shrink: 0; margin-left: auto; padding-left: 4px;
+  font-size: 10px; font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.session-item.active .pen-head-count { color: var(--primary); }
+
 .workspace-title-input {
   width: 100%; font-size: 11px; padding: 1px 4px; margin-bottom: 3px;
-  background: var(--input); border: 1px solid var(--border); border-radius: 3px;
+  background: var(--input); border: 1px solid var(--border); border-radius: 5px;
   color: var(--foreground); outline: none;
 }
 .workspace-title-input:focus { border-color: var(--ring); }
 
 .session-pane-badge {
   font-size: 9px; font-weight: 700; font-family: monospace;
-  color: #ffffff;
+  color: var(--primary-foreground);
   background: var(--primary-gradient);
   border: 1px solid color-mix(in srgb, var(--primary-end) 60%, transparent);
-  border-radius: 3px; padding: 0 3px; line-height: 14px;
+  border-radius: 4px; padding: 0 3px; line-height: 14px;
   flex-shrink: 0; letter-spacing: 0;
 }
 
@@ -1133,7 +1386,7 @@
   from { opacity: 0; transform: scale(0.98); }
   to   { opacity: 1; transform: scale(1); }
 }
-.terminal-pane { position: absolute; inset: 0; padding: 12px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111111; }
+.terminal-pane { position: absolute; inset: 0; padding: 12px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111411; }
 .terminal-pane > .xterm {
   /* Keep the first and last terminal rows off the pane edges. The outer
      container padding alone is consumed by FitAddon's measured viewport. */
@@ -1243,36 +1496,36 @@
   font-family: monospace; font-size: 11px; line-height: 1.5;
 }
 .log-entry { white-space: pre-wrap; word-break: break-all; color: var(--foreground); }
-.log-entry.ERROR, .log-entry.CRITICAL { color: #F87171; }
-.log-entry.WARNING { color: #e3b341; }
+.log-entry.ERROR, .log-entry.CRITICAL { color: #E0907B; }
+.log-entry.WARNING { color: #d9b84a; }
 .log-entry.INFO    { color: var(--foreground); }
 .log-entry.DEBUG   { color: var(--muted-foreground); }
 
 /* ── Markdown preview ─────────────────────────────────────────────────────────── */
-.md-preview { color: #d4d4d8; font-size: 14px; line-height: 1.7; max-width: 800px; }
+.md-preview { color: #cdd3c6; font-size: 14px; line-height: 1.7; max-width: 800px; }
 .md-preview h1, .md-preview h2, .md-preview h3,
 .md-preview h4, .md-preview h5, .md-preview h6 {
   color: #F4F4F5; font-weight: 600; margin: 1.2em 0 0.5em;
   padding-bottom: 0.2em;
 }
-.md-preview h1 { font-size: 1.8em; border-bottom: 1px solid #222222; }
-.md-preview h2 { font-size: 1.4em; border-bottom: 1px solid #222222; }
+.md-preview h1 { font-size: 1.8em; border-bottom: 1px solid #242a20; }
+.md-preview h2 { font-size: 1.4em; border-bottom: 1px solid #242a20; }
 .md-preview h3 { font-size: 1.15em; }
 .md-preview p  { margin: 0.6em 0; }
 .md-preview a  { color: var(--primary); text-decoration: none; }
 .md-preview a:hover { text-decoration: underline; }
 .md-preview code {
-  background: #111111; color: #F87171; border-radius: 4px;
+  background: #111411; color: #E0907B; border-radius: 4px;
   padding: 0.15em 0.4em; font-family: "JetBrains Mono",monospace; font-size: 0.88em;
 }
 .md-preview pre {
-  background: #111111; border: 1px solid #222222; border-radius: 6px;
+  background: #111411; border: 1px solid #242a20; border-radius: 6px;
   padding: 14px 16px; overflow-x: auto; margin: 0.8em 0;
 }
-.md-preview pre code { background: none; color: #d4d4d8; padding: 0; font-size: 0.9em; }
+.md-preview pre code { background: none; color: #cdd3c6; padding: 0; font-size: 0.9em; }
 .md-preview blockquote {
-  border-left: 3px solid #222222; margin: 0.8em 0; padding: 0.2em 1em;
-  color: #737373;
+  border-left: 3px solid #242a20; margin: 0.8em 0; padding: 0.2em 1em;
+  color: #797e72;
 }
 /* Tailwind's Preflight resets list-style to none globally, so restore markers
    here (react-markdown output isn't styled by Tailwind utilities). */
@@ -1284,8 +1537,18 @@
 .md-preview ul.contains-task-list { list-style: none; padding-left: 0; }
 .md-preview li.task-list-item { list-style: none; }
 .md-preview table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
-.md-preview th, .md-preview td { border: 1px solid #222222; padding: 6px 12px; }
-.md-preview th { background: #111111; color: #F4F4F5; font-weight: 600; }
-.md-preview tr:nth-child(even) { background: #0c0c0c; }
-.md-preview hr { border: none; border-top: 1px solid #222222; margin: 1.2em 0; }
+.md-preview th, .md-preview td { border: 1px solid #242a20; padding: 6px 12px; }
+.md-preview th { background: #111411; color: #F4F4F5; font-weight: 600; }
+.md-preview tr:nth-child(even) { background: #0b0d0a; }
+.md-preview hr { border: none; border-top: 1px solid #242a20; margin: 1.2em 0; }
 .md-preview img { max-width: 100%; border-radius: 6px; }
+
+/* ── Pen counts in the workspace toolbar ──────────────────────────────────── */
+.pen-counts {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px; color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pen-counts-sep { opacity: 0.55; }

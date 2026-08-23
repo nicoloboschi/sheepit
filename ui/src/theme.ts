@@ -19,19 +19,19 @@ export function applyTheme(theme: AppTheme): void {
  * without sending any bytes to (or restarting) the process. */
 export const TERMINAL_THEMES: Record<AppTheme, ITheme> = {
   dark: {
-    background: '#111111', foreground: '#d4d4d8', cursor: '#0074d9', cursorAccent: '#ffffff',
-    selectionBackground: 'rgba(0,116,217,0.25)',
-    black: '#3b3b3b', brightBlack: '#737373', red: '#f87171', brightRed: '#fca5a5',
-    green: '#4ade80', brightGreen: '#86efac', yellow: '#facc15', brightYellow: '#fde047',
-    blue: '#60a5fa', brightBlue: '#93c5fd', magenta: '#c084fc', brightMagenta: '#d8b4fe',
-    cyan: '#22d3ee', brightCyan: '#67e8f9', white: '#d4d4d8', brightWhite: '#f4f4f5',
+    background: '#111411', foreground: '#c3c9bc', cursor: '#9cbc7f', cursorAccent: '#111411',
+    selectionBackground: 'rgba(156, 188, 127, 0.24)',
+    black: '#2a3026', brightBlack: '#6f756a', red: '#e0907b', brightRed: '#efaf9d',
+    green: '#9cbc7f', brightGreen: '#b7d29a', yellow: '#d9b84a', brightYellow: '#e9ce73',
+    blue: '#80a9bd', brightBlue: '#9ec3d5', magenta: '#b79cca', brightMagenta: '#ceb8dd',
+    cyan: '#8ebfa2', brightCyan: '#aad4bc', white: '#c3c9bc', brightWhite: '#eef1e9',
   },
   light: {
-    background: '#ffffff', foreground: '#1f2937', cursor: '#006ac3', cursorAccent: '#ffffff',
-    selectionBackground: 'rgba(0,106,195,0.20)',
-    black: '#374151', brightBlack: '#6b7280', red: '#b42318', brightRed: '#dc2626',
-    green: '#087443', brightGreen: '#15803d', yellow: '#8a5a00', brightYellow: '#a16207',
-    blue: '#0759b5', brightBlue: '#2563eb', magenta: '#8b2bb1', brightMagenta: '#a855f7',
-    cyan: '#087b8c', brightCyan: '#0891b2', white: '#d1d5db', brightWhite: '#111827',
+    background: '#fbfcf8', foreground: '#22291f', cursor: '#4e7a3b', cursorAccent: '#ffffff',
+    selectionBackground: 'rgba(78, 122, 59, 0.20)',
+    black: '#37402f', brightBlack: '#6b7263', red: '#a8412a', brightRed: '#c9563a',
+    green: '#41702c', brightGreen: '#4f8735', yellow: '#8a6410', brightYellow: '#a3781a',
+    blue: '#2b5f7a', brightBlue: '#37768f', magenta: '#7a4a92', brightMagenta: '#9159ac',
+    cyan: '#1f6b52', brightCyan: '#2a8265', white: '#d3d7cb', brightWhite: '#12170f',
   },
 };

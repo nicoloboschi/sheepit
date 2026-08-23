@@ -18,6 +18,7 @@ import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from '
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
+import { configDir } from './paths.js';
 import { logger } from './server.js';
 
 const execAsync = promisify(exec);
@@ -25,7 +26,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const CONFIG_DIR = join(os.homedir(), '.config', 'vipershell');
+const CONFIG_DIR = configDir();
 const SESSIONS_FILE = join(CONFIG_DIR, 'direct-sessions.json');
 const RING_DIR = join(CONFIG_DIR, 'ring-buffers');
 const RING_SIZE = 256 * 1024;
@@ -71,7 +72,7 @@ const PROC_INFO_TTL_MS = 10_000;
  *
  *  These sweeps (ps / git / gh) are housekeeping: nothing waits on them, and
  *  they exist to keep sidebar chips fresh. On a machine loaded by the agents
- *  running *inside* vipershell — measured at load average 12–16, where even a
+ *  running *inside* sheepit — measured at load average 12–16, where even a
  *  raw `cat` echo showed a 200 ms p90 — letting them compete at normal priority
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
@@ -234,7 +235,7 @@ export function parseKittyNotificationQuery(data: string): string | null {
  *
  *  Shaped to satisfy the querying app: opencode accepts any OSC 99 whose
  *  parameters echo back its `i=` and `p=?`. Answering is what makes it send
- *  notifications at all — and vipershell genuinely does support them now, in
+ *  notifications at all — and sheepit genuinely does support them now, in
  *  the sense that it turns them into sidebar highlights. */
 export function kittyNotificationAck(id: string): string {
   return `\x1b]99;i=${id}:p=?;\x1b\\`;

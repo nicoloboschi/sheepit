@@ -18,6 +18,7 @@ import useStore, { activeTerminalSend, activePaneCycleView } from './store';
 import { requestNotificationPermission } from './utils';
 import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
+import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
 import TerminalCell from './components/TerminalCell';
 import KnowledgeDialog from './components/KnowledgeDialog';
@@ -38,7 +39,7 @@ import {
   Home, Zap, TerminalSquare, ImagePlus, BookOpen,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
-import ViperIcon from './components/ViperIcon';
+import SheepIcon from './components/SheepIcon';
 import { tildefy } from './utils';
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ export default function App() {
   // Keep explicit "waiting for you" requests visible even when the app is in
   // another browser tab. Generic background output intentionally stays quiet.
   useEffect(() => {
-    document.title = attentionCount > 0 ? `(${attentionCount}) vipershell 🐍` : 'vipershell 🐍';
+    document.title = attentionCount > 0 ? `(${attentionCount}) sheepit 🐑` : 'sheepit 🐑';
   }, [attentionCount]);
 
   // True while a popstate handler is running — prevents connectSession from
@@ -115,7 +116,7 @@ export default function App() {
     localStorage.setItem('vipershell-last-session', sessionId);
     syncHash();
     // Focus the terminal after session switch
-    setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
+    setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 100);
   }, [syncHash]);
 
   // Knowledge (notes) is an overlay dialog over the active workspace, not a
@@ -146,7 +147,7 @@ export default function App() {
       } else if (!target.zenSessionId && store.zenSessionId) {
         store.exitZen();
       }
-      setTimeout(() => window.dispatchEvent(new CustomEvent('vipershell:terminal-tab-active')), 100);
+      setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 100);
       fromPopstateRef.current = false;
     };
     // `hashchange` covers pasting a link into the address bar of an already
@@ -742,8 +743,8 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             style={{ background: 'none', border: 'none', cursor: 'pointer' }}
           >
             {workspaceIdx >= 0 && (
-              <span style={{ fontSize: 10, color: 'var(--muted-foreground)', fontWeight: 600, flexShrink: 0 }}>
-                #{workspaceIdx + 1}
+              <span style={{ fontSize: 10, color: 'var(--muted-foreground)', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                #{workspaceIdx + 1}{workspaceOrder.length > 1 && <span style={{ opacity: 0.55 }}>/{workspaceOrder.length}</span>}
               </span>
             )}
             <span key={currentSessionId} className="session-name-slide flex-1 min-w-0 truncate" style={{ fontSize: 13 }}>
@@ -848,7 +849,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="bottom" className="w-48">
               <DropdownMenuLabel className="flex justify-between items-center text-xs">
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><ViperIcon size={13} color="var(--primary)" /> <span className="brand-gradient-text">vipershell</span></span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><SheepIcon size={13} color="var(--primary)" /> <span className="brand-gradient-text">sheepit</span></span>
                 <span className="font-mono text-primary">v{version ?? '\u2026'}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -876,20 +877,12 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
           </DropdownMenu>
         </div>
 
-        {workspaceOrder.length > 1 && (
-          <div className="flex items-center justify-center gap-1.5 pb-1.5">
-            {workspaceOrder.length <= 12
-              ? workspaceOrder.map((id, i) => (
-                  <span key={id} style={{
-                    width: i === workspaceIdx ? 16 : 5, height: 5, borderRadius: 3,
-                    background: i === workspaceIdx ? 'var(--primary-gradient)' : 'var(--border)',
-                    transition: 'width 0.25s ease, background 0.25s ease', flexShrink: 0,
-                  }} />
-                ))
-              : <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>{workspaceIdx + 1} / {workspaceOrder.length}</span>
-            }
-          </div>
-        )}
+        {/* No pager dots: the name button above is the workspace selector, and
+            it carries the "#3/9" position the dots used to show. The header's
+            bottom edge is the pasture instead, the way the sidebar's is on
+            desktop — so the flock is visible on a phone without opening the
+            Pens sheet. */}
+        <FlockStrip slim />
       </header>
 
       {uploadStatus && (
@@ -902,11 +895,11 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
       {showSessions && (
         <>
           <div className="md:hidden fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowSessions(false)} />
-          <div className="md:hidden fixed left-0 right-0 z-50 flex flex-col rounded-b-2xl border-b border-x"
-            style={{ top: 48, maxHeight: '65vh', background: 'var(--card)', borderColor: 'var(--border)', overflow: 'hidden' }}>
-            <div className="px-4 py-3 border-b shrink-0 flex items-center" style={{ borderColor: 'var(--border)' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>Workspaces</span>
-            </div>
+          {/* Same chrome as the desktop sidebar: the flock band on top, the
+              pasture (grass + one sheep per pen) along the bottom. */}
+          <div className="md:hidden mobile-flock-sheet fixed left-0 right-0 z-50 flex flex-col rounded-b-2xl border-b border-x"
+            style={{ top: 48, maxHeight: '72vh', background: 'var(--card)', borderColor: 'var(--border)', overflow: 'hidden' }}>
+            <FlockBand />
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               <SessionList
                 id="topbar-session-list"
@@ -914,6 +907,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
                 send={send}
               />
             </div>
+            <FlockFooter />
           </div>
         </>
       )}

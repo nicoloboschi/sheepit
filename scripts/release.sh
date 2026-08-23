@@ -64,6 +64,6 @@ trap 'rm -f .npmrc' EXIT
 npm publish --access public
 
 echo ""
-echo "✓ vipershell@${VERSION} released"
-echo "  npm: https://www.npmjs.com/package/vipershell"
+echo "✓ sheepit@${VERSION} released"
+echo "  npm: https://www.npmjs.com/package/sheepit"
 echo "  git: v${VERSION} tag pushed to origin"

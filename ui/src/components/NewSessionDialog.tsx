@@ -164,7 +164,7 @@ export default function NewSessionDialog({ onClose, onSelect, title, icon }: New
                   Vibe session
                 </span>
                 <div className="text-[10px] text-muted-foreground" style={{ opacity: 0.5 }}>
-                  Fresh workspace in ~/.vipershell/vibe-sessions/
+                  Fresh workspace in ~/.sheepit/vibe-sessions/
                 </div>
               </div>
             </button>

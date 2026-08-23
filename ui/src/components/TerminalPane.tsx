@@ -42,7 +42,7 @@ export default function TerminalPane({ termRef, fitAddonRef, sendRef, sessionId:
     const bellDispose = term.onBell(() => {
       const state = useStore.getState();
       const session = state.currentSessionId ? state.sessionMap[state.currentSessionId] : undefined;
-      notify('vipershell \u{1F40D}', `Bell in ${session?.name ?? 'terminal'}`);
+      notify('sheepit \u{1F411}', `Bell in ${session?.name ?? 'terminal'}`);
     });
     return () => { dataDispose.dispose(); bellDispose.dispose(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

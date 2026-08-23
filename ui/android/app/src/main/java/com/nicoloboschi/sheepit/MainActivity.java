@@ -1,4 +1,4 @@
-package com.nicoloboschi.vipershell;
+package com.nicoloboschi.sheepit;
 
 import android.os.Bundle;
 import android.view.View;

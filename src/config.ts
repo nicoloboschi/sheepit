@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
+import { configDir } from './paths.js';
 
 export interface Config {
   host: string;
@@ -10,7 +10,7 @@ export interface Config {
 
 function loadConfig(): Partial<Config> {
   try {
-    const configPath = join(homedir(), '.config', 'vipershell', 'config.json');
+    const configPath = join(configDir(), 'config.json');
     const raw = readFileSync(configPath, 'utf8');
     return JSON.parse(raw);
   } catch {
@@ -20,8 +20,10 @@ function loadConfig(): Partial<Config> {
 
 const fileConfig = loadConfig();
 
+/* The VIPERSHELL_* spellings are the pre-rename names. They stay as a fallback
+ * so a machine whose shell profile still exports them keeps working. */
 export const config: Config = {
-  host: process.env.VIPERSHELL_HOST ?? fileConfig.host ?? '0.0.0.0',
-  port: parseInt(process.env.VIPERSHELL_PORT ?? String(fileConfig.port ?? 4444)),
-  logLevel: process.env.VIPERSHELL_LOG_LEVEL ?? fileConfig.logLevel ?? 'info',
+  host: process.env.SHEEPIT_HOST ?? process.env.VIPERSHELL_HOST ?? fileConfig.host ?? '0.0.0.0',
+  port: parseInt(process.env.SHEEPIT_PORT ?? process.env.VIPERSHELL_PORT ?? String(fileConfig.port ?? 4444)),
+  logLevel: process.env.SHEEPIT_LOG_LEVEL ?? process.env.VIPERSHELL_LOG_LEVEL ?? fileConfig.logLevel ?? 'info',
 };
