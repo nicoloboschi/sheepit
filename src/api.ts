@@ -6,7 +6,8 @@ import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writ
 import nodePath from 'path';
 import os from 'os';
 import si from 'systeminformation';
-import type { DirectBridge } from './direct-bridge.js';
+import type { DirectBridge, AgentState } from './direct-bridge.js';
+import { AGENT_STATES } from './direct-bridge.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -249,6 +250,31 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const { name } = req.body as { name?: string };
       if (!name?.trim()) return res.status(400).json({ error: 'name required' });
       await bridge.renameSession(req.params.id, name.trim());
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /** A coding agent reporting its own state, driven by that agent's hooks.
+   *
+   *  Authoritative, and the reason it exists: inferring "finished" from output
+   *  silence is late by design and fails outright for network-bound agents
+   *  that print nothing and burn no CPU while they think.
+   *
+   *  Kept agent-agnostic on purpose — `source` distinguishes the reporter so
+   *  Codex can post the same shapes through its own notify mechanism.
+   */
+  router.post('/sessions/:id/agent-state', (req, res) => {
+    try {
+      const { state, source } = req.body as { state?: string; source?: string };
+      if (!state || !AGENT_STATES.includes(state as AgentState)) {
+        return res.status(400).json({ error: `state must be one of ${AGENT_STATES.join(', ')}` });
+      }
+      // A hook firing just after its pane closed is ordinary, not an error
+      // worth logging loudly — but the caller should still know it missed.
+      const ok = bridge.setAgentState(req.params.id, state as AgentState, source?.slice(0, 32) || 'unknown');
+      if (!ok) return res.status(404).json({ error: 'unknown session' });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });

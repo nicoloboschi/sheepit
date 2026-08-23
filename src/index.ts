@@ -28,6 +28,9 @@ program
     const host = opts.host;
 
     const bridge = new DirectBridge();
+    // Before start(): restored sessions bake this port into their environment,
+    // which is how an agent's hooks find their way back to this server.
+    bridge.setListenPort(port);
     await bridge.start();
 
     const ai = new AIService();

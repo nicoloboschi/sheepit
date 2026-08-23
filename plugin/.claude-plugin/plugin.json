@@ -1,0 +1,6 @@
+{
+  "name": "vipershell",
+  "description": "Reports coding-agent state (busy / waiting / idle) to the vipershell session that owns this terminal, so panes light up the moment a turn ends instead of after an output-silence timeout.",
+  "version": "0.1.0",
+  "author": { "name": "Nicolò Boschi" }
+}

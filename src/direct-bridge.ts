@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
+import { config } from './config.js';
 import type { BridgeMessage, Session } from './bridge.js';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
@@ -36,6 +37,16 @@ const INPUT_PUBLISH_MS = 50;
 
 /** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
 const PERSIST_DEBOUNCE_MS = 1000;
+
+/** How long an agent-reported state is trusted before we fall back to the
+ *  output heuristics.
+ *
+ *  The report is authoritative but delivery is not guaranteed: a `kill -9`, a
+ *  crashed agent or a hook that timed out means the matching "idle" never
+ *  arrives. Without an expiry such a session would stay pinned "busy" forever
+ *  — strictly worse than the heuristic it replaced. Comfortably longer than a
+ *  model turn, short enough that a wedged session recovers on its own. */
+const AGENT_STATE_TTL_MS = 15 * 60_000;
 
 /** How much of a session's ring the preview sweep decodes. A preview is two
  *  lines; this is generous even for very wide panes. */
@@ -79,6 +90,16 @@ const MIN_ACTIVE_SPAN_MS = 2000;
  *  raw `cat` echo showed a 200 ms p90 — letting them compete at normal priority
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
+
+/** A state a coding agent reports about itself through its own hooks.
+ *
+ *  'waiting' is the one the output heuristics can never express: the agent is
+ *  alive but blocked on the user (a permission prompt), which looks identical
+ *  to "finished" from the outside — silent, no CPU.
+ *  'unknown' clears the record and hands the session back to the heuristics. */
+export type AgentState = 'busy' | 'idle' | 'waiting' | 'unknown';
+
+export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
 
 /** A desktop notification an app asked the terminal to show. */
 export interface TerminalNotification {
@@ -294,6 +315,23 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
     if ((index === 0 && base === 'agent') || base === 'cursor-agent' || token.includes('/cursor-agent/')) return 'cursor';
   }
   return null;
+}
+
+/** Environment handed to a session's shell so anything launched inside it can
+ *  report back to this server.
+ *
+ *  This is what lets an agent say "session direct-42 just finished" instead of
+ *  us inferring it from output silence. Hooks run as grandchildren of this
+ *  shell, so the variables reach them by normal inheritance.
+ *
+ *  The URL carries the port because the server is configurable (config.ts) and
+ *  a dev instance runs on a different one than production — a hook that
+ *  assumed 4444 would report into the wrong server, or none. */
+export function agentEnv(sessionId: string, port: number): Record<string, string> {
+  return {
+    VIPERSHELL_SESSION_ID: sessionId,
+    VIPERSHELL_URL: `http://127.0.0.1:${port}`,
+  };
 }
 
 /** Map with bounded concurrency, preserving input order in the result. */
@@ -716,6 +754,10 @@ export class DirectBridge {
   private lastBusy = new Map<string, boolean>();
   /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
   private oscBusy = new Map<string, boolean>();
+  /** State an agent reported through its own hooks (see setAgentState). The
+   *  strongest signal we have: the agent says so, rather than us guessing from
+   *  output. In memory only — a restart falls back to the heuristics. */
+  private agentState = new Map<string, { state: AgentState; source: string; at: number }>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -727,6 +769,9 @@ export class DirectBridge {
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
   private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
   private procInfoAt = 0;
+  /** Port the HTTP server is actually listening on, told to us by index.ts.
+   *  Defaults to the configured port for callers that never set it. */
+  private listenPort = config.port;
 
   constructor() {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -865,6 +910,39 @@ export class DirectBridge {
     this.pubsub.publish('__sessions__', { type: 'sessions', sessions });
   }
 
+  /** Record a state an agent reported about itself.
+   *
+   *  Called by POST /api/sessions/:id/agent-state, which agent hooks drive.
+   *  Deliberately agent-agnostic: Claude Code posts from its Stop/
+   *  UserPromptSubmit hooks today, Codex is expected to post the same shapes
+   *  through its own notify mechanism. Returns false for an unknown session so
+   *  the caller can answer 404 rather than accumulate state for a dead pane. */
+  setAgentState(sessionId: string, state: AgentState, source: string): boolean {
+    if (!this.sessions.has(sessionId)) return false;
+    if (state === 'unknown') this.agentState.delete(sessionId);
+    else this.agentState.set(sessionId, { state, source, at: Date.now() });
+    logger.info(`agent-state ${sessionId} -> ${state} (${source})`);
+    // Publish immediately: waiting for the next sweep would give back the very
+    // latency this whole mechanism exists to remove.
+    this.publishPreviews();
+    return true;
+  }
+
+  /** The agent-reported state, or undefined once it has gone stale. */
+  private freshAgentState(sessionId: string): AgentState | undefined {
+    const entry = this.agentState.get(sessionId);
+    if (!entry) return undefined;
+    if (Date.now() - entry.at > AGENT_STATE_TTL_MS) {
+      this.agentState.delete(sessionId);
+      return undefined;
+    }
+    return entry.state;
+  }
+
+  /** Told by index.ts once the real port is known, before start() — sessions
+   *  restored during start() bake this into their environment. */
+  setListenPort(port: number): void { this.listenPort = port; }
+
   getCachedSessions(): Session[] { return this.cachedSessions; }
 
   /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
@@ -884,7 +962,11 @@ export class DirectBridge {
       const cached = this.cachedSessions.find(s => s.id === sess.id);
       // An app that reports its own progress is authoritative; otherwise fall
       // back to sustained output, then to CPU.
-      const reported = this.oscBusy.get(sess.id);
+      // An agent that tells us outright beats anything we can infer: OSC 9;4
+      // progress, output silence, or CPU. 'waiting' means it needs the user,
+      // which is not busy — the pane should light up, not spin.
+      const agent = this.freshAgentState(sess.id);
+      const reported = agent !== undefined ? agent === 'busy' : this.oscBusy.get(sess.id);
       const busy = reported ?? (
         (now - lastOut < BUSY_SILENCE_MS && activeSpan >= MIN_ACTIVE_SPAN_MS)
         || (cached?.busy ?? false)
@@ -947,6 +1029,7 @@ export class DirectBridge {
     // client doesn't need to care which path was taken.
     const resp = await this.daemon.request({
       type: 'create', id, cwd: sessionPath, cols, rows, fromPool: true,
+      env: agentEnv(id, this.listenPort),
     });
 
     const sess: DirectSession = {
@@ -1405,7 +1488,7 @@ export class DirectBridge {
       } else {
         // Session died (reboot). Recreate with fresh shell, restore scrollback.
         try {
-          const resp = await this.daemon.request({ type: 'create', id, cwd: info.path, cols: 120, rows: 40 });
+          const resp = await this.daemon.request({ type: 'create', id, cwd: info.path, cols: 120, rows: 40, env: agentEnv(id, this.listenPort) });
           const sess: DirectSession = {
             id, name: info.name, path: info.path, pid: resp.pid ?? 0,
             ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
