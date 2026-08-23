@@ -281,6 +281,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
+  /** Which session owns this process? Used by agent hooks that have no
+   *  VIPERSHELL_SESSION_ID — panes created before it existed, or an agent
+   *  started outside the shell we seeded. The caller sends its process
+   *  ancestry, nearest first. */
+  router.post('/sessions/resolve', (req, res) => {
+    try {
+      const { pids } = req.body as { pids?: unknown };
+      if (!Array.isArray(pids) || pids.some(p => !Number.isInteger(p))) {
+        return res.status(400).json({ error: 'pids must be an array of integers' });
+      }
+      const sessionId = bridge.resolveSessionByPids(pids.slice(0, 32) as number[]);
+      if (!sessionId) return res.status(404).json({ error: 'no session owns those pids' });
+      res.json({ sessionId });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   router.get('/git/:sessionId', async (req, res) => {
     try {
       const { sessionId } = req.params;

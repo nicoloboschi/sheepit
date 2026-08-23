@@ -7,6 +7,9 @@ import { DirectBridge } from './direct-bridge.js';
 import { AIService } from './ai.js';
 import { createApp, logger } from './server.js';
 import { config } from './config.js';
+import { ensureAgentPluginInstalled } from './plugin-install.js';
+import { writeFileSync, mkdirSync } from 'fs';
+import { homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgVersion: string = (() => {
@@ -41,6 +44,18 @@ program
 
     server.listen(port, host, () => {
       const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
+
+      // Advertise where we are, for agent hooks that were not given
+      // VIPERSHELL_URL — panes created before this existed, or an agent
+      // launched outside the shell we seeded. Always loopback: a hook runs on
+      // this machine, and the bind host may be 0.0.0.0.
+      try {
+        const dir = join(homedir(), '.config', 'vipershell');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'server.json'),
+          JSON.stringify({ url: `http://127.0.0.1:${port}`, port, pid: process.pid }, null, 2) + '\n');
+      } catch { /* advertising is best-effort; the server still works */ }
+
       console.log('');
       console.log('  \x1b[1m\x1b[32m\u{1F40D} vipershell\x1b[0m');
       console.log('');
@@ -49,6 +64,10 @@ program
       console.log('');
       logger.info(`vipershell listening on ${url}`);
     });
+
+    // Not awaited: this shells out to the Claude CLI, and nothing about
+    // serving terminals should wait on it.
+    void ensureAgentPluginInstalled();
 
     const shutdown = async () => {
       logger.info('Shutting down\u2026');

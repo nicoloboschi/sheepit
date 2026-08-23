@@ -1,11 +1,11 @@
 {
   "name": "vipershell",
   "version": "1.6.0",
-  "description": "Your machine, anywhere — a full-featured terminal in your browser. No tmux required.",
+  "description": "Your machine, anywhere \u2014 a full-featured terminal in your browser. No tmux required.",
   "type": "module",
   "main": "electron/main.cjs",
   "license": "MIT",
-  "author": "Nicolò Boschi",
+  "author": "Nicol\u00f2 Boschi",
   "homepage": "https://github.com/nicoloboschi/vipershell#readme",
   "repository": {
     "type": "git",
@@ -33,7 +33,9 @@
   "files": [
     "dist",
     "ui/dist",
-    "scripts/postinstall.sh"
+    "scripts/postinstall.sh",
+    "plugin",
+    ".claude-plugin"
   ],
   "scripts": {
     "build": "tsc && npm run build:ui",

@@ -922,6 +922,21 @@ export class DirectBridge {
     if (state === 'unknown') this.agentState.delete(sessionId);
     else this.agentState.set(sessionId, { state, source, at: Date.now() });
     logger.info(`agent-state ${sessionId} -> ${state} (${source})`);
+
+    // 'waiting' means the agent is blocked on the user — a permission prompt,
+    // not a finished turn. It must be announced as attention, because the
+    // busy->false transition alone is what the UI turns into "X finished", and
+    // reporting a prompt as a completed turn is worse than saying nothing.
+    //
+    // Published BEFORE the preview below, and the ordering is load-bearing:
+    // the attention handler clears the client's busy flag, so the preview that
+    // follows sees it already false and does not also fire "finished".
+    if (state === 'waiting') {
+      this.pubsub.publish('__sessions__', {
+        type: 'attention', session_id: sessionId, message: 'needs your input',
+      });
+    }
+
     // Publish immediately: waiting for the next sweep would give back the very
     // latency this whole mechanism exists to remove.
     this.publishPreviews();
@@ -937,6 +952,25 @@ export class DirectBridge {
       return undefined;
     }
     return entry.state;
+  }
+
+  /** Find the session that owns one of these process ids.
+   *
+   *  The fallback for panes that predate VIPERSHELL_SESSION_ID, and the reason
+   *  we do not have to write `export` into a live shell to retrofit them —
+   *  which would type into whatever is running there. A hook instead walks its
+   *  own ancestry (hook -> agent -> shell) and asks us which session that
+   *  shell belongs to.
+   *
+   *  Ordered by the caller's chain, so the nearest ancestor wins if a session
+   *  somehow nests inside another. */
+  resolveSessionByPids(pids: number[]): string | null {
+    for (const pid of pids) {
+      for (const sess of this.sessions.values()) {
+        if (sess.pid === pid) return sess.id;
+      }
+    }
+    return null;
   }
 
   /** Told by index.ts once the real port is known, before start() — sessions
