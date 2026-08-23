@@ -314,7 +314,7 @@ Session name:`;
       const invocation = buildNamerInvocation(provider, prompt);
       const cli = invocation.command;
 
-      logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of terminal)`);
+      logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of exchange)`);
       const t0 = Date.now();
 
       let name: string;

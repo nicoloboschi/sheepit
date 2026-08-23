@@ -26,7 +26,9 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 const STATE = process.argv[2];
-const SOURCE = process.env.VIPERSHELL_AGENT_SOURCE || 'claude';
+// Overridden per-agent below once the payload has been read; the env var is
+// an escape hatch for anything invoking this script directly.
+let SOURCE = process.env.VIPERSHELL_AGENT_SOURCE || 'agent';
 const TIMEOUT_MS = 3000;
 
 function done() { process.exit(0); }
@@ -141,19 +143,35 @@ async function run(raw) {
     let payload = {};
     try { payload = JSON.parse(raw) ?? {}; } catch { /* optional */ }
 
+    // Which agent is reporting. Codex carries turn_id on every event, Claude
+    // Code carries none — last_assistant_message is not usable for this, since
+    // it only appears on Stop and would mislabel the other events.
+    if (!process.env.VIPERSHELL_AGENT_SOURCE) {
+      SOURCE = typeof payload.agent_type === 'string' && payload.agent_type
+        ? payload.agent_type
+        : payload.turn_id !== undefined ? 'codex' : 'claude';
+    }
+
     // Carry the actual interaction so the server can name the session from
     // what was asked and answered, instead of scraping the TUI. The prompt is
     // handed to us directly; the reply has to come from the transcript.
     const prompt = typeof payload.prompt === 'string'
       ? payload.prompt.trim().slice(0, MAX_TURN_CHARS)
       : undefined;
-    const response = STATE === 'idle' && payload.transcript_path
-      ? lastAssistantText(payload.transcript_path)
-      : undefined;
+    // Codex hands the reply over directly; Claude Code does not, so there we
+    // read it out of the transcript. Prefer the given value: it is exact, and
+    // the two agents do not share a transcript format, so parsing Codex's with
+    // Claude's shape would silently yield nothing.
+    const response = STATE !== 'idle' ? undefined
+      : typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()
+        ? payload.last_assistant_message.trim().slice(0, MAX_TURN_CHARS)
+        : payload.transcript_path
+          ? lastAssistantText(payload.transcript_path)
+          : undefined;
 
     await post(
       `${base}/api/sessions/${encodeURIComponent(sessionId)}/agent-state`,
-      { state: STATE, source: SOURCE, agentSessionId: payload.session_id, prompt, response },
+      { state: STATE, source: SOURCE, event: payload.hook_event_name, agentSessionId: payload.session_id, prompt, response },
       controller.signal,
     );
   } catch {

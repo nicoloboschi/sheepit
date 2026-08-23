@@ -2,16 +2,48 @@
   "description": "Report agent state to vipershell",
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" busy", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" busy",
+            "timeout": 5
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" idle", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" idle",
+            "timeout": 5
+          }
+        ]
+      }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" waiting", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" waiting",
+            "timeout": 5
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" unknown", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" unknown",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

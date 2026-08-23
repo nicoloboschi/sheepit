@@ -267,8 +267,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    */
   router.post('/sessions/:id/agent-state', (req, res) => {
     try {
-      const { state, source, prompt, response } = req.body as
-        { state?: string; source?: string; prompt?: string; response?: string };
+      const { state, source, event, prompt, response } = req.body as
+        { state?: string; source?: string; event?: string; prompt?: string; response?: string };
       if (!state || !AGENT_STATES.includes(state as AgentState)) {
         return res.status(400).json({ error: `state must be one of ${AGENT_STATES.join(', ')}` });
       }
@@ -277,7 +277,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const ok = bridge.setAgentState(
         req.params.id,
         state as AgentState,
-        source?.slice(0, 32) || 'unknown',
+        `${source?.slice(0, 32) || 'unknown'}${event ? `/${String(event).slice(0, 32)}` : ''}`,
         {
           // Bounded here too: the endpoint is reachable by anything local, and
           // this text ends up in an LLM prompt.

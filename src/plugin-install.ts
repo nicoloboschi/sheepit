@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -20,6 +20,26 @@ function packageRoot(): string {
 function shippedVersion(root: string): string | null {
   try {
     return JSON.parse(readFileSync(join(root, 'plugin', '.claude-plugin', 'plugin.json'), 'utf8')).version ?? null;
+  } catch { return null; }
+}
+
+/** Version currently installed into Codex, if any.
+ *
+ *  Two things have to agree. config.toml is what makes Codex load the plugin,
+ *  and the cache directory is what carries its version — and they can drift:
+ *  a cache directory left behind by an earlier install made this report a
+ *  version for a plugin Codex was no longer loading at all, so the next start
+ *  saw nothing to do and the plugin stayed silently absent. Treat a missing
+ *  config entry as not installed, whatever is on disk. */
+function codexInstalledVersion(): string | null {
+  try {
+    const config = readFileSync(join(homedir(), '.codex', 'config.toml'), 'utf8');
+    if (!config.includes(`[plugins."${PLUGIN_ID}"]`)) return null;
+  } catch { return null; }
+  try {
+    const dir = join(homedir(), '.codex', 'plugins', 'cache', MARKETPLACE, MARKETPLACE);
+    const versions = readdirSync(dir).filter(v => /^\d/.test(v)).sort();
+    return versions.length ? versions[versions.length - 1]! : null;
   } catch { return null; }
 }
 
@@ -56,6 +76,51 @@ export async function ensureAgentPluginInstalled(): Promise<void> {
   const shipped = shippedVersion(root);
   if (!shipped || !existsSync(join(root, '.claude-plugin', 'marketplace.json'))) return;
 
+  await Promise.all([
+    installIntoClaude(root, shipped),
+    installIntoCodex(root, shipped),
+  ]);
+}
+
+/**
+ * Codex reads the very same .claude-plugin/marketplace.json and the same
+ * hooks/hooks.json, so one plugin serves both agents.
+ *
+ * It has no in-place upgrade for a local marketplace — `plugin add` on an
+ * installed plugin is a no-op — so an update is remove-then-add. Its plugin
+ * system is also independent of the legacy `notify` config key, which is
+ * frequently already spoken for (Codex Computer Use sets it), and must not be
+ * disturbed.
+ */
+async function installIntoCodex(root: string, shipped: string): Promise<void> {
+  const current = codexInstalledVersion();
+  if (current === shipped) return;
+
+  try {
+    await execFileAsync('codex', ['--version'], { timeout: 10_000 });
+  } catch { return; }
+
+  try {
+    await execFileAsync('codex', ['plugin', 'marketplace', 'add', root], { timeout: 30_000 });
+    if (current) await execFileAsync('codex', ['plugin', 'remove', PLUGIN_ID], { timeout: 30_000 });
+    await execFileAsync('codex', ['plugin', 'add', PLUGIN_ID], { timeout: 60_000 });
+
+    const after = codexInstalledVersion();
+    if (after !== shipped) {
+      logger.info(`Codex plugin still at ${after ?? 'none'} after install (wanted ${shipped})`);
+      return;
+    }
+    logger.info(
+      current
+        ? `Updated Codex plugin ${PLUGIN_ID} ${current} -> ${shipped}`
+        : `Installed Codex plugin ${PLUGIN_ID} ${shipped}`,
+    );
+  } catch (e) {
+    logger.info(`Could not install the Codex plugin (agent state falls back to none): ${e}`);
+  }
+}
+
+async function installIntoClaude(root: string, shipped: string): Promise<void> {
   const current = installedVersion();
   if (current === shipped) return;
 
