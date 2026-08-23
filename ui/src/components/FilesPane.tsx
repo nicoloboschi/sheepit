@@ -50,16 +50,16 @@ const EXT_ICON_COLORS: Record<string, string> = {
   js: '#f0db4f', jsx: '#f0db4f',                    // JavaScript yellow
   py: '#3572A5',                                     // Python blue
   go: '#00ADD8', rs: '#dea584', java: '#b07219',     // Go/Rust/Java
-  json: '#FACC15', yaml: '#FACC15', yml: '#FACC15', toml: '#FACC15', // Config yellow
+  json: '#D9B84A', yaml: '#D9B84A', yml: '#D9B84A', toml: '#D9B84A', // Config yellow
   html: '#e34c26', css: '#563d7c', scss: '#c6538c',  // Web
-  sh: '#4ADE80', bash: '#4ADE80', zsh: '#4ADE80',    // Shell green
+  sh: '#9CBC7F', bash: '#9CBC7F', zsh: '#9CBC7F',    // Shell green
   md: 'var(--muted-foreground)', txt: 'var(--muted-foreground)',                      // Text muted
   svg: '#FF9A00',                                     // SVG orange
 };
 
 function getIconColor(name: string, isDir: boolean, gitColor: string | null): string {
   if (gitColor) return gitColor;
-  if (isDir) return '#93C5FD';
+  if (isDir) return '#8EBFA2';
   return EXT_ICON_COLORS[ext(name)] ?? 'var(--muted-foreground)';
 }
 
@@ -79,11 +79,11 @@ const ext     = (name: string): string => (name ?? '').split('.').pop()?.toLower
 // ── File list entry ───────────────────────────────────────────────────────────
 
 const GIT_COLORS: Record<string, string> = {
-  modified:  '#FACC15',
-  untracked: '#4ADE80',
-  added:     '#4ADE80',
-  deleted:   '#F87171',
-  renamed:   '#d2a8ff',
+  modified:  '#D9B84A',
+  untracked: '#9CBC7F',
+  added:     '#9CBC7F',
+  deleted:   '#E0907B',
+  renamed:   '#b79cca',
 };
 
 const GIT_LABELS: Record<string, string> = {
@@ -112,7 +112,7 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
     ? Object.keys(gitStatus).some(p => p.startsWith(entry.path + '/'))
     : false;
 
-  const dirChangeColor = dirHasChanges ? '#FACC15' : null;
+  const dirChangeColor = dirHasChanges ? '#D9B84A' : null;
   const gitColor = status ? GIT_COLORS[status] : dirChangeColor;
   const fileColor = gitColor ?? (entry.isDir ? 'var(--foreground)' : 'var(--muted-foreground)');
   const iconColor = getIconColor(entry.name, entry.isDir, gitColor ?? null);
@@ -124,7 +124,7 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '4px 10px', cursor: 'pointer', userSelect: 'none',
         background: active ? 'var(--accent)' : focused ? 'var(--accent)' : 'transparent',
-        borderLeft: focused ? '2px solid #0074d9' : '2px solid transparent',
+        borderLeft: focused ? '2px solid #9cbc7f' : '2px solid transparent',
         borderBottom: '1px solid var(--card)',
       }}
       onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'var(--card)'; }}
@@ -143,7 +143,7 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
         </span>
       )}
       {dirHasChanges && (
-        <span title="Contains modified files" style={{ width: 6, height: 6, borderRadius: '50%', background: '#FACC15', flexShrink: 0 }} />
+        <span title="Contains modified files" style={{ width: 6, height: 6, borderRadius: '50%', background: '#D9B84A', flexShrink: 0 }} />
       )}
       {!entry.isDir && entry.size > 0 && !status && (
         <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0 }}>{fmtSize(entry.size)}</span>
@@ -194,7 +194,7 @@ function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
               color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
               background: active ? 'var(--card)' : 'transparent',
               borderRight: '1px solid var(--border)',
-              borderTop: active ? '2px solid #0074d9' : '2px solid transparent',
+              borderTop: active ? '2px solid #9cbc7f' : '2px solid transparent',
               maxWidth: 200, flexShrink: 0,
             }}
             onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'var(--card)'; }}
@@ -279,7 +279,7 @@ function SearchResult({ result, isActive, onClick, query }: SearchResultProps) {
     let key = 0;
     while ((idx = remaining.toLowerCase().indexOf(lowerQuery)) !== -1) {
       if (idx > 0) parts.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
-      parts.push(<span key={key++} style={{ background: '#FACC1540', color: '#e3b341', borderRadius: 2, padding: '0 1px' }}>{remaining.slice(idx, idx + query.length)}</span>);
+      parts.push(<span key={key++} style={{ background: '#D9B84A40', color: '#d9b84a', borderRadius: 2, padding: '0 1px' }}>{remaining.slice(idx, idx + query.length)}</span>);
       remaining = remaining.slice(idx + query.length);
     }
     if (remaining) parts.push(<span key={key++}>{remaining}</span>);
@@ -446,7 +446,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
             title={glob ? `File filter active: ${glob}` : 'Filter by file type (e.g. *.ts, *.jsx)'}
             style={{
               background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, display: 'flex',
-              color: showGlob || glob ? '#0074d9' : 'var(--muted-foreground)',
+              color: showGlob || glob ? '#9cbc7f' : 'var(--muted-foreground)',
             }}
           >
             <Filter size={12} />
@@ -523,7 +523,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
               >
                 <File size={11} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
                 <span style={{
-                  fontSize: 11, color: '#93C5FD',
+                  fontSize: 11, color: '#8EBFA2',
                   fontFamily: '"JetBrains Mono",monospace',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
@@ -1023,14 +1023,14 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <button
             onClick={() => { setSearchMode(m => !m); setShowFileFilter(false); }}
             title={searchMode ? 'Exit search' : 'Search in this folder'}
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: searchMode ? '#0074d9' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: searchMode ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
           >
             <Search size={12} />
           </button>
           <button
             onClick={() => { setShowFileFilter(f => { if (!f) setTimeout(() => fileFilterRef.current?.focus(), 0); return !f; }); setFileFilter(''); }}
             title="Filter visible entries"
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showFileFilter ? '#0074d9' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showFileFilter ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
           >
             <Filter size={12} />
           </button>
@@ -1089,7 +1089,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       background: 'var(--secondary)', borderBottom: '1px solid var(--card)',
     }}>
       {creating === 'folder'
-        ? <FolderPlus size={13} color="#93C5FD" style={{ flexShrink: 0 }} />
+        ? <FolderPlus size={13} color="#8EBFA2" style={{ flexShrink: 0 }} />
         : <FilePlus size={13} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
       <input
         ref={createInputRef}
@@ -1159,13 +1159,13 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       {isDragOver && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
-          background: 'rgba(31, 111, 235, 0.12)',
-          border: '2px dashed #1f6feb',
+          background: 'rgba(124, 168, 96, 0.12)',
+          border: '2px dashed #9CBC7F',
           borderRadius: 4,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
         }}>
-          <div style={{ textAlign: 'center', color: '#0074d9' }}>
+          <div style={{ textAlign: 'center', color: '#9cbc7f' }}>
             <Upload size={28} style={{ marginBottom: 6 }} />
             <div style={{ fontSize: 13, fontWeight: 500 }}>
               Drop to upload to /{dir?.split('/').pop() ?? ''}
@@ -1178,7 +1178,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
           background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6,
           padding: '6px 14px', fontSize: 12, zIndex: 40, whiteSpace: 'nowrap', pointerEvents: 'none',
-          color: uploadMsg.includes('failed') ? '#F87171' : '#4ADE80',
+          color: uploadMsg.includes('failed') ? '#E0907B' : '#9CBC7F',
         }}>
           {uploadMsg}
         </div>
@@ -1227,7 +1227,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
               cursor: 'row-resize', zIndex: 10,
               background: 'var(--border)',
             }}
-            onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#0074d9'}
+            onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#9cbc7f'}
             onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!draggingRef.current) e.currentTarget.style.background = 'var(--border)'; }}
           />
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>

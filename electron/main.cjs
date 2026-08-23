@@ -3,10 +3,10 @@ const { spawn } = require('child_process');
 const net = require('net');
 const path = require('path');
 
-const isDev = process.env.VIPERSHELL_DESKTOP_DEV === '1';
+const isDev = process.env.SHEEPIT_DESKTOP_DEV === '1';
 const rootDir = path.resolve(__dirname, '..');
-const backendPort = Number(process.env.VIPERSHELL_DESKTOP_PORT ?? 4445);
-const vitePort = Number(process.env.VIPERSHELL_VITE_PORT ?? 4444);
+const backendPort = Number(process.env.SHEEPIT_DESKTOP_PORT ?? 4445);
+const vitePort = Number(process.env.SHEEPIT_VITE_PORT ?? 4444);
 
 /** @type {import('child_process').ChildProcess[]} */
 const ownedProcesses = [];
@@ -45,27 +45,27 @@ async function ensureBackend() {
   if (await canConnect(backendPort)) return;
 
   if (isDev) {
-    const node = process.env.VIPERSHELL_NODE_BINARY || process.env.npm_node_execpath || 'node';
+    const node = process.env.SHEEPIT_NODE_BINARY || process.env.npm_node_execpath || 'node';
     start(node, [
       path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
       'watch', '--clear-screen=false', '--ignore', 'ui/**', '--ignore', 'bench/**',
       '--ignore', '*.md', '--ignore', 'branding-preview.html',
       'src/index.ts', '--port', String(backendPort), '--log-level', 'debug',
-    ], { NODE_ENV: 'development', VIPERSHELL_HOST: '127.0.0.1' });
+    ], { NODE_ENV: 'development', SHEEPIT_HOST: '127.0.0.1' });
   } else {
     start(process.execPath, [path.join(app.getAppPath(), 'dist', 'index.js'),
       '--host', '127.0.0.1', '--port', String(backendPort)], {
       ELECTRON_RUN_AS_NODE: '1',
       NODE_ENV: 'production',
-      VIPERSHELL_HOST: '127.0.0.1',
+      SHEEPIT_HOST: '127.0.0.1',
     });
   }
-  await waitForPort(backendPort, 'Vipershell backend');
+  await waitForPort(backendPort, 'Sheepit backend');
 }
 
 async function ensureVite() {
   if (await canConnect(vitePort)) return;
-  const node = process.env.VIPERSHELL_NODE_BINARY || process.env.npm_node_execpath || 'node';
+  const node = process.env.SHEEPIT_NODE_BINARY || process.env.npm_node_execpath || 'node';
   start(node, [path.join(rootDir, 'ui', 'node_modules', 'vite', 'bin', 'vite.js'),
     '--host', '127.0.0.1', '--port', String(vitePort)], { NODE_ENV: 'development' });
   await waitForPort(vitePort, 'Vite');
@@ -101,7 +101,7 @@ function stopOwnedProcesses() {
 }
 
 app.whenReady().then(createWindow).catch((error) => {
-  dialog.showErrorBox('Vipershell failed to start', error.stack || error.message);
+  dialog.showErrorBox('Sheepit failed to start', error.stack || error.message);
   app.quit();
 });
 

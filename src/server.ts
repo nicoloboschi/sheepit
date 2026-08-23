@@ -8,6 +8,7 @@ import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import type { BridgeMessage } from './bridge.js';
 import type { AIService } from './ai.js';
+import { stateDir } from './paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -224,12 +225,11 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             if (path === '__vibe__') {
               const { mkdirSync } = await import('fs');
               const { join } = await import('path');
-              const { homedir } = await import('os');
               const adjectives = ['cosmic', 'neon', 'quantum', 'cyber', 'stellar', 'lunar', 'solar', 'atomic', 'hyper', 'turbo', 'ultra', 'mega', 'super', 'blazing', 'radiant', 'vivid', 'primal', 'astral', 'mystic', 'pixel'];
               const nouns = ['phoenix', 'nebula', 'vortex', 'spark', 'pulse', 'nova', 'flux', 'drift', 'surge', 'wave', 'storm', 'forge', 'core', 'orbit', 'prism', 'cipher', 'vertex', 'synth', 'echo', 'glyph'];
               const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)]!;
               const name = `${pick(adjectives)}-${pick(nouns)}`;
-              const vibeDir = join(homedir(), '.vipershell', 'vibe-sessions', name);
+              const vibeDir = join(stateDir(), 'vibe-sessions', name);
               mkdirSync(vibeDir, { recursive: true });
               path = vibeDir;
             }

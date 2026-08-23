@@ -1,4 +1,8 @@
-# vipershell — notes for Claude
+# sheepit — notes for Claude
+
+The project was called **vipershell** until the rebrand. A few things
+deliberately still say `vipershell` — see [Legacy names](#legacy-names-dont-rename-just-document)
+at the bottom. Everything a user reads says sheepit.
 
 ## Glossary (authoritative — use these terms)
 
@@ -17,11 +21,32 @@ unless the surrounding code is already being rewritten.
 | **Active pane** | The focused pane inside the active workspace. Drives the Git/Files/Search tabs. Stored as `gridStates[workspaceId].activeCell`. |
 | **Active workspace** | The workspace shown in the main area (sidebar selection). Stored as `currentSessionId` (legacy name; really means this). |
 
+### The flock — user-facing vocabulary
+
+The UI talks about sessions the way a shepherd talks about sheep. These words
+appear in **UI strings only**; the code keeps the glossary names above. The
+mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
+
+| UI word | Means | Store field |
+|---|---|---|
+| **Pen** | A workspace — one sidebar row | `workspaces[id]` |
+| **The flock** | Every workspace together (the sidebar heading) | `workspaceOrder` |
+| **Bleating** | A pane waiting for your input | `sessionNeedsAttention[sessionId]` |
+| **Grazing** | A pane with a command still running | `sessionBusy[sessionId]` |
+
+A pane that is neither bleating nor grazing is just standing there; it gets no
+word of its own. Bleating wins over grazing when both would apply, so the two
+counts never double-count a pane.
+
+Write `pen` in UI copy, `workspace` in code. A comment explaining a UI string
+may use either, whichever makes the sentence clearer.
+
 ### Terms to avoid
 - ❌ "primary session" / "primary pane" → ✅ **root pane**
-- ❌ "grid" as a user-facing noun (in UI strings, comments, or docs) → ✅ **workspace**
+- ❌ "grid" as a user-facing noun (in UI strings, comments, or docs) → ✅ **workspace** (or **pen** in UI copy)
 - ❌ "split" as a noun → ✅ **pane** (or "non-root pane" when the distinction matters)
 - ❌ "session" to mean "sidebar row" → ✅ **workspace**
+- ❌ "vipershell" in anything a user reads → ✅ **sheepit**
 
 ### Legacy field names — don't rename, just document
 - `gridStates` in the store = the per-workspace state map (keyed by `workspaceId`).
@@ -29,51 +54,140 @@ unless the surrounding code is already being rewritten.
 - `currentSessionId` in the store = the **active workspace id** (which is the root pane's session id — same thing).
 - `splitSessionIds` in the store = session ids of non-root panes that must stay hidden from the sidebar.
 
-## Brand palette — Hindsight colors
+## Brand palette — pasture colors
 
-The brand color is a **blue → teal gradient** (Hindsight palette). Do not
-reintroduce green as a brand color; green is reserved for semantic "success"
-/ "addition" / "healthy" states only (git additions, PASS checks, clean tree,
-connected status dot, ANSI green, etc.).
+The brand color is a **meadow → moss gradient**: the greens of a field at
+dusk on near-black olive surfaces. Green is now the brand *and* carries
+"success" / "addition" / "healthy" — the two roles share `#9CBC7F`. What
+distinguishes a state is the second colour: **amber** for wants-attention and
+warnings, **terracotta** for errors and deletions.
+
+Do not reintroduce blue or teal as a brand color. The remaining cool tone,
+`--bleating`, is a moss teal used for one thing only: a pane that is waiting on
+you.
 
 ### Tokens
 
 ```
 Primary gradient (default):
-  linear-gradient(135deg, #0074d9 0%, #009296 100%)
-    start: #0074d9   (blue)
-    end:   #009296   (teal)
+  linear-gradient(135deg, #9cbc7f 0%, #6fa98c 100%)
+    start: #9cbc7f   (meadow)
+    end:   #6fa98c   (moss)
 
-Hover / darker variant:
-  linear-gradient(135deg, #005db0 0%, #007a7d 100%)
+Hover / brighter variant (the base is light, so hover goes UP, not down):
+  linear-gradient(135deg, #b0ce93 0%, #83bc9f 100%)
 
-Light tint (10–15% alpha) — used for soft backgrounds:
-  rgba(0, 116, 217, 0.1) → rgba(0, 146, 150, 0.1)
+Light tint (10% alpha) — used for soft backgrounds:
+  rgba(156, 188, 127, 0.1) → rgba(111, 169, 140, 0.1)
 
 Dark surface gradient (control-plane backdrop):
-  linear-gradient(135deg, #0f1419 0%, #0d1117 100%)
+  linear-gradient(135deg, #151a13 0%, #10130f 100%)
 ```
+
+The light theme runs the same gradient in a deeper moss (`#4e7a3b` → `#2f6b55`)
+because the meadow tones vanish against a pale page. It also flips
+`--primary-foreground` to white; in dark it is the near-black `#0b0d0a`, since
+the gradient fill itself is the light surface there.
 
 ### CSS variables (defined in `ui/src/style.css`)
 
-| var                        | value                                     | use for                          |
-|----------------------------|-------------------------------------------|----------------------------------|
-| `--primary`                | `#0074d9`                                 | solid brand (borders, text, fg)  |
-| `--primary-end`            | `#009296`                                 | gradient end / secondary accent  |
-| `--primary-gradient`       | `linear-gradient(135deg, #0074d9, #009296)` | buttons, filled surfaces       |
-| `--primary-gradient-hover` | `linear-gradient(135deg, #005db0, #007a7d)` | hover state for the above      |
-| `--primary-tint`           | `linear-gradient(135deg, rgba(0,116,217,.1), rgba(0,146,150,.1))` | soft backgrounds |
-| `--dark-surface-gradient`  | `linear-gradient(135deg, #0f1419, #0d1117)` | control-plane backdrops         |
-| `--ring`                   | `#0074d9`                                 | focus outlines                   |
-| `--success`                | `#4ADE80`                                 | **semantic green — keep**        |
+| var                        | value                                       | use for                          |
+|----------------------------|---------------------------------------------|----------------------------------|
+| `--primary`                | `#9cbc7f`                                   | solid brand (borders, text, fg)  |
+| `--primary-end`            | `#6fa98c`                                   | gradient end / secondary accent  |
+| `--primary-foreground`     | `#0b0d0a` (dark) / `#ffffff` (light)        | text **on** a gradient fill      |
+| `--primary-gradient`       | `linear-gradient(135deg, #9cbc7f, #6fa98c)` | buttons, filled surfaces         |
+| `--primary-gradient-hover` | `linear-gradient(135deg, #b0ce93, #83bc9f)` | hover state for the above        |
+| `--primary-tint`           | 10% alpha version of the gradient           | soft backgrounds                 |
+| `--dark-surface-gradient`  | `linear-gradient(135deg, #151a13, #10130f)` | control-plane backdrops          |
+| `--ring`                   | `#9cbc7f`                                   | focus outlines                   |
+| `--success`                | `#9CBC7F`                                   | healthy / additions / clean tree |
+| `--warning`                | `#D9B84A`                                   | amber — dirty tree, unseen output|
+| `--destructive`            | `#E0907B`                                   | terracotta — errors, deletions   |
+| `--bleating`               | `#8EBFA2`                                   | **only** for "wants your input"  |
+| `--grazing`                | `#9CBC7F`                                   | running; also the grass strip    |
+
+### The pasture (sidebar footer)
+
+`FlockGrass` draws the grass strip and `FlockSheep` puts one 🐑 per pen in it,
+walking. A sheep's behaviour mirrors its pen: bleating sheep hop and puff a
+"baa", grazing sheep keep their heads down, idle sheep plod. Rules:
+
+- Both are pure CSS animation over a real emoji glyph — **no image requests**,
+  nothing to load, and it stays correct on a LAN with no internet route.
+- Blade and lane positions come from a fixed integer hash, never `Math.random`.
+  A field that reshuffles itself every time a session goes busy is a
+  distraction, not decoration.
+- The strip is `pointer-events: none` end to end. It must never eat a click
+  meant for the last pen card above it.
+- Everything stops under `prefers-reduced-motion: reduce` — the flock stays,
+  the movement goes.
+- The light theme swaps the sheep's knock-back for a drop-shadow outline;
+  a white sheep on a pale field is otherwise invisible.
+- `FlockChrome` exports the band, the strip and the footer. The desktop sidebar
+  and the mobile Pens sheet both use them, and the mobile header carries a
+  `slim` strip as its bottom edge — the flock has to be visible on a phone
+  without opening a sheet.
+
+### Icons
+
+- **Browser / PWA / apple-touch** (`ui/public/icon-*.png`, `favicon-*.png`):
+  the real 🐑 emoji, rasterised onto the dark pasture plate with a grass line.
+  Regenerate by rendering the glyph and compositing — an emoji-in-SVG `data:`
+  favicon depends on the OS emoji font being reachable from the favicon
+  rasteriser, which is not true everywhere.
+- **Android** (`ic_stat_sheepit.xml`, `ic_launcher_fg.xml`): the drawn
+  `SheepIcon` glyph, not the emoji. A notification small icon is a *silhouette*
+  — only its alpha survives — so it has to be line art, and the launcher stays
+  consistent with it.
+- **In-app** (`ui/src/components/SheepIcon.tsx`): a terminal window wearing a
+  fleece. Used where the mark needs to take `currentColor` (settings menu,
+  connect screen). The sidebar wordmark uses the emoji instead.
+
+### Pane chrome
+
+A pane's header and its footer bar are the two halves of one frame, so they
+share `--pane-chrome` / `--pane-chrome-active` rather than each inventing a
+gradient. The light-theme variants live on the tokens, which is why neither
+component branches on `theme` in JS any more.
+
+The footer bar carries **identity, not telemetry**: agent chip, branch, PR, and
+the cwd flush right. CPU / memory / URL-count readouts were deliberately
+removed. The process list (with kill) and the detected-link list are still
+real tools, so they keep one small `ListTree` handle that appears only when
+there is something behind it — don't reintroduce the inline readouts.
 
 ### Rules of thumb
 
-- **Solid brand color** → `var(--primary)` (`#0074d9`).
+- **Solid brand color** → `var(--primary)` (`#9cbc7f`).
 - **Filled buttons / hero surfaces** → `background: var(--primary-gradient)`,
-  `var(--primary-gradient-hover)` on hover.
+  `var(--primary-gradient-hover)` on hover, and `color: var(--primary-foreground)`
+  for the text — never a literal `#fff`, which disappears on the light fill.
 - **Soft tinted backgrounds** → `var(--primary-tint)`.
-- **Semantic success / additions / healthy** → stays `var(--success)` /
-  `#4ADE80`. Do not replace with blue.
-- **ANSI `green` in xterm theme** → stays `#4ADE80` (it's the ANSI green slot,
-  not brand).
+- **Surfaces** are olive-tinted near-blacks, not neutral greys:
+  `#0b0d0a` page, `#111411` card, `#181c16` sidebar/popover, `#232820` accent.
+- **ANSI palette** (`ui/src/theme.ts`) is tuned to the same pasture range —
+  sage green, amber yellow, terracotta red, muted mauve. Editing it restyles a
+  running Claude/Codex session without sending it any bytes.
+- **Vendor marks stay vendor-coloured**: `ClaudeIcon` keeps `#CC785C`, and the
+  file-type colours in `FilesPane` keep their language colours. Those are other
+  people's brands, not ours.
+
+## Legacy names — don't rename, just document
+
+These deliberately still say `vipershell`. Each one is load-bearing:
+
+- **`vipershell:` / `vipershell-` preference keys** (`ui/src/preferences.ts`).
+  Every saved workspace, layout and font size is stored under these keys in the
+  server-side profile. Renaming the prefix orphans all of them. It is an
+  internal namespace and never shown to a user.
+- **`~/.config/vipershell` and `~/.vipershell`.** `src/paths.ts` prefers the
+  sheepit paths and falls back to these when they are the only ones present, so
+  an existing install keeps its sessions. Never write to a hard-coded path —
+  go through `configDir()` / `stateDir()`.
+- **`VIPERSHELL_HOST` / `_PORT` / `_LOG_LEVEL` / `_SHELL_POOL_SIZE`.** Read as
+  fallbacks after the `SHEEPIT_*` names so an existing shell profile keeps
+  working. The dev-only vars (`SHEEPIT_UI_PORT`, `SHEEPIT_DESKTOP_*`) were
+  renamed outright — nothing outside the repo sets them.
+- **GitHub URLs** (`github.com/nicoloboschi/vipershell`). The repository itself
+  has not been renamed; these links still have to resolve.

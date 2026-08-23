@@ -51,7 +51,7 @@ function GapDropZone({
       {anyPaneDragActive && (
         <div className="gap-drop-zone-label">
           <SquarePlus size={14} />
-          <span>Drop to create a new workspace</span>
+          <span>Drop to open a new pen</span>
         </div>
       )}
     </div>
@@ -105,7 +105,7 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
   if (allWs.length === 0) {
     return (
       <ScrollArea id={id} className="session-list flex-1 py-2">
-        <div className="empty-state">No workspaces yet</div>
+        <div className="empty-state">No pens yet</div>
       </ScrollArea>
     );
   }
@@ -122,8 +122,8 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
         {visible.length === 0 ? (
           <div className="empty-state" style={{ padding: '12px', fontSize: 12 }}>
             {filter === 'favourites'
-              ? 'No favourites yet — hover a workspace and tap the star'
-              : 'No active workspaces'}
+              ? 'No favourites yet — hover a pen and tap the star'
+              : 'No pens are stirring'}
           </div>
         ) : visible.map(ws => (
           <SessionItem

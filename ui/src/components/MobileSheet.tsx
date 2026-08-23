@@ -6,7 +6,7 @@ import SessionList from './SessionList';
 import CommandsDialog, { loadCommands } from './CommandsDialog';
 import LogsModal from './LogsModal';
 import DirectoryPicker from './DirectoryPicker';
-import ViperIcon from './ViperIcon';
+import SheepIcon from './SheepIcon';
 import { Button } from './ui/button';
 import {
   DropdownMenu,
@@ -126,7 +126,7 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
 
         <div className="flex items-center justify-between px-4 pb-2 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="logo">Workspaces</span>
+            <span className="logo">Pens</span>
           </div>
           <div className="flex items-center gap-1">
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>
@@ -160,7 +160,7 @@ export default function MobileSheet({ onConnect, send }: MobileSheetProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top" className="w-48">
-              <DropdownMenuLabel className="text-xs flex items-center gap-1"><ViperIcon size={13} color="var(--primary)" /> <span className="brand-gradient-text">vipershell</span></DropdownMenuLabel>
+              <DropdownMenuLabel className="text-xs flex items-center gap-1"><SheepIcon size={13} color="var(--primary)" /> <span className="brand-gradient-text">sheepit</span></DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs

@@ -3,15 +3,15 @@ import { promisify } from 'util';
 import { createWriteStream, mkdirSync, unlinkSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import type { WriteStream } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { configDir } from './paths.js';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import { PubSub } from './pubsub.js';
 import { logger } from './server.js';
 import os from 'os';
 
-const SCROLLBACK_DIR = join(homedir(), '.config', 'vipershell', 'scrollback');
-const SESSIONS_FILE = join(homedir(), '.config', 'vipershell', 'sessions.json');
+const SCROLLBACK_DIR = join(configDir(), 'scrollback');
+const SESSIONS_FILE = join(configDir(), 'sessions.json');
 const execAsync = promisify(exec);
 
 /**
@@ -115,7 +115,7 @@ export class TmuxBridge {
     // Set a generous default history-limit so existing/external sessions also benefit
     try {
       await execAsync('tmux set-option -g history-limit 50000 2>/dev/null');
-      // Hide tmux pane borders so they don't clash with vipershell's own UI
+      // Hide tmux pane borders so they don't clash with sheepit's own UI
       await execAsync('tmux set-option -g pane-border-style "fg=#0c0c0c" 2>/dev/null');
       await execAsync('tmux set-option -g pane-active-border-style "fg=#0c0c0c" 2>/dev/null');
     } catch { /* tmux not running yet */ }

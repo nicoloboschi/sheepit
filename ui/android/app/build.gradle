@@ -11,13 +11,13 @@ if (keystorePropsFile.exists()) {
 }
 
 android {
-    namespace "com.nicoloboschi.vipershell"
+    namespace "com.nicoloboschi.sheepit"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.nicoloboschi.vipershell"
+        applicationId "com.nicoloboschi.sheepit"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // versionName tracks the vipershell release this client ships with.
+        // versionName tracks the sheepit release this client ships with.
         // versionCode is the integer Android compares on upgrade — bump it on
         // every published APK or the install will be rejected as a downgrade.
         versionCode 4

@@ -5,6 +5,7 @@ import { rgPath } from '@vscode/ripgrep';
 import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
+import { configDir, stateDir } from './paths.js';
 import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
@@ -17,7 +18,7 @@ const PKG_VERSION: string = (() => {
   try { return JSON.parse(readFileSync(nodePath.join(__dirname, '..', 'package.json'), 'utf-8')).version; }
   catch { return 'unknown'; }
 })();
-const PREFERENCES_PATH = nodePath.join(os.homedir(), '.config', 'vipershell', 'preferences.json');
+const PREFERENCES_PATH = nodePath.join(configDir(), 'preferences.json');
 
 function loadPreferences(): Record<string, string> {
   try {
@@ -82,6 +83,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
     const current = loadPreferences();
     for (const [key, value] of Object.entries(supplied as Record<string, unknown>)) {
+      // The stored preference namespace predates the sheepit rename and stays
+      // `vipershell*` — see the legacy-names note in /CLAUDE.md. Renaming it
+      // would orphan every saved workspace in an existing profile.
       if (!key.startsWith('vipershell') || key.length > 200 || typeof value !== 'string' || value.length > 1_000_000) {
         return res.status(400).json({ error: 'Invalid preference value' });
       }
@@ -652,9 +656,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
 
   // ── Notes ───────────────────────────────────────────────────────────────────
 
-  const NOTES_DIR = nodePath.join(os.homedir(), '.vipershell', 'notes');
+  const NOTES_DIR = nodePath.join(stateDir(), 'notes');
   // Migrate old single-file notes to sheets dir
-  const OLD_NOTES_PATH = nodePath.join(os.homedir(), '.vipershell', 'notes.md');
+  const OLD_NOTES_PATH = nodePath.join(stateDir(), 'notes.md');
   try {
     if (existsSync(OLD_NOTES_PATH)) {
       mkdirSync(NOTES_DIR, { recursive: true });
@@ -967,7 +971,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   });
 
   // Open a file with the host OS default application (the machine running the
-  // server, not the browser). vipershell is "your machine, anywhere", so this
+  // server, not the browser). sheepit is "your machine, anywhere", so this
   // surfaces a file in the host's native GUI app.
   router.post('/fs/open', (req, res) => {
     const filePath = expandHome(req.query.path as string | undefined ?? '');

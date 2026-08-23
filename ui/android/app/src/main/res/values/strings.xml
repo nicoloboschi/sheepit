@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Vipershell</string>
-    <string name="title_activity_main">Vipershell</string>
-    <string name="package_name">com.nicoloboschi.vipershell</string>
-    <string name="custom_url_scheme">com.nicoloboschi.vipershell</string>
+    <string name="app_name">Sheepit</string>
+    <string name="title_activity_main">Sheepit</string>
+    <string name="package_name">com.nicoloboschi.sheepit</string>
+    <string name="custom_url_scheme">com.nicoloboschi.sheepit</string>
 </resources>

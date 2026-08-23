@@ -18,7 +18,7 @@ export default function KnowledgeDialog({ onClose }: KnowledgeDialogProps) {
           borderColor: 'var(--border)',
           // Leave room on the right for DialogContent's built-in close button.
           paddingRight: 44,
-          background: 'linear-gradient(135deg, rgba(0,116,217,0.10) 0%, rgba(0,146,150,0.07) 100%), #0d1117',
+          background: 'linear-gradient(135deg, rgba(156, 188, 127,0.10) 0%, rgba(111, 169, 140,0.07) 100%), #10130f',
         }}
       >
         <BookOpen size={15} style={{ color: 'var(--primary)' }} />

@@ -103,7 +103,7 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
   return (
     <div style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
-        <span style={{ color: '#93C5FD', userSelect: 'none' }}>{hunk.header}</span>
+        <span style={{ color: '#8EBFA2', userSelect: 'none' }}>{hunk.header}</span>
         {hunk.context && <span style={{ color: 'var(--muted-foreground)' }}>{hunk.context}</span>}
       </div>
       {rows.map((row, i) => {
@@ -112,7 +112,7 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
           <div key={i} style={{ display: 'flex', background: isAdd ? 'var(--diff-add-bg)' : isDel ? 'var(--diff-del-bg)' : 'transparent', borderBottom: '1px solid var(--background)' }}>
             <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0, borderRight: '1px solid var(--border)' }}>{row.oldNum ?? ''}</div>
             <div style={{ width: 44, padding: '1px 8px', textAlign: 'right', color: 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0, borderRight: '1px solid var(--border)' }}>{row.newNum ?? ''}</div>
-            <div style={{ width: 20, padding: '1px 4px', textAlign: 'center', color: isAdd ? '#4ADE80' : isDel ? '#F87171' : 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0 }}>
+            <div style={{ width: 20, padding: '1px 4px', textAlign: 'center', color: isAdd ? '#9CBC7F' : isDel ? '#E0907B' : 'var(--muted-foreground)', userSelect: 'none', flexShrink: 0 }}>
               {isAdd ? '+' : isDel ? '-' : ' '}
             </div>
             <pre style={{ margin: 0, padding: '1px 8px 1px 0', color: isAdd ? 'var(--diff-add-fg)' : isDel ? 'var(--diff-del-fg)' : 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0 }}>
@@ -494,11 +494,11 @@ export default function FileView({
   const containerStyle: React.CSSProperties = zen
     ? {
         position: 'fixed', inset: 32, zIndex: 1000, display: 'flex', flexDirection: 'column',
-        background: 'var(--background)', border: '1px solid #0074d9', borderRadius: 12, overflow: 'hidden',
-        boxShadow: '0 0 80px rgba(0,116,217,0.35), 0 20px 60px rgba(0,0,0,0.6)',
+        background: 'var(--background)', border: '1px solid #9cbc7f', borderRadius: 12, overflow: 'hidden',
+        boxShadow: '0 0 80px rgba(156, 188, 127,0.35), 0 20px 60px rgba(0,0,0,0.6)',
       }
     : collapsible
-      ? { border: `1px solid ${isFocused ? '#0074d9' : 'var(--border)'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+      ? { border: `1px solid ${isFocused ? '#9cbc7f' : 'var(--border)'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
       : { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 };
 
   return (
@@ -506,7 +506,7 @@ export default function FileView({
       {zen && (
         <div
           onClick={() => setZen(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,8,20,0.85)', backdropFilter: 'blur(6px)' }}
+          style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(6,10,6,0.85)', backdropFilter: 'blur(6px)' }}
         />
       )}
       <div style={containerStyle}>
@@ -517,24 +517,24 @@ export default function FileView({
             {collapsed ? <ChevronRight size={13} color="var(--muted-foreground)" /> : <ChevronDown size={13} color="var(--muted-foreground)" />}
           </div>
         )}
-        {isNew ? <FilePlus size={13} color="#4ADE80" style={{ flexShrink: 0 }} />
-          : isDeleted ? <FileMinus size={13} color="#F87171" style={{ flexShrink: 0 }} />
+        {isNew ? <FilePlus size={13} color="#9CBC7F" style={{ flexShrink: 0 }} />
+          : isDeleted ? <FileMinus size={13} color="#E0907B" style={{ flexShrink: 0 }} />
           : <FileCode size={13} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
         <span title={shownPath} style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
         {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}
         {diskChanged && <span className="file-disk-changed-badge" title="This file changed on disk while you have unsaved edits" style={{ flexShrink: 0 }}>changed on disk</span>}
-        {(additions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#4ADE80', fontFamily: 'monospace', flexShrink: 0 }}>+{additions}</span>}
-        {(deletions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#F87171', fontFamily: 'monospace', flexShrink: 0 }}>-{deletions}</span>}
+        {(additions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#9CBC7F', fontFamily: 'monospace', flexShrink: 0 }}>+{additions}</span>}
+        {(deletions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#E0907B', fontFamily: 'monospace', flexShrink: 0 }}>-{deletions}</span>}
 
         {path && (
           <>
-            <button onClick={() => copy(path, setCopied)} title="Copy path" style={iconBtn(copied ? '#4ADE80' : 'var(--muted-foreground)')}>
+            <button onClick={() => copy(path, setCopied)} title="Copy path" style={iconBtn(copied ? '#9CBC7F' : 'var(--muted-foreground)')}>
               {copied ? <Check size={12} /> : <Copy size={12} />}
             </button>
             {textFile && (
-              <button onClick={() => copy(content, setCopiedContent)} title="Copy file content" style={iconBtn(copiedContent ? '#4ADE80' : 'var(--muted-foreground)')}>
+              <button onClick={() => copy(content, setCopiedContent)} title="Copy file content" style={iconBtn(copiedContent ? '#9CBC7F' : 'var(--muted-foreground)')}>
                 {copiedContent ? <Check size={12} /> : <ClipboardCopy size={12} />}
               </button>
             )}
@@ -543,7 +543,7 @@ export default function FileView({
           </>
         )}
 
-        <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#0074d9' : 'var(--muted-foreground)')}>
+        <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#9cbc7f' : 'var(--muted-foreground)')}>
           {zen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
         </button>
 
@@ -551,8 +551,8 @@ export default function FileView({
             shifts the surrounding header icons as it appears/clears. */}
         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, flexShrink: 0 }} title={saveMsg ?? (saving ? 'Saving…' : undefined)}>
           {saving ? <Loader2 size={12} className="animate-spin" style={{ color: 'var(--muted-foreground)' }} />
-            : saveMsg?.startsWith('Error') ? <AlertCircle size={12} style={{ color: '#F87171' }} />
-            : saveMsg ? <Check size={12} style={{ color: '#4ADE80' }} />
+            : saveMsg?.startsWith('Error') ? <AlertCircle size={12} style={{ color: '#E0907B' }} />
+            : saveMsg ? <Check size={12} style={{ color: '#9CBC7F' }} />
             : null}
         </span>
 
@@ -571,14 +571,14 @@ export default function FileView({
         {textFile && editable && mode === 'edit' && !autoSave && (
           <button onClick={save} disabled={saving || !isDirty} title="Save (⌘S)" style={{
             display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 5,
-            background: isDirty ? '#1f6feb' : 'none', border: isDirty ? 'none' : '1px solid var(--border)',
+            background: isDirty ? '#9CBC7F' : 'none', border: isDirty ? 'none' : '1px solid var(--border)',
             color: isDirty ? '#fff' : 'var(--muted-foreground)', cursor: isDirty && !saving ? 'pointer' : 'default', flexShrink: 0,
           }}><Save size={11} />{saving ? 'Saving…' : 'Save'}</button>
         )}
       </div>
 
       {/* Body */}
-      {showBody && error && <div style={{ padding: 16, color: '#F87171', fontSize: 12 }}>{error}</div>}
+      {showBody && error && <div style={{ padding: 16, color: '#E0907B', fontSize: 12 }}>{error}</div>}
       {showBody && !error && (
         <>
           {imgFile && path && mode !== 'diff' && (
@@ -628,7 +628,7 @@ export default function FileView({
                   customStyle={{ margin: 0, padding: '8px 0', background: 'var(--background)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
                   lineProps={highlightLine == null ? undefined : (lineNum: number) => {
                     const isTarget = lineNum === highlightLine;
-                    return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(210,153,34,0.15)', display: 'block' } : { display: 'block' } };
+                    return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(217, 184, 74,0.15)', display: 'block' } : { display: 'block' } };
                   }}
                 >{content}</SyntaxHighlighter>
               )}

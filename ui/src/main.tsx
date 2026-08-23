@@ -9,7 +9,7 @@ import { applyTheme, readTheme } from './theme';
 import { initNative } from './native';
 
 // The connection URL is the only browser-local bootstrap setting. Once it is
-// known, every durable Vipershell preference comes from the backend profile.
+// known, every durable Sheepit preference comes from the backend profile.
 initServerUrl();
 installFetchInterceptor();
 
@@ -72,7 +72,7 @@ function Root() {
 
   // Blank on the app background while the App chunk loads — a spinner would
   // flash for a few frames on an already-configured client.
-  if (!App) return <div style={{ height: '100dvh', background: '#0c0c0c' }} />;
+  if (!App) return <div style={{ height: '100dvh', background: '#0b0d0a' }} />;
 
   return <App />;
 }

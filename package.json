@@ -1,5 +1,5 @@
 {
-  "name": "vipershell",
+  "name": "sheepit",
   "version": "1.6.0",
   "description": "Your machine, anywhere \u2014 a full-featured terminal in your browser. No tmux required.",
   "type": "module",
@@ -28,7 +28,7 @@
     "node": ">=18"
   },
   "bin": {
-    "vipershell": "./dist/index.js"
+    "sheepit": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -41,7 +41,7 @@
     "build": "tsc && npm run build:ui",
     "build:ui": "cd ui && npm run build",
     "dev": "bash dev.sh",
-    "desktop:dev": "VIPERSHELL_DESKTOP_DEV=1 electron electron/main.cjs",
+    "desktop:dev": "SHEEPIT_DESKTOP_DEV=1 electron electron/main.cjs",
     "desktop:package": "npm run build && electron-builder --mac",
     "desktop:dir": "npm run build && electron-builder --mac dir",
     "start": "node dist/index.js",
@@ -72,8 +72,8 @@
     "vitest": "^1.6.0"
   },
   "build": {
-    "appId": "com.nicoloboschi.vipershell",
-    "productName": "Vipershell",
+    "appId": "com.nicoloboschi.sheepit",
+    "productName": "Sheepit",
     "files": [
       "dist/**/*",
       "ui/dist/**/*",

@@ -1,13 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { GitBranch, GitCommitHorizontal, GitPullRequest, ArrowUp, ArrowDown, Github, GitFork, Loader2, CircleCheck, CircleX, Clock } from 'lucide-react';
+import React, { useState } from 'react';
+import { GitBranch, GitCommitHorizontal, GitPullRequest, ArrowUp, ArrowDown, Github, GitFork, Loader2, CircleCheck, CircleX, Clock, ListTree } from 'lucide-react';
 import { useStats } from '../hooks/useStats';
 import { useGit, useGithubPR } from '../hooks/useGit';
 import useStore from '../store';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
-
-const HISTORY = 30;
-const W = 52;
-const H = 16;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,86 +43,6 @@ interface ParsedUrl {
   badge: string | null;
   label: string;
   sublabel: string | null;
-}
-
-// ── Sparkline ────────────────────────────────────────────────────────────────
-
-interface SparklineProps {
-  data: (number | null)[];
-  color: string;
-}
-
-function Sparkline({ data, color }: SparklineProps): React.ReactElement {
-  if (data.length < 2) return <svg width={W} height={H} style={{ display: 'block' }} />;
-
-  const filled = data.length < HISTORY
-    ? [...Array(HISTORY - data.length).fill(null), ...data]
-    : data;
-
-  const segs: number[][][] = [];
-  let cur: number[][] = [];
-  filled.forEach((v, i) => {
-    if (v === null) {
-      if (cur.length) { segs.push(cur); cur = []; }
-    } else {
-      cur.push([
-        (i / (HISTORY - 1)) * W,
-        H - 2 - Math.max(0, Math.min(1, v / 100)) * (H - 4),
-      ]);
-    }
-  });
-  if (cur.length) segs.push(cur);
-
-  const id = `sg${color.replace(/[^a-z0-9]/gi, '')}`;
-  const linePath = segs
-    .map(seg => seg.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]!.toFixed(1)},${p[1]!.toFixed(1)}`).join(''))
-    .join('');
-  const last = segs[segs.length - 1] ?? [];
-  const areaPath = last.length > 1
-    ? [
-        ...last.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]!.toFixed(1)},${p[1]!.toFixed(1)}`),
-        `L${last[last.length - 1]![0]!.toFixed(1)},${H}`,
-        `L${last[0]![0]!.toFixed(1)},${H}`, 'Z',
-      ].join('')
-    : '';
-
-  return (
-    <svg width={W} height={H} style={{ display: 'block' }}>
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.45" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {areaPath && <path d={areaPath} fill={`url(#${id})`} />}
-      <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// ── StatWidget ────────────────────────────────────────────────────────────────
-
-interface StatWidgetProps {
-  label: string;
-  value: string;
-  unit: string;
-  history: (number | null)[];
-  color: string;
-}
-
-function StatWidget({ label, value, unit, history, color }: StatWidgetProps): React.ReactElement {
-  // Inline single-row layout: [LABEL] [value] [sparkline]
-  return (
-    <div className="stat-widget" style={{ display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1, minWidth: 0, flexShrink: 1 }}>
-      <span style={{ fontSize: 9, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.65 }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 10, color, fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        {value}{unit}
-      </span>
-      <span className="stat-widget-sparkline"><Sparkline data={history} color={color} /></span>
-    </div>
-  );
 }
 
 // ── ProcessList popover ───────────────────────────────────────────────────────
@@ -250,10 +166,10 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
                 padding: '2px 5px', borderRadius: 3,
                 background: 'none', border: '1px solid transparent',
                 cursor: killing === p.pid ? 'wait' : 'pointer',
-                color: '#F87171', opacity: killing === p.pid ? 0.4 : 0.65,
+                color: '#E0907B', opacity: killing === p.pid ? 0.4 : 0.65,
                 flexShrink: 0, transition: 'opacity 0.15s, border-color 0.15s, background 0.15s',
               }}
-              onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = '#F87171'; e.currentTarget.style.background = 'rgba(255,123,114,0.1)'; }}
+              onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = '#E0907B'; e.currentTarget.style.background = 'rgba(224, 144, 123,0.1)'; }}
               onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.opacity = '0.65'; e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'none'; }}
             >
               KILL
@@ -381,7 +297,7 @@ interface GitDetailsProps {
 
 function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsProps): React.ReactElement {
   const Icon = git.detached ? GitCommitHorizontal : GitBranch;
-  const branchColor: string = git.dirty ? '#FACC15' : '#4ADE80';
+  const branchColor: string = git.dirty ? '#D9B84A' : '#9CBC7F';
   const [wtLoading, setWtLoading] = useState<boolean>(false);
   const [wtError, setWtError] = useState<string | null>(null);
   const [wtAdding, setWtAdding] = useState<boolean>(false);
@@ -449,7 +365,7 @@ function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsPro
             // Show state/checks for the PR that matches the github hook
             const isHookPr = github?.prNum === pr.num;
             const prState = isHookPr ? github?.prState : null;
-            const prStateColor = prState === 'MERGED' ? '#C084FC' : prState === 'CLOSED' ? '#F87171' : '#4ADE80';
+            const prStateColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
             const checks = isHookPr ? github?.prChecks : null;
             const review = isHookPr ? github?.prReviewDecision : null;
             return (
@@ -476,11 +392,11 @@ function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsPro
                 )}
                 {checks && (() => {
                   const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : Clock;
-                  const checkColor = checks === 'PASS' ? '#4ADE80' : checks === 'FAIL' ? '#F87171' : '#FACC15';
+                  const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
                   return <CheckIcon size={10} strokeWidth={2.5} style={{ color: checkColor, flexShrink: 0 }} />;
                 })()}
                 {review && (
-                  <span style={{ fontSize: 9, color: review === 'APPROVED' ? '#4ADE80' : review === 'CHANGES_REQUESTED' ? '#F87171' : '#FACC15' }}>
+                  <span style={{ fontSize: 9, color: review === 'APPROVED' ? '#9CBC7F' : review === 'CHANGES_REQUESTED' ? '#E0907B' : '#D9B84A' }}>
                     {review === 'APPROVED' ? 'approved' : review === 'CHANGES_REQUESTED' ? 'changes requested' : 'review needed'}
                   </span>
                 )}
@@ -495,9 +411,9 @@ function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsPro
         </div>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--muted-foreground)' }}>
-        <Row label="Status" value={git.dirty ? 'Uncommitted changes' : 'Clean'} color={git.dirty ? '#FACC15' : '#4ADE80'} />
-        {git.ahead > 0  && <Row label="Ahead"  value={`${git.ahead} commit${git.ahead  > 1 ? 's' : ''}`} color="#4ADE80" />}
-        {git.behind > 0 && <Row label="Behind" value={`${git.behind} commit${git.behind > 1 ? 's' : ''}`} color="#F87171" />}
+        <Row label="Status" value={git.dirty ? 'Uncommitted changes' : 'Clean'} color={git.dirty ? '#D9B84A' : '#9CBC7F'} />
+        {git.ahead > 0  && <Row label="Ahead"  value={`${git.ahead} commit${git.ahead  > 1 ? 's' : ''}`} color="#9CBC7F" />}
+        {git.behind > 0 && <Row label="Behind" value={`${git.behind} commit${git.behind > 1 ? 's' : ''}`} color="#E0907B" />}
         {git.ahead === 0 && git.behind === 0 && !git.detached && (
           <Row label="Remote" value="Up to date" color="var(--muted-foreground)" />
         )}
@@ -543,7 +459,7 @@ function GitDetails({ git, github, sessionId, send, prUrls = [] }: GitDetailsPro
             </button>
           )}
         </div>
-        {wtError && <span style={{ fontSize: 10, color: '#F87171' }}>{wtError}</span>}
+        {wtError && <span style={{ fontSize: 10, color: '#E0907B' }}>{wtError}</span>}
       </div>
     </div>
   );
@@ -591,7 +507,7 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
   const sessionUrls = useStore((s: any) => s.sessionUrls?.[sessionId] ?? EMPTY_URLS) as string[];
   if (!git) return null;
 
-  const branchColor: string = git.dirty ? '#FACC15' : '#4ADE80';
+  const branchColor: string = git.dirty ? '#D9B84A' : '#9CBC7F';
   // Collect PRs from session URLs (highest number first)
   const prUrls = extractPrUrls(sessionUrls);
   // Fall back to the github hook PR if no PR URLs detected in terminal output
@@ -615,15 +531,15 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
           <span style={{ fontSize: 10, color: branchColor, fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block' }}>
             {git.branch}
           </span>
-          {git.dirty && <span style={{ fontSize: 8, color: '#FACC15', fontWeight: 700 }}>{'\u25CF'}</span>}
-          {git.ahead  > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#4ADE80' }}><ArrowUp size={8} strokeWidth={2.5} />{git.ahead}</span>}
-          {git.behind > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#F87171' }}><ArrowDown size={8} strokeWidth={2.5} />{git.behind}</span>}
+          {git.dirty && <span style={{ fontSize: 8, color: '#D9B84A', fontWeight: 700 }}>{'\u25CF'}</span>}
+          {git.ahead  > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#9CBC7F' }}><ArrowUp size={8} strokeWidth={2.5} />{git.ahead}</span>}
+          {git.behind > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#E0907B' }}><ArrowDown size={8} strokeWidth={2.5} />{git.behind}</span>}
           {topPr && topPr.num > 0 && (() => {
             const prState = github?.prState;
-            const prColor = prState === 'MERGED' ? '#C084FC' : prState === 'CLOSED' ? '#F87171' : '#4ADE80';
+            const prColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
             const checks = github?.prChecks;
             const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : checks === 'PENDING' ? Clock : null;
-            const checkColor = checks === 'PASS' ? '#4ADE80' : checks === 'FAIL' ? '#F87171' : '#FACC15';
+            const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
             return (
               <span style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, color: prColor }}>
                 <GitPullRequest size={8} strokeWidth={2} />#{topPr.num}
@@ -643,12 +559,6 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
   );
 }
 
-// ── Separator ─────────────────────────────────────────────────────────────────
-
-const SEP: JSX.Element = (
-  <div style={{ width: 1, height: 12, background: 'var(--border)', margin: '0 6px', opacity: 0.5, flexShrink: 0 }} />
-);
-
 // ── StatChips ─────────────────────────────────────────────────────────────────
 
 const EMPTY_URLS: string[] = [];
@@ -661,101 +571,50 @@ interface StatChipsProps {
 export default function StatChips({ sessionId, send }: StatChipsProps): React.ReactElement {
   const stats = useStats(sessionId) as Stats | null;
   const sessionUrls = useStore((s: any) => s.sessionUrls?.[sessionId] ?? EMPTY_URLS) as string[];
-  const [cpuH, setCpuH] = useState<number[]>([]);
-  const [memH, setMemH] = useState<number[]>([]);
 
-  useEffect(() => {
-    setCpuH([]);
-    setMemH([]);
-  }, [sessionId]);
-
-  // Per-pane totals from the pane's child processes (not system-wide).
-  // `ps pcpu` is % of a single core so sum can exceed 100 on busy multi-core work.
+  // The pane's own child processes (not system-wide). Still polled, because
+  // the popover lists them and lets you kill one; the totals are no longer
+  // summarised in the bar.
   const processes: StatsProcess[] | null = stats?.processes ?? null;
-  const paneCpu: number = processes ? processes.reduce((s, p) => s + p.cpu_percent, 0) : 0;
-  const paneMemMb: number = processes ? processes.reduce((s, p) => s + p.mem_mb, 0) : 0;
-
-  useEffect(() => {
-    if (!stats) return;
-    // Sparkline scale: CPU clamps at 100% (displayed value can still show higher);
-    // memory is normalized against 1 GB so the trend is readable for shell panes.
-    setCpuH(h => [...h.slice(-(HISTORY - 1)), Math.min(100, paneCpu)]);
-    setMemH(h => [...h.slice(-(HISTORY - 1)), Math.min(100, (paneMemMb / 1024) * 100)]);
-  }, [stats, paneCpu, paneMemMb]);
-
-  const cpuVal: string | null = stats ? paneCpu.toFixed(0) : null;
-  const memVal: string = paneMemMb >= 1024
-    ? (paneMemMb / 1024).toFixed(1)
-    : Math.round(paneMemMb).toString();
-  const memUnit: string = paneMemMb >= 1024 ? 'G' : 'M';
   const procCount: number | null = processes?.length ?? null;
 
-  // Only show CPU/MEM widgets when the pane actually has running child processes.
-  // An idle shell prompt has no children and would otherwise render a permanent 0% / 0M.
-  const hasStats = (procCount ?? 0) > 0;
-  const hasExtra = (procCount !== null && procCount > 0) || sessionUrls.length > 0;
+  // The bar itself no longer reports CPU / memory / URL counts — the pane
+  // footer is for identity (branch, PR, cwd), not telemetry. The process list
+  // and the detected-link list are still real tools (you can kill a runaway
+  // child, you can open a dev-server URL), so they keep a single quiet handle
+  // here, shown only when there is actually something behind it.
+  const hasProcesses = (procCount ?? 0) > 0;
+  const hasLinks = sessionUrls.length > 0;
+  if (!hasProcesses && !hasLinks) {
+    return (
+      <div className="stat-chips">
+        <GitChip sessionId={sessionId} send={send} />
+      </div>
+    );
+  }
+
+  const label = [
+    hasProcesses ? `${procCount} process${procCount === 1 ? '' : 'es'}` : null,
+    hasLinks ? `${sessionUrls.length} link${sessionUrls.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' \u00B7 ');
 
   return (
-    <div className="stat-chips" style={{ display: 'flex', alignItems: 'center', minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
+    <div className="stat-chips">
       <GitChip sessionId={sessionId} send={send} />
-      {(hasStats || hasExtra) && (
-        <>
-          {SEP}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  background: 'none', border: 'none', cursor: 'pointer', padding: '1px 4px',
-                  borderRadius: 4, lineHeight: 1,
-                }}
-                className="hover:bg-white/5"
-                title="Pane stats (sum of this pane's child processes)"
-              >
-                {hasStats && (
-                  <>
-                    <StatWidget label="CPU" value={cpuVal!} unit="%" history={cpuH} color={paneCpu >= 95 ? '#F87171' : paneCpu >= 80 ? '#FACC15' : '#4ADE80'} />
-                    <StatWidget label="MEM" value={memVal} unit={memUnit} history={memH} color="#4ADE80" />
-                  </>
-                )}
-                {sessionUrls.length > 0 && (
-                  <span
-                    title="URLs detected in terminal output"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 3,
-                      fontSize: 10, color: '#4ADE80',
-                      fontFamily: '"JetBrains Mono",monospace', fontWeight: 600,
-                    }}
-                  >
-                    {sessionUrls.length} URL{sessionUrls.length !== 1 ? 's' : ''}
-                  </span>
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent side="bottom" align="start">
-              <div style={{ minWidth: 300, display: 'flex', flexDirection: 'column', gap: 0 }}>
-                {/* Processes */}
-                {procCount !== null && procCount > 0 && (
-                  <ProcessList processes={processes} sessionId={sessionId} />
-                )}
-                {procCount !== null && procCount > 0 && sessionUrls.length > 0 && (
-                  <div style={{ borderTop: '1px solid var(--border)' }} />
-                )}
-                {/* Links */}
-                {sessionUrls.length > 0 && (
-                  <UrlList urls={sessionUrls} />
-                )}
-                {/* Empty state — only if stats exist but no extras */}
-                {hasStats && !hasExtra && (
-                  <div style={{ padding: '16px', textAlign: 'center', fontSize: 12, color: 'var(--muted-foreground)', opacity: 0.6 }}>
-                    No processes or links
-                  </div>
-                )}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </>
-      )}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button className="pane-footer-more" title={`This pane: ${label}`}>
+            <ListTree size={12} />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent side="top" align="start">
+          <div style={{ minWidth: 300, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {hasProcesses && <ProcessList processes={processes} sessionId={sessionId} />}
+            {hasProcesses && hasLinks && <div style={{ borderTop: '1px solid var(--border)' }} />}
+            {hasLinks && <UrlList urls={sessionUrls} />}
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

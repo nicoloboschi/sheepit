@@ -1,7 +1,7 @@
 /**
  * PTY Daemon — a long-lived process that holds PTY file descriptors.
  *
- * Runs as a detached child process, survives parent (vipershell server)
+ * Runs as a detached child process, survives parent (sheepit server)
  * restarts. Communicates with the main server via a unix domain socket.
  *
  * Protocol: newline-delimited JSON messages over the socket.
@@ -21,8 +21,9 @@ import type { IPty } from 'node-pty';
 import { existsSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { configDir } from './paths.js';
 
-const CONFIG_DIR = join(homedir(), '.config', 'vipershell');
+const CONFIG_DIR = configDir();
 const SOCKET_PATH = join(CONFIG_DIR, 'pty-daemon.sock');
 const PID_FILE = join(CONFIG_DIR, 'pty-daemon.pid');
 const LOG_FILE = join(CONFIG_DIR, 'pty-daemon.log');
@@ -57,7 +58,7 @@ interface PooledShell {
 }
 
 const POOL_SIZE = (() => {
-  const raw = process.env.VIPERSHELL_SHELL_POOL_SIZE;
+  const raw = process.env.SHEEPIT_SHELL_POOL_SIZE ?? process.env.VIPERSHELL_SHELL_POOL_SIZE;
   if (raw === undefined) return 2;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : 2;
@@ -423,7 +424,7 @@ process.on('exit', () => {
 // this, signal propagation from the parent process tree (tsx watch restarts,
 // Ctrl+C in dev.sh, terminal close, etc.) can take down every PTY with it.
 //
-// We log signals so that if the daemon does die, /.config/vipershell/pty-daemon.log
+// We log signals so that if the daemon does die, ~/.config/sheepit/pty-daemon.log
 // tells us which signal (if any) preceded the death.
 process.on('SIGHUP', () => daemonLog('received SIGHUP — ignoring'));
 process.on('SIGTERM', () => daemonLog('received SIGTERM — ignoring'));

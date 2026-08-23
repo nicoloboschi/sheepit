@@ -1,58 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive launcher icon foreground: the SheepIcon glyph from
+  Notification small icon: the SheepIcon glyph from
   ui/src/components/SheepIcon.tsx — a terminal window wearing a fleece.
 
-  Drawn in the dark pasture ink rather than white: the background vector is the
-  light meadow->moss gradient, which white would disappear into. Android's
-  monochrome/themed variant only reads this drawable's alpha, so the fill
-  colour does not affect it.
-
-  The glyph is authored in a 24x24 box; the group below maps it into the
-  centre of the 108x108 adaptive canvas. Stroke included, its drawn extent is
-  x 3.8..20.2, y 3.7..20.2 (centre ~12,12), so at scale 2.7 it spans ~44x45
-  units and stays inside the 66-unit safe zone launchers may mask down to.
+  Android draws notification small icons as a silhouette — only the alpha
+  channel survives, and the system tints it (iconColor in capacitor.config.ts).
+  Everything here is therefore opaque white; the shapes, not the colours, are
+  what matter. The glyph is inset slightly from the 24dp edge so it does not
+  collide with the status bar's own padding.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
 
     <group
-        android:translateX="21.6"
-        android:translateY="21.7"
-        android:scaleX="2.7"
-        android:scaleY="2.7">
+        android:translateX="1.2"
+        android:translateY="1.25"
+        android:scaleX="0.9"
+        android:scaleY="0.9">
 
         <path
             android:pathData="M4.6,10.3a2.7,2.7 0 1,1 2.9,-4.1a2.7,2.7 0 0,1 4.4,-1.2a2.7,2.7 0 0,1 4.6,1.2a2.7,2.7 0 0,1 2.9,4.1"
-            android:strokeColor="#0B0D0A"
+            android:strokeColor="#FFFFFF"
             android:strokeWidth="1.6"
             android:strokeLineCap="round"
             android:strokeLineJoin="round" />
 
         <path
             android:pathData="M6.8,9.6h10.4a2.2,2.2 0 0,1 2.2,2.2v3.2a2.2,2.2 0 0,1 -2.2,2.2h-10.4a2.2,2.2 0 0,1 -2.2,-2.2v-3.2a2.2,2.2 0 0,1 2.2,-2.2z"
-            android:strokeColor="#0B0D0A"
+            android:strokeColor="#FFFFFF"
             android:strokeWidth="1.6"
             android:strokeLineJoin="round" />
 
         <path
             android:pathData="M8,16.8v2.6M16,16.8v2.6"
-            android:strokeColor="#0B0D0A"
+            android:strokeColor="#FFFFFF"
             android:strokeWidth="1.6"
             android:strokeLineCap="round" />
 
         <path
             android:pathData="M8.6,11.9l1.9,1.4l-1.9,1.4"
-            android:strokeColor="#0B0D0A"
+            android:strokeColor="#FFFFFF"
             android:strokeWidth="1.5"
             android:strokeLineCap="round"
             android:strokeLineJoin="round" />
 
         <path
             android:pathData="M12.7,12.4h2.4v2h-2.4z"
-            android:fillColor="#0B0D0A" />
+            android:fillColor="#FFFFFF" />
     </group>
 </vector>

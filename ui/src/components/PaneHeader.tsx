@@ -46,7 +46,6 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
   const session     = useStore(s => s.sessionMap[sessionId]);
   const showConfirm = useStore(s => s.showConfirm);
   const isZen       = useStore(s => s.zenSessionId === sessionId);
-  const theme       = useStore(s => s.theme);
   const toggleZen   = useStore(s => s.toggleZen);
   const [editing, setEditing]     = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -91,15 +90,13 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         display: 'flex', flexDirection: 'column',
         flexShrink: 0, minWidth: 0,
         borderBottom: isActive
-          ? '1px solid rgba(77, 171, 247, 0.65)'
-          : '1px solid rgba(148, 163, 184, 0.16)',
-        background: isActive
-          ? theme === 'light'
-            ? 'linear-gradient(115deg, rgba(0, 116, 217, 0.16), rgba(0, 146, 150, 0.08) 62%, var(--card))'
-            : 'linear-gradient(115deg, rgba(31, 111, 235, 0.22), rgba(14, 116, 144, 0.12) 62%, rgba(15, 23, 42, 0.96)), #0d1117'
-          : theme === 'light' ? 'var(--secondary)' : 'linear-gradient(115deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.92))',
+          ? '1px solid rgba(156, 188, 127, 0.65)'
+          : '1px solid rgba(140, 148, 132, 0.16)',
+        // Shared with the pane's footer bar so the two halves of the frame
+        // match; the light-theme variants live on the tokens (see style.css).
+        background: isActive ? 'var(--pane-chrome-active)' : 'var(--pane-chrome)',
         borderRadius: '2px 2px 0 0',
-        boxShadow: isActive ? 'inset 0 1px rgba(191, 219, 254, 0.10)' : 'inset 0 1px rgba(255, 255, 255, 0.035)',
+        boxShadow: isActive ? 'inset 0 1px rgba(199, 217, 186, 0.10)' : 'inset 0 1px rgba(255, 255, 255, 0.035)',
         transition: 'background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease',
         userSelect: 'none',
         color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
@@ -197,13 +194,14 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         {onViewChange && (
           // Top-level switch: Terminal vs. the unified Git view. The Git view's
           // own Working / Files / Git Log sub-switcher lives inside it.
-          // Filled brand-gradient pill so this primary navigation control reads
-          // as clearly distinct from the bare zen/close action icons to its right.
+          // A tinted pill rather than a filled one: the pane header sits right
+          // on top of the terminal, and a solid brand fill up here shouts over
+          // the content it is framing.
           <div
             style={{
               display: 'flex', alignItems: 'center', flexShrink: 0,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--border)', borderRadius: 7, overflow: 'hidden',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -228,11 +226,11 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   width: 26, height: 20,
-                  background: active ? 'var(--primary-gradient)' : 'none',
+                  background: active ? 'color-mix(in srgb, var(--primary) 22%, transparent)' : 'none',
                   border: 'none',
                   borderRight: id !== 'git' ? '1px solid var(--border)' : 'none',
                   cursor: 'pointer',
-                  color: active ? '#fff' : 'var(--muted-foreground)',
+                  color: active ? 'var(--primary)' : 'var(--muted-foreground)',
                 }}
               >
                 {icon}

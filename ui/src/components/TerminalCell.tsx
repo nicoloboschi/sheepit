@@ -19,7 +19,7 @@ import type { AppTheme } from '../theme';
  *
  * TUIs like Claude Code pick their own palette from the terminal's reported
  * background — that is how they decide whether to draw a light or dark input
- * box. xterm.js does not answer these queries on its own, and vipershell never
+ * box. xterm.js does not answer these queries on its own, and sheepit never
  * told the PTY anything about the theme (the spawn env is just TERM=
  * xterm-256color, with no COLORFGBG). So an app assumed dark, drew a dark box
  * with grey text, and in light mode that came out unreadable.
@@ -614,7 +614,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       const session = state.sessionMap[sessionId];
       const name = session?.name ?? 'terminal';
       state.markUnseen(sessionId);
-      import('../utils').then(({ notify }) => notify('vipershell \u{1F40D}', `${name} needs attention`));
+      import('../utils').then(({ notify }) => notify('sheepit \u{1F411}', `${name} needs attention`));
     });
 
     return () => {
@@ -896,8 +896,8 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       const term = termRef.current;
       if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
     };
-    window.addEventListener('vipershell:terminal-tab-active', handler);
-    return () => window.removeEventListener('vipershell:terminal-tab-active', handler);
+    window.addEventListener('sheepit:terminal-tab-active', handler);
+    return () => window.removeEventListener('sheepit:terminal-tab-active', handler);
   }, [isActive]);
 
   // Switching this pane back to the terminal view un-hides the xterm container,
@@ -1254,7 +1254,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 999,
-            background: 'radial-gradient(ellipse at center, rgba(0,10,25,0.92) 0%, rgba(0,0,0,0.98) 100%)',
+            background: 'radial-gradient(ellipse at center, rgba(6,10,6,0.92) 0%, rgba(0,0,0,0.98) 100%)',
             backdropFilter: 'blur(8px)',
             animation: 'zen-enter 0.2s ease-out',
           }}
@@ -1271,8 +1271,8 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             zIndex: 1000,
             borderRadius: 4,
             padding: 2,
-            background: 'linear-gradient(135deg, rgba(0,116,217,0.7) 0%, rgba(0,146,150,0.7) 100%)',
-            boxShadow: '0 0 80px rgba(0,116,217,0.35), 0 0 160px rgba(0,146,150,0.15), 0 20px 60px rgba(0,0,0,0.6)',
+            background: 'linear-gradient(135deg, rgba(156, 188, 127,0.7) 0%, rgba(111, 169, 140,0.7) 100%)',
+            boxShadow: '0 0 80px rgba(156, 188, 127,0.35), 0 0 160px rgba(111, 169, 140,0.15), 0 20px 60px rgba(0,0,0,0.6)',
             animation: 'zen-enter 0.25s ease-out',
           } : {}),
           display: 'flex', flexDirection: 'column',
@@ -1284,7 +1284,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
               ? '1.5px solid var(--primary)'
               : 'none',
           boxShadow: !isZen && isMultiPane && isActive && !fileDragOver && !isPaneDragOver
-            ? '0 0 20px rgba(0,116,217,0.25), inset 0 0 20px rgba(0,116,217,0.05)'
+            ? '0 0 20px rgba(156, 188, 127,0.25), inset 0 0 20px rgba(156, 188, 127,0.05)'
             : 'none',
           opacity: !isZen && isMultiPane && !isActive ? 0.45 : 1,
           transition: 'outline 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease',
@@ -1353,7 +1353,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
           display: 'flex', alignItems: 'center', gap: 7,
           padding: '6px 12px', borderRadius: 20,
           border: '1px solid var(--border)',
-          background: 'rgba(22, 27, 34, 0.92)',
+          background: 'rgba(17, 20, 17, 0.92)',
           backdropFilter: 'blur(8px)',
           color: 'var(--foreground)', fontSize: 11, fontWeight: 600,
           boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
@@ -1411,7 +1411,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             padding: '6px 14px',
             borderRadius: 20,
             border: '1px solid var(--border)',
-            // Token, not a hardcoded dark: this was rgba(22,27,34,.92), which
+            // Token, not a hardcoded dark: this was rgba(17, 20, 17,.92), which
             // in light mode put --foreground's dark text on a near-black pill.
             background: 'var(--popover)',
             backdropFilter: 'blur(8px)',
@@ -1511,13 +1511,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         <div style={{
           position: 'absolute', inset: 0, zIndex: 15,
           borderRadius: 2,
-          boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(0,116,217,0.35)',
+          boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(156, 188, 127,0.35)',
           pointerEvents: 'none',
           transition: 'box-shadow 0.15s ease',
         }} />
       )}
       </div>{/* /pane body */}
-      <div className="pane-footer-bar" onClick={e => e.stopPropagation()}>
+      <div
+        className={`pane-footer-bar${isActive ? ' pane-footer-bar-active' : ''}`}
+        onClick={e => e.stopPropagation()}
+      >
         {isActive && <VoiceInputButton sessionId={sessionId} />}
         <StatChips sessionId={sessionId} send={sharedWs.send} />
         <div className="pane-footer-identity">

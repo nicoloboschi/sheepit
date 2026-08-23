@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { PanelLeftClose, List, Activity, Star } from 'lucide-react';
 import useStore from '../store';
 import SessionList from './SessionList';
-import ViperIcon from './ViperIcon';
+import { FlockBand, FlockFooter } from './FlockChrome';
 
 interface SidebarProps {
   onConnect: (id: string) => void;
@@ -26,7 +26,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
     const startX = e.clientX;
     const startW = sidebarW;
     const handle = e.currentTarget as HTMLElement;
-    handle.style.background = '#0074d9';
+    handle.style.background = '#9cbc7f';
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
       setSidebarW(Math.max(180, Math.min(500, startW + ev.clientX - startX)));
@@ -52,8 +52,8 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
 
   // Expose toggle so App can show a button when sidebar is collapsed
   useEffect(() => {
-    (window as any).__vipershellToggleSidebar = toggleCollapse;
-    return () => { delete (window as any).__vipershellToggleSidebar; };
+    (window as any).__sheepitToggleSidebar = toggleCollapse;
+    return () => { delete (window as any).__sheepitToggleSidebar; };
   }, [toggleCollapse]);
 
   if (collapsed) {
@@ -90,17 +90,17 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
           position: 'absolute', top: 0, right: 0, width: 4, height: '100%',
           cursor: 'col-resize', zIndex: 20, background: 'transparent',
         }}
-        onMouseEnter={e => { if (!draggingRef.current) (e.currentTarget as HTMLElement).style.background = '#0074d9'; }}
+        onMouseEnter={e => { if (!draggingRef.current) (e.currentTarget as HTMLElement).style.background = '#9cbc7f'; }}
         onMouseLeave={e => { if (!draggingRef.current) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       />
       <div className="sidebar-header flex items-center justify-between px-4 py-3.5">
-        <span className="logo"><ViperIcon size={15} color="var(--primary)" /> <span className="brand-gradient-text">vipershell</span></span>
+        <span className="logo"><span className="logo-sheep" aria-hidden>🐑</span> <span>sheepit</span></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* Workspace list filter — All / Active / Favourites. */}
           <div className="ws-filter-toggle">
             {([
-              { id: 'all' as const,        icon: <List size={12} />,     title: 'All workspaces' },
-              { id: 'active' as const,     icon: <Activity size={12} />, title: 'Active only (current, running, or new output)' },
+              { id: 'all' as const,        icon: <List size={12} />,     title: 'The whole flock' },
+              { id: 'active' as const,     icon: <Activity size={12} />, title: 'Stirring only (current, grazing, bleating, or new output)' },
               { id: 'favourites' as const, icon: <Star size={12} />,     title: 'Favourites only' },
             ]).map(({ id, icon, title }) => (
               <button
@@ -128,12 +128,15 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         </div>
       </div>
 
+      <FlockBand />
+
       <SessionList
         id="session-list"
         onConnect={onConnect}
         send={send}
       />
 
+      <FlockFooter />
     </aside>
   );
 }

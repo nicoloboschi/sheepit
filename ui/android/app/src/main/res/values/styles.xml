@@ -17,10 +17,10 @@
 
         <!-- StatusBar.setBackgroundColor() is a no-op from Android 15 on, so
              the bars have to be coloured from the theme or they render as a
-             bright white strip above the terminal. #0c0c0c matches the UI
+             bright white strip above the terminal. #0b0d0a matches the UI
              background (and the `backgroundColor` in capacitor.config.ts). -->
-        <item name="android:statusBarColor">#0c0c0c</item>
-        <item name="android:navigationBarColor">#0c0c0c</item>
+        <item name="android:statusBarColor">#0b0d0a</item>
+        <item name="android:navigationBarColor">#0b0d0a</item>
         <!-- Dark bars, so the clock and gesture pill draw in light glyphs. -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
@@ -28,8 +28,8 @@
         <!-- Whatever shows through before/around the WebView should be the
              terminal background, never the DayNight default (#fafafa in light
              mode, which flashed white on launch). -->
-        <item name="android:windowBackground">#0c0c0c</item>
-        <item name="android:colorBackground">#0c0c0c</item>
+        <item name="android:windowBackground">#0b0d0a</item>
+        <item name="android:colorBackground">#0b0d0a</item>
     </style>
 
 
@@ -41,8 +41,8 @@
          the terminal. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
-        <item name="android:statusBarColor">#0c0c0c</item>
-        <item name="android:navigationBarColor">#0c0c0c</item>
+        <item name="android:statusBarColor">#0b0d0a</item>
+        <item name="android:navigationBarColor">#0b0d0a</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>

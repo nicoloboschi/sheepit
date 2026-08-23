@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
 import useStore from '../store';
+import { useFlockCounts, plural } from '../flock';
 import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
 
@@ -28,11 +29,13 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     const ws = sessionId ? s.workspaces[sessionId] : undefined;
     if (!ws) return undefined;
     const root = ws.cells[0];
-    return ws.title || (root ? s.sessionMap[root]?.name : undefined) || 'Workspace';
+    return ws.title || (root ? s.sessionMap[root]?.name : undefined) || 'Pen';
   });
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // How the pen next to the name is doing. Hooks run before the early return.
+  const { panes, bleating, grazing } = useFlockCounts(sessionId);
 
   if (!sessionId) return null;
 
@@ -190,7 +193,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
           if (e.key === 'Enter') commitRename();
           if (e.key === 'Escape') setRenaming(false);
         }}
-        placeholder="Workspace name"
+        placeholder="Pen name"
         style={{
           fontSize: 11, padding: '2px 7px', borderRadius: 5,
           border: '1px solid var(--ring)', background: 'var(--background)',
@@ -200,7 +203,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     ) : (
       <button
         onClick={() => { setRenameValue(sessionId ? useStore.getState().workspaces[sessionId]?.title ?? '' : ''); setRenaming(true); }}
-        title="Click to rename workspace"
+        title="Click to rename this pen"
         className="hover:text-foreground"
         style={{
           maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -211,6 +214,22 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
         {workspaceName}
       </button>
     )
+  );
+
+  // Reads next to the pen name, the way the sidebar band reads over the flock:
+  // how many panes are in here, and whether any of them wants you.
+  const penCounts = (
+    <span className="pen-counts">
+      <span>{plural(panes, 'pane')}</span>
+      {bleating > 0 && <>
+        <span className="pen-counts-sep">&middot;</span>
+        <span style={{ color: 'var(--bleating)', fontWeight: 600 }}>{bleating} bleating</span>
+      </>}
+      {bleating === 0 && grazing > 0 && <>
+        <span className="pen-counts-sep">&middot;</span>
+        <span style={{ color: 'var(--grazing)' }}>{grazing} grazing</span>
+      </>}
+    </span>
   );
 
   const knowledgeButton = (
@@ -261,7 +280,8 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       style={{ borderColor: 'var(--border)' }}
     >
       {nameControl}
-      {nameControl && <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />}
+      {penCounts}
+      <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
       {knowledgeButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />

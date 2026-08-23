@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive launcher icon background: the Hindsight brand gradient
-  (#0074d9 blue -> #009296 teal, 135deg) from CLAUDE.md.
+  Adaptive launcher icon background: the sheepit pasture gradient
+  (#9cbc7f meadow -> #6fa98c moss, 135deg) from CLAUDE.md.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
@@ -18,8 +18,8 @@
                 android:startY="0"
                 android:endX="108"
                 android:endY="108">
-                <item android:offset="0.0" android:color="#FF0074D9" />
-                <item android:offset="1.0" android:color="#FF009296" />
+                <item android:offset="0.0" android:color="#FF9CBC7F" />
+                <item android:offset="1.0" android:color="#FF6FA98C" />
             </gradient>
         </aapt:attr>
     </path>
