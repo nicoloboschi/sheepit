@@ -99,6 +99,17 @@ const nice = (cmd: string) => `nice -n 10 ${cmd}`;
  *  'unknown' clears the record and hands the session back to the heuristics. */
 export type AgentState = 'busy' | 'idle' | 'waiting' | 'unknown';
 
+/** The last exchange in a session, as reported by the agent itself.
+ *
+ *  What the user asked and what the agent answered is a far better basis for
+ *  naming a session than its terminal output, which for a TUI agent is mostly
+ *  spinners, footers and redraws. */
+export interface AgentTurn {
+  prompt?: string;
+  response?: string;
+  at: number;
+}
+
 export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
 
 /** A desktop notification an app asked the terminal to show. */
@@ -758,6 +769,8 @@ export class DirectBridge {
    *  strongest signal we have: the agent says so, rather than us guessing from
    *  output. In memory only — a restart falls back to the heuristics. */
   private agentState = new Map<string, { state: AgentState; source: string; at: number }>();
+  /** Last prompt/response pair per session (see AgentTurn). */
+  private agentTurns = new Map<string, AgentTurn>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -917,8 +930,25 @@ export class DirectBridge {
    *  UserPromptSubmit hooks today, Codex is expected to post the same shapes
    *  through its own notify mechanism. Returns false for an unknown session so
    *  the caller can answer 404 rather than accumulate state for a dead pane. */
-  setAgentState(sessionId: string, state: AgentState, source: string): boolean {
+  setAgentState(sessionId: string, state: AgentState, source: string, turn?: { prompt?: string; response?: string }): boolean {
     if (!this.sessions.has(sessionId)) return false;
+
+    // Merge rather than replace: the prompt arrives when the turn starts and
+    // the response when it ends, so each report carries only half the pair.
+    if (turn?.prompt || turn?.response) {
+      const prev = this.agentTurns.get(sessionId);
+      this.agentTurns.set(sessionId, {
+        prompt: turn.prompt ?? prev?.prompt,
+        response: turn.response ?? prev?.response,
+        at: Date.now(),
+      });
+    }
+    // A new prompt starts a new exchange; the previous answer is stale.
+    if (turn?.prompt && !turn.response) {
+      const entry = this.agentTurns.get(sessionId);
+      if (entry) entry.response = undefined;
+    }
+
     if (state === 'unknown') this.agentState.delete(sessionId);
     else this.agentState.set(sessionId, { state, source, at: Date.now() });
     logger.info(`agent-state ${sessionId} -> ${state} (${source})`);
@@ -941,6 +971,12 @@ export class DirectBridge {
     // latency this whole mechanism exists to remove.
     this.publishPreviews();
     return true;
+  }
+
+  /** Last reported exchange, for naming. Undefined when the agent never
+   *  reported one — a plain shell, or an agent without the plugin. */
+  getAgentTurn(sessionId: string): AgentTurn | undefined {
+    return this.agentTurns.get(sessionId);
   }
 
   /** The agent-reported state, or undefined once it has gone stale. */

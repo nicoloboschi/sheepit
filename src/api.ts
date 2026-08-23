@@ -267,13 +267,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    */
   router.post('/sessions/:id/agent-state', (req, res) => {
     try {
-      const { state, source } = req.body as { state?: string; source?: string };
+      const { state, source, prompt, response } = req.body as
+        { state?: string; source?: string; prompt?: string; response?: string };
       if (!state || !AGENT_STATES.includes(state as AgentState)) {
         return res.status(400).json({ error: `state must be one of ${AGENT_STATES.join(', ')}` });
       }
       // A hook firing just after its pane closed is ordinary, not an error
       // worth logging loudly — but the caller should still know it missed.
-      const ok = bridge.setAgentState(req.params.id, state as AgentState, source?.slice(0, 32) || 'unknown');
+      const ok = bridge.setAgentState(
+        req.params.id,
+        state as AgentState,
+        source?.slice(0, 32) || 'unknown',
+        {
+          // Bounded here too: the endpoint is reachable by anything local, and
+          // this text ends up in an LLM prompt.
+          prompt: typeof prompt === 'string' ? prompt.slice(0, 4000) : undefined,
+          response: typeof response === 'string' ? response.slice(0, 4000) : undefined,
+        },
+      );
       if (!ok) return res.status(404).json({ error: 'unknown session' });
       res.json({ ok: true });
     } catch (e) {

@@ -21,7 +21,7 @@
 // `claude plugin install` copies it into ~/.claude/plugins/cache, where no
 // package.json applies. The explicit extension makes it ESM in both places.
 import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, openSync, fstatSync, readSync, closeSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -65,6 +65,52 @@ function ancestorPids() {
   return pids;
 }
 
+
+/** Longest prompt/response we forward. Enough to name a session by; short
+ *  enough that the naming model is cheap and the request never becomes the
+ *  slow part of a hook. */
+const MAX_TURN_CHARS = 2000;
+
+/** Last assistant reply in a Claude Code transcript.
+ *
+ *  Read from the tail rather than the whole file: transcripts grow without
+ *  bound and this runs on the agent's critical path. Sidechain rows are
+ *  skipped — those belong to subagents, and naming a session after what a
+ *  subagent happened to say last would be actively misleading. */
+function lastAssistantText(transcriptPath) {
+  let fd;
+  try {
+    fd = openSync(transcriptPath, 'r');
+    const size = fstatSync(fd).size;
+    const want = Math.min(size, 256 * 1024);
+    const buf = Buffer.alloc(want);
+    readSync(fd, buf, 0, want, size - want);
+
+    const lines = buf.toString('utf8').split('\n');
+    // A partial first line is expected when we started mid-file.
+    if (size > want) lines.shift();
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      if (row.type !== 'assistant' || row.isSidechain === true) continue;
+      const content = row.message?.content;
+      const text = Array.isArray(content)
+        ? content.filter(b => b?.type === 'text').map(b => b.text).join('\n')
+        : typeof content === 'string' ? content : '';
+      if (text.trim()) return text.trim().slice(0, MAX_TURN_CHARS);
+    }
+  } catch {
+    // No transcript, unreadable, or a shape we do not recognise — naming just
+    // falls back to whatever it had.
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
+  }
+  return undefined;
+}
+
 async function post(url, body, signal) {
   return fetch(url, {
     method: 'POST',
@@ -92,12 +138,22 @@ async function run(raw) {
       if (!sessionId) return;
     }
 
-    let agentSessionId;
-    try { agentSessionId = JSON.parse(raw).session_id; } catch { /* optional */ }
+    let payload = {};
+    try { payload = JSON.parse(raw) ?? {}; } catch { /* optional */ }
+
+    // Carry the actual interaction so the server can name the session from
+    // what was asked and answered, instead of scraping the TUI. The prompt is
+    // handed to us directly; the reply has to come from the transcript.
+    const prompt = typeof payload.prompt === 'string'
+      ? payload.prompt.trim().slice(0, MAX_TURN_CHARS)
+      : undefined;
+    const response = STATE === 'idle' && payload.transcript_path
+      ? lastAssistantText(payload.transcript_path)
+      : undefined;
 
     await post(
       `${base}/api/sessions/${encodeURIComponent(sessionId)}/agent-state`,
-      { state: STATE, source: SOURCE, agentSessionId },
+      { state: STATE, source: SOURCE, agentSessionId: payload.session_id, prompt, response },
       controller.signal,
     );
   } catch {
