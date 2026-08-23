@@ -38,15 +38,15 @@ const INPUT_PUBLISH_MS = 50;
 /** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
 const PERSIST_DEBOUNCE_MS = 1000;
 
-/** How long an agent-reported state is trusted before we fall back to the
- *  output heuristics.
+/** How long an agent-reported "busy" is trusted before the session is assumed
+ *  idle again.
  *
- *  The report is authoritative but delivery is not guaranteed: a `kill -9`, a
- *  crashed agent or a hook that timed out means the matching "idle" never
- *  arrives. Without an expiry such a session would stay pinned "busy" forever
- *  — strictly worse than the heuristic it replaced. Comfortably longer than a
- *  model turn, short enough that a wedged session recovers on its own. */
-const AGENT_STATE_TTL_MS = 15 * 60_000;
+ *  The report is authoritative but its delivery is not: a `kill -9`, a crashed
+ *  agent or a hook that timed out means the matching "idle" never arrives, and
+ *  since nothing else drives this flag any more, such a session would spin
+ *  forever. An hour is far longer than any single model turn, so this only
+ *  fires for a session whose agent genuinely went away. */
+const AGENT_STATE_TTL_MS = 60 * 60_000;
 
 /** How much of a session's ring the preview sweep decodes. A preview is two
  *  lines; this is generous even for very wide panes. */
@@ -66,21 +66,6 @@ const EXEC_CONCURRENCY = 4;
  *  responsive so a newly opened pane appears promptly, but the stats behind it
  *  need a `ps` of every process on the machine, which is the expensive part. */
 const PROC_INFO_TTL_MS = 10_000;
-
-/** How long a session must produce no output before it counts as finished.
- *
- *  Agents repaint a spinner/elapsed timer roughly every second while working,
- *  so this only has to bridge the natural gaps between repaints — long enough
- *  not to flicker mid-turn, short enough that "done" feels immediate. */
-const BUSY_SILENCE_MS = 3000;
-
-/** How long output must have been flowing before a session counts as "running
- *  something", rather than just echoing a quick command.
- *
- *  Without this, any background `ls` would light up the sidebar and fire a
- *  "finished" notification three seconds later. A model turn spans many
- *  seconds of repaints, so it clears this easily. */
-const MIN_ACTIVE_SPAN_MS = 2000;
 
 /** Run a background sweep's command at reduced scheduling priority.
  *
@@ -758,10 +743,6 @@ export class DirectBridge {
   /** Ring version last used to build a preview / written to disk, per session.
    *  Both periodic sweeps use these to skip sessions that produced no output. */
   private previewVersions = new Map<string, number>();
-  /** When each session last produced output, and the busy state last published
-   *  for it — together these turn "went quiet" into a finished event. */
-  private lastOutputAt = new Map<string, number>();
-  private firstOutputAt = new Map<string, number>();
   private lastBusy = new Map<string, boolean>();
   /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
   private oscBusy = new Map<string, boolean>();
@@ -780,7 +761,7 @@ export class DirectBridge {
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
   /** Port the HTTP server is actually listening on, told to us by index.ts.
    *  Defaults to the configured port for callers that never set it. */
@@ -800,12 +781,6 @@ export class DirectBridge {
           // startup, so a server restart that loses them can't recover from the
           // ring alone (the setup bytes have long rolled off a busy session).
           if (trackPrivateModes(sess.modes ??= new Set(), data)) this.schedulePersist();
-          const outputNow = Date.now();
-          // A gap longer than the silence window starts a new burst.
-          if (outputNow - (this.lastOutputAt.get(id) ?? 0) > BUSY_SILENCE_MS) {
-            this.firstOutputAt.set(id, outputNow);
-          }
-          this.lastOutputAt.set(id, outputNow);
 
           // The agent announcing completion is worth more than any heuristic:
           // publish it straight through so the sidebar can light up the moment
@@ -979,6 +954,20 @@ export class DirectBridge {
     return this.agentTurns.get(sessionId);
   }
 
+  /** Is this session's agent working?
+   *
+   *  The agent's own report, and nothing else. Output silence and CPU used to
+   *  stand in for it; both were guesses, and both were wrong in the case that
+   *  mattered most — an agent waiting on the network prints nothing and burns
+   *  no CPU, so it read as finished mid-turn. A wrong "finished" notification
+   *  is worse than none.
+   *
+   *  A session with no agent reporting — a plain shell, or an agent whose
+   *  reporter is not installed — is simply never busy. */
+  isSessionBusy(sessionId: string): boolean {
+    return this.freshAgentState(sessionId) === 'busy';
+  }
+
   /** The agent-reported state, or undefined once it has gone stale. */
   private freshAgentState(sessionId: string): AgentState | undefined {
     const entry = this.agentState.get(sessionId);
@@ -1017,30 +1006,8 @@ export class DirectBridge {
 
   /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
   private publishPreviews(): void {
-    const now = Date.now();
     for (const sess of this.sessions.values()) {
-      // Is this session still producing output? Agents repaint a spinner and an
-      // elapsed timer while they work, so silence is what "finished" looks like.
-      //
-      // This is the signal that drives the sidebar highlight, because CPU alone
-      // can't: Codex is network-bound and sampled at ~0% most instants (with
-      // rare spikes), so it never crossed the busy threshold and its sessions
-      // never lit up when the model was done. CPU is still OR'd in, to cover
-      // work that burns cycles without printing anything.
-      const lastOut = this.lastOutputAt.get(sess.id) ?? 0;
-      const activeSpan = lastOut - (this.firstOutputAt.get(sess.id) ?? lastOut);
-      const cached = this.cachedSessions.find(s => s.id === sess.id);
-      // An app that reports its own progress is authoritative; otherwise fall
-      // back to sustained output, then to CPU.
-      // An agent that tells us outright beats anything we can infer: OSC 9;4
-      // progress, output silence, or CPU. 'waiting' means it needs the user,
-      // which is not busy — the pane should light up, not spin.
-      const agent = this.freshAgentState(sess.id);
-      const reported = agent !== undefined ? agent === 'busy' : this.oscBusy.get(sess.id);
-      const busy = reported ?? (
-        (now - lastOut < BUSY_SILENCE_MS && activeSpan >= MIN_ACTIVE_SPAN_MS)
-        || (cached?.busy ?? false)
-      );
+      const busy = this.isSessionBusy(sess.id);
 
       // A session that has gone quiet stops bumping its ring version, so the
       // skip below would never let us announce that it finished. Publish
@@ -1334,7 +1301,7 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0, busy = false;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
@@ -1344,10 +1311,9 @@ export class DirectBridge {
           else if (app === 'copilot') isCopilot = true;
           else if (app === 'grok') isGrok = true;
           else if (app === 'cursor') isCursor = true;
-          if (c.cpu > 5) busy = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -1365,7 +1331,7 @@ export class DirectBridge {
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
-        busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
+        busy: this.isSessionBusy(sess.id), isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, ...git,
