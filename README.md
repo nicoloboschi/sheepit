@@ -88,7 +88,7 @@ you whether anything needs you before you have read a single word.
 
 ## Star History
 
-![sheepit star history](https://raw.githubusercontent.com/nicoloboschi/vipershell/main/.github/star-history/chart.svg)
+![sheepit star history](https://raw.githubusercontent.com/nicoloboschi/sheepit/main/.github/star-history/chart.svg)
 
 ## Security
 
@@ -165,8 +165,8 @@ too — use the `SHEEPIT_*` names.
 ## Development
 
 ```bash
-git clone https://github.com/nicoloboschi/vipershell.git
-cd vipershell
+git clone https://github.com/nicoloboschi/sheepit.git
+cd sheepit
 npm install
 npm run dev      # UI on http://localhost:4444 (HMR), backend API on :4445
 ```

@@ -53,5 +53,5 @@ cat <<EOF
 
 ✓ Pushed $new_version.
   GitHub Actions will now test, publish to npm, and create the release.
-  Track it: https://github.com/nicoloboschi/vipershell/actions
+  Track it: https://github.com/nicoloboschi/sheepit/actions
 EOF

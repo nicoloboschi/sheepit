@@ -1,9 +1,9 @@
 # sheepit — notes for Claude
 
-The project was called **vipershell** until the rebrand. The code is now
-sheepit end to end; the only thing that still carries the old name is the set
-of GitHub URLs, because the repository has not been renamed — see
-[Legacy names](#legacy-names-dont-rename-just-document) at the bottom.
+The project was called **vipershell** until the rebrand. Everything — code,
+paths, env vars, storage keys, the npm package and the GitHub repository — is
+sheepit now. The only file that still knows the old name is the one-shot
+migration script; see [Legacy names](#legacy-names-dont-rename-just-document).
 
 ## Glossary (authoritative — use these terms)
 
@@ -176,40 +176,16 @@ there is something behind it — don't reintroduce the inline readouts.
 
 ## Legacy names — don't rename, just document
 
-One name is deliberately still `vipershell`, and it is load-bearing:
+Nothing in the shipped product carries the old name any more. `src/paths.ts`
+returns one fixed path per directory, with no compatibility fallbacks: a config
+directory that varied with filesystem state would let one server strand
+another server's PTY daemon and every shell it holds.
 
-- **GitHub URLs** (`github.com/nicoloboschi/vipershell`) in `package.json`,
-  `release.sh` and the README. The repository itself has not been renamed;
-  these links still have to resolve. Flip them only when the repo is renamed.
-
-Everything else is now sheepit end to end — `~/.config/sheepit`, `~/.sheepit`,
-`SHEEPIT_*` env vars, and the `sheepit:` preference-key namespace. There are no
-compatibility fallbacks: `src/paths.ts` returns one fixed path per directory,
-because a config directory that varies with filesystem state would let one
-server strand another server's PTY daemon and every shell it holds.
-
-Upgrading a pre-rename machine is the one-shot
-`scripts/migrate-from-vipershell.sh`, which moves both directories, re-keys
-`preferences.json`, and uninstalls the old `vipershell@vipershell` agent
-plugin. It is the only file in the repo that should know the old name; delete
-it once nobody is upgrading from vipershell any more.
-
-### The agent-state plugin
-
-`plugin/` is installed into Claude Code and Codex at server start
-(`src/plugin-install.ts`), and reports agent state back over HTTP. Three names
-have to agree or the hooks silently no-op:
-
-- the marketplace/plugin id — `MARKETPLACE` in `plugin-install.ts`, and the
-  `name` fields in `.claude-plugin/marketplace.json` and
-  `plugin/.claude-plugin/plugin.json`;
-- the env vars seeded into every pane — `SHEEPIT_SESSION_ID` / `SHEEPIT_URL`
-  in `direct-bridge.ts`, read by `plugin/bin/report-state.mjs`;
-- the server-advertisement file — `configDir()/server.json`, written in
-  `index.ts` and read by the same script when the env vars are absent.
-
-Bump `plugin/.claude-plugin/plugin.json`'s `version` whenever the plugin
-changes: the installer compares versions and does nothing when they match.
+The single exception is `scripts/migrate-from-vipershell.sh`, the one-shot
+cutover for a machine that ran the old build — it moves both directories,
+re-keys `preferences.json`, and uninstalls the old agent plugin. It is the only
+file that should know the old name; delete it once nobody is upgrading from
+vipershell any more.
 
 ### The preference-key namespace
 

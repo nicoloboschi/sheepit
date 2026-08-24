@@ -19,7 +19,7 @@ jobs:
       - uses: nicoloboschi/gh-stars@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          line-color: '#14b8a6'
+          line-color: '#9cbc7f'
       - name: Commit chart
         run: |
           git config user.name 'github-actions[bot]'

@@ -6,13 +6,13 @@
   "main": "electron/main.cjs",
   "license": "MIT",
   "author": "Nicol\u00f2 Boschi",
-  "homepage": "https://github.com/nicoloboschi/vipershell#readme",
+  "homepage": "https://github.com/nicoloboschi/sheepit#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicoloboschi/vipershell.git"
+    "url": "git+https://github.com/nicoloboschi/sheepit.git"
   },
   "bugs": {
-    "url": "https://github.com/nicoloboschi/vipershell/issues"
+    "url": "https://github.com/nicoloboschi/sheepit/issues"
   },
   "keywords": [
     "terminal",
