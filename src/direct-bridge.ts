@@ -998,6 +998,11 @@ export class DirectBridge {
     return null;
   }
 
+  /** Set by index.ts so preferences scoped to a session can be dropped with
+   *  it. Without this a shared blob has no idea a session ended, which is how
+   *  it accumulated a key per pane for the life of the machine. */
+  onSessionClosed?: (sessionId: string) => void;
+
   /** Told by index.ts once the real port is known, before start() — sessions
    *  restored during start() bake this into their environment. */
   setListenPort(port: number): void { this.listenPort = port; }
@@ -1094,6 +1099,7 @@ export class DirectBridge {
     this.agentState.delete(sessionId);
     this.agentTurns.delete(sessionId);
     this.store.delete(sessionId);
+    this.onSessionClosed?.(sessionId);
   }
 
   // ── Atomic subscribe ─────────────────────────────────────────────────────

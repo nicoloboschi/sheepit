@@ -54,6 +54,93 @@ function rotatePreferenceBackups(): void {
   }
 }
 
+/**
+ * Preference keys written by versions of the UI that no longer exist.
+ *
+ * Listed explicitly rather than inferred from what the code currently reads:
+ * "no reference found" is a grep result, not a fact, and being wrong here
+ * deletes someone's settings. Each of these was traced to the commit that
+ * stopped using it.
+ *
+ * sheepit:cmd-history is the reason this exists at all — 962 KB of a 980 KB
+ * profile, rewritten in full every time anyone dragged a splitter, for a
+ * feature removed in a19760b.
+ */
+const RETIRED_PREFERENCE_KEYS = [
+  'cmd-history',        // a19760b
+  'compose-mode',       // a19760b
+  'session-last-file',  // a19760b
+  'session-tabs',       // a19760b
+  'workspace-order',    // 8f54b12
+];
+/** Same, for the older dash-separated naming. */
+const RETIRED_PREFERENCE_KEYS_DASH = ['panes', 'theme'];
+
+/** Key families scoped to one session, which should not outlive it. */
+const PER_SESSION_PREFIXES = ['files-tabs:'];
+
+const PREFIXES = ['sheepit:', 'vipershell:'];
+const DASH_PREFIXES = ['sheepit-', 'vipershell-'];
+
+/**
+ * Drop preferences nothing can read any more.
+ *
+ * Two kinds: keys retired with the feature that wrote them, and per-session
+ * keys whose session is long gone. The second kind is why the profile grew
+ * without bound — a shared blob has no idea when a session ends, so every
+ * pane that ever opened a file left an entry behind for the life of the
+ * machine.
+ *
+ * Nothing is written unless something is actually removed, and the previous
+ * file survives as preferences.json.1.bak.
+ */
+/** Drop every preference scoped to one session. Called when it closes. */
+export function dropSessionPreferences(sessionId: string): void {
+  const values = loadPreferences();
+  let removed = 0;
+  for (const key of Object.keys(values)) {
+    for (const prefix of PER_SESSION_PREFIXES) {
+      for (const base of PREFIXES) {
+        if (key === base + prefix + sessionId) { delete values[key]; removed++; }
+      }
+    }
+  }
+  if (removed > 0) savePreferences(values);
+}
+
+export function pruneStalePreferences(liveSessionIds: Set<string>, log?: (m: string) => void): void {
+  const values = loadPreferences();
+  const before = Object.keys(values).length;
+  if (before === 0) return;
+
+  let freed = 0;
+  for (const key of Object.keys(values)) {
+    const retired =
+      PREFIXES.some(p => RETIRED_PREFERENCE_KEYS.includes(key.slice(p.length)) && key.startsWith(p)) ||
+      DASH_PREFIXES.some(p => RETIRED_PREFERENCE_KEYS_DASH.includes(key.slice(p.length)) && key.startsWith(p));
+
+    let orphaned = false;
+    for (const prefix of PER_SESSION_PREFIXES) {
+      for (const base of PREFIXES) {
+        const full = base + prefix;
+        if (!key.startsWith(full)) continue;
+        const sessionId = key.slice(full.length);
+        if (sessionId && !liveSessionIds.has(sessionId)) orphaned = true;
+      }
+    }
+
+    if (retired || orphaned) {
+      freed += values[key]!.length;
+      delete values[key];
+    }
+  }
+
+  const removed = before - Object.keys(values).length;
+  if (removed === 0) return;
+  savePreferences(values);
+  log?.(`Pruned ${removed} stale preference key(s), ${Math.round(freed / 1024)}KB (previous file kept as preferences.json.1.bak)`);
+}
+
 function savePreferences(values: Record<string, string>): void {
   mkdirSync(nodePath.dirname(PREFERENCES_PATH), { recursive: true });
   rotatePreferenceBackups();

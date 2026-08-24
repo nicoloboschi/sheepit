@@ -6,6 +6,7 @@ import { dirname, join } from 'path';
 import { DirectBridge } from './direct-bridge.js';
 import { AIService } from './ai.js';
 import { createApp, logger } from './server.js';
+import { pruneStalePreferences, dropSessionPreferences } from './api.js';
 import { config } from './config.js';
 import { ensureAgentPluginInstalled } from './plugin-install.js';
 import { configDir, migrateLegacyStateDir } from './paths.js';
@@ -38,6 +39,16 @@ program
     // which is how an agent's hooks find their way back to this server.
     bridge.setListenPort(port);
     await bridge.start();
+
+    // After start(), so the live session list is known and per-session keys
+    // for sessions that are actually alive are not mistaken for orphans.
+    try {
+      const live = new Set((await bridge.listSessions()).map(s => s.id));
+      pruneStalePreferences(live, msg => logger.info(msg));
+      bridge.onSessionClosed = (id) => dropSessionPreferences(id);
+    } catch (e) {
+      logger.info(`Could not prune preferences: ${e}`);
+    }
 
     const ai = new AIService();
     ai.setBridge(bridge);
