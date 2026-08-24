@@ -98,16 +98,16 @@ export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 function readPaneView(sid: string): PaneView | undefined {
   try {
-    const raw = JSON.parse(localStorage.getItem(PANE_VIEW_KEY) || '{}')[sid];
+    const raw = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}')[sid];
     if (raw === 'diff') return 'working'; // migrate legacy persisted value
     return (['terminal', 'split', 'working', 'files', 'log'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 function savePaneView(sid: string, view: PaneView): void {
   try {
-    const map = JSON.parse(localStorage.getItem(PANE_VIEW_KEY) || '{}');
+    const map = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}');
     map[sid] = view;
-    localStorage.setItem(PANE_VIEW_KEY, JSON.stringify(map));
+    preferences.setItem(PANE_VIEW_KEY, JSON.stringify(map));
   } catch { /* quota */ }
 }
 
@@ -115,18 +115,19 @@ function savePaneView(sid: string, view: PaneView): void {
 const SPLIT_PCT_KEY = 'sheepit:pane-split-pct';
 function readSplitPct(sid: string): number | undefined {
   try {
-    const v = JSON.parse(localStorage.getItem(SPLIT_PCT_KEY) || '{}')[sid];
+    const v = JSON.parse(preferences.getItem(SPLIT_PCT_KEY) || '{}')[sid];
     return typeof v === 'number' ? v : undefined;
   } catch { return undefined; }
 }
 function saveSplitPct(sid: string, pct: number): void {
   try {
-    const map = JSON.parse(localStorage.getItem(SPLIT_PCT_KEY) || '{}');
+    const map = JSON.parse(preferences.getItem(SPLIT_PCT_KEY) || '{}');
     map[sid] = pct;
-    localStorage.setItem(SPLIT_PCT_KEY, JSON.stringify(map));
+    preferences.setItem(SPLIT_PCT_KEY, JSON.stringify(map));
   } catch { /* quota */ }
 }
 import { useDndEnabled } from '../dndEnabled';
+import { preferences } from '../preferences';
 
 // No output filtering needed — direct PTY output is passed through as-is.
 // (The old tmux bridge needed alt-screen stripping because tmux attach

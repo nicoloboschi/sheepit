@@ -4,7 +4,7 @@ import './style.css';
 import 'xterm/css/xterm.css';
 import { initServerUrl, needsConnect, setServerUrl, installFetchInterceptor } from './serverUrl';
 import ConnectScreen from './components/ConnectScreen';
-import { initializePreferences, installServerBackedStorage } from './preferences';
+import { initializePreferences } from './preferences';
 import { applyTheme, readTheme } from './theme';
 import { initNative } from './native';
 
@@ -62,7 +62,6 @@ function Root() {
           setServerUrl(url);
           installFetchInterceptor();
           await initializePreferences();
-          installServerBackedStorage();
           applyTheme(readTheme());
           setNeedsServer(false);
         }}
@@ -85,7 +84,6 @@ async function bootstrap(): Promise<void> {
 
   if (!needsConnect()) {
     await initializePreferences();
-    installServerBackedStorage();
   }
   applyTheme(readTheme());
   createRoot(document.getElementById('root')!).render(

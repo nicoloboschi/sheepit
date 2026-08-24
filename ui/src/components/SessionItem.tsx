@@ -36,6 +36,7 @@ import AntigravityIcon from './AntigravityIcon';
 import GitHubCopilotIcon from './GitHubCopilotIcon';
 import GrokIcon from './GrokIcon';
 import CursorIcon from './CursorIcon';
+import { preferences } from '../preferences';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from './ui/dropdown-menu';
@@ -80,12 +81,12 @@ const PR_STATE_COLORS: Record<string, string> = {
 const FAV_KEY = 'sheepit:favourite-sessions';
 
 export function loadFavourites(): Set<string> {
-  try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); }
+  try { return new Set(JSON.parse(preferences.getItem(FAV_KEY) || '[]')); }
   catch { return new Set(); }
 }
 
 export function saveFavourites(favs: Set<string>) {
-  try { localStorage.setItem(FAV_KEY, JSON.stringify([...favs])); } catch { /* quota */ }
+  try { preferences.setItem(FAV_KEY, JSON.stringify([...favs])); } catch { /* quota */ }
 }
 
 export function toggleFavourite(sessionId: string): Set<string> {

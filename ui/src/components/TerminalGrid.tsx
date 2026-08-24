@@ -5,6 +5,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels';
 import TerminalCell from './TerminalCell';
 import useStore, { layoutCapacity } from '../store';
 import * as sharedWs from '../sharedWs';
+import { preferences } from '../preferences';
 
 /** Kept in sync with `GridLayout` in store.ts. See the store for docs on
  *  the three-variant conventions (cells[0] is always the "big" pane). */
@@ -35,16 +36,16 @@ const SIZES_KEY = 'sheepit:workspace-sizes';
 
 function loadSizes(workspaceId: string): GroupSizes {
   try {
-    const map = JSON.parse(localStorage.getItem(SIZES_KEY) || '{}');
+    const map = JSON.parse(preferences.getItem(SIZES_KEY) || '{}');
     return map[workspaceId] ?? {};
   } catch { return {}; }
 }
 
 function saveSizes(workspaceId: string, sizes: GroupSizes): void {
   try {
-    const map = JSON.parse(localStorage.getItem(SIZES_KEY) || '{}');
+    const map = JSON.parse(preferences.getItem(SIZES_KEY) || '{}');
     map[workspaceId] = sizes;
-    localStorage.setItem(SIZES_KEY, JSON.stringify(map));
+    preferences.setItem(SIZES_KEY, JSON.stringify(map));
   } catch { /* quota */ }
 }
 

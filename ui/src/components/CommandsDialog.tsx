@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Trash2, Plus } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
+import { preferences } from '../preferences';
 
 const STORAGE_KEY = 'sheepit-commands';
 
@@ -12,12 +13,12 @@ interface Command {
 }
 
 export function loadCommands(): Command[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]'); }
+  try { return JSON.parse(preferences.getItem(STORAGE_KEY) ?? '[]'); }
   catch { return []; }
 }
 
 function saveCommands(cmds: Command[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cmds));
+  preferences.setItem(STORAGE_KEY, JSON.stringify(cmds));
 }
 
 interface CommandsDialogProps {

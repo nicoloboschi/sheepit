@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { notify } from './utils';
 import { applyTheme, readTheme, type AppTheme } from './theme';
+import { preferences } from './preferences';
 
 // ── Core types ──────────────────────────────────────────────────────────────
 
@@ -280,7 +281,7 @@ function migrateLegacyWorkspaces(): {
 } | null {
   let oldGrid: Record<string, { layout?: GridLayout; cells?: string[]; activeCell?: number }> = {};
   try {
-    const raw = localStorage.getItem(LEGACY_GRID_KEY);
+    const raw = preferences.getItem(LEGACY_GRID_KEY);
     if (!raw) return null;
     oldGrid = JSON.parse(raw) ?? {};
   } catch { return null; }
@@ -308,7 +309,7 @@ function migrateLegacyWorkspaces(): {
   // Zoom: old key was `{ [rootSessionId]: fontSize }`
   const zooms: Record<string, number> = {};
   try {
-    const rawZoom = localStorage.getItem(LEGACY_ZOOM_KEY);
+    const rawZoom = preferences.getItem(LEGACY_ZOOM_KEY);
     if (rawZoom) {
       const oldZooms = JSON.parse(rawZoom) as Record<string, number>;
       for (const [sid, fontSize] of Object.entries(oldZooms)) {
@@ -321,7 +322,7 @@ function migrateLegacyWorkspaces(): {
   // Last session → last workspace
   let lastWorkspaceId: string | null = null;
   try {
-    const last = localStorage.getItem(LEGACY_LAST_KEY);
+    const last = preferences.getItem(LEGACY_LAST_KEY);
     if (last) lastWorkspaceId = sidToWsId.get(last) ?? null;
   } catch { /* ignore */ }
 
@@ -329,14 +330,14 @@ function migrateLegacyWorkspaces(): {
   // synthetic workspace ids so the user's starred list survives the migration.
   try {
     const FAV_KEY = 'sheepit:favourite-sessions';
-    const rawFavs = localStorage.getItem(FAV_KEY);
+    const rawFavs = preferences.getItem(FAV_KEY);
     if (rawFavs) {
       const oldFavs = JSON.parse(rawFavs) as string[];
       if (Array.isArray(oldFavs)) {
         const newFavs = oldFavs
           .map(sid => sidToWsId.get(sid))
           .filter((x): x is string => !!x);
-        localStorage.setItem(FAV_KEY, JSON.stringify(newFavs));
+        preferences.setItem(FAV_KEY, JSON.stringify(newFavs));
       }
     }
   } catch { /* ignore */ }
@@ -354,7 +355,7 @@ interface PersistedWorkspaces {
 function loadWorkspacesFromStorage(): PersistedWorkspaces {
   // Prefer the new key. If absent, run the one-shot legacy migration.
   try {
-    const raw = localStorage.getItem(WORKSPACES_KEY);
+    const raw = preferences.getItem(WORKSPACES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as PersistedWorkspaces;
       if (parsed?.workspaces && Array.isArray(parsed?.order)) return parsed;
@@ -364,10 +365,10 @@ function loadWorkspacesFromStorage(): PersistedWorkspaces {
   const migrated = migrateLegacyWorkspaces();
   if (migrated) {
     const persisted: PersistedWorkspaces = { workspaces: migrated.workspaces, order: migrated.order };
-    try { localStorage.setItem(WORKSPACES_KEY, JSON.stringify(persisted)); } catch { /* quota */ }
-    try { localStorage.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(migrated.zooms)); } catch { /* quota */ }
+    try { preferences.setItem(WORKSPACES_KEY, JSON.stringify(persisted)); } catch { /* quota */ }
+    try { preferences.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(migrated.zooms)); } catch { /* quota */ }
     if (migrated.lastWorkspaceId) {
-      try { localStorage.setItem(LAST_WORKSPACE_KEY, migrated.lastWorkspaceId); } catch { /* quota */ }
+      try { preferences.setItem(LAST_WORKSPACE_KEY, migrated.lastWorkspaceId); } catch { /* quota */ }
     }
     return persisted;
   }
@@ -376,27 +377,27 @@ function loadWorkspacesFromStorage(): PersistedWorkspaces {
 
 function saveWorkspaces(workspaces: Record<string, Workspace>, order: string[]): void {
   try {
-    localStorage.setItem(WORKSPACES_KEY, JSON.stringify({ workspaces, order }));
+    preferences.setItem(WORKSPACES_KEY, JSON.stringify({ workspaces, order }));
   } catch { /* quota */ }
 }
 
 function loadWorkspaceZooms(): Record<string, number> {
   try {
-    const raw = localStorage.getItem(WORKSPACE_ZOOM_KEY);
+    const raw = preferences.getItem(WORKSPACE_ZOOM_KEY);
     if (raw) return JSON.parse(raw);
   } catch { /* fall through */ }
   return {};
 }
 
 function saveWorkspaceZooms(zooms: Record<string, number>): void {
-  try { localStorage.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(zooms)); } catch { /* quota */ }
+  try { preferences.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(zooms)); } catch { /* quota */ }
 }
 
 // Global terminal font size — one value shared by every workspace/pane.
 const FONT_SIZE_KEY = 'sheepit:font-size';
 function loadFontSize(): number {
   try {
-    const raw = localStorage.getItem(FONT_SIZE_KEY);
+    const raw = preferences.getItem(FONT_SIZE_KEY);
     if (raw) {
       const n = parseInt(raw, 10);
       if (!Number.isNaN(n)) return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, n));
@@ -405,19 +406,19 @@ function loadFontSize(): number {
   return DEFAULT_FONT_SIZE();
 }
 function saveFontSize(size: number): void {
-  try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
+  try { preferences.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
 }
 
 function loadWorkspaceFilter(): 'all' | 'active' | 'favourites' {
   try {
-    const v = localStorage.getItem('sheepit:ws-filter');
+    const v = preferences.getItem('sheepit:ws-filter');
     if (v === 'active' || v === 'favourites') return v;
   } catch { /* fall through */ }
   return 'all';
 }
 
 function loadLastWorkspaceId(): string | null {
-  try { return localStorage.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
+  try { return preferences.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
 }
 
 // Debounce timers kept outside store state (no re-renders on timer changes)
@@ -486,7 +487,7 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   setWorkspaceFilter(filter: 'all' | 'active' | 'favourites') {
-    try { localStorage.setItem('sheepit:ws-filter', filter); } catch { /* quota */ }
+    try { preferences.setItem('sheepit:ws-filter', filter); } catch { /* quota */ }
     set({ workspaceFilter: filter });
   },
 
@@ -621,7 +622,7 @@ const useStore = create<StoreState>((set, get) => ({
 
   setCurrentSessionId(id: string | null) {
     if (id) {
-      try { localStorage.setItem(LAST_WORKSPACE_KEY, id); } catch { /* quota */ }
+      try { preferences.setItem(LAST_WORKSPACE_KEY, id); } catch { /* quota */ }
       // Clear unseen for every pane in this workspace (plus the id itself as
       // a fallback, for the legacy case where `id` isn't registered as a
       // workspace yet — e.g. right after a new session appears but before
@@ -1199,7 +1200,7 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   setTheme(theme: AppTheme) {
-    try { localStorage.setItem('sheepit:theme', theme); } catch { /* quota */ }
+    try { preferences.setItem('sheepit:theme', theme); } catch { /* quota */ }
     applyTheme(theme);
     set({ theme });
   },

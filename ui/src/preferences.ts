@@ -5,7 +5,6 @@ type PreferenceValues = Record<string, string>;
 let values: PreferenceValues = {};
 let pending: PreferenceValues = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-let installed = false;
 
 /* Every stored preference is namespaced `sheepit:` (a handful of older ones
  * use `sheepit-`). The server-side profile validates the same prefix, so the
@@ -58,9 +57,19 @@ function scheduleFlush(): void {
   }, 200);
 }
 
-/** Load the shared profile before mounting React, then migrate existing browser
- * keys that the server does not have yet. The native server URL remains local:
- * it is required to reach the preferences endpoint in standalone mode. */
+/**
+ * Load the shared profile before mounting React, then migrate any keys still
+ * sitting in this browser that the server does not have yet.
+ *
+ * Must complete before anything reads a preference. It used to be possible to
+ * read one earlier — the old implementation patched Storage.prototype, so a
+ * module that touched localStorage at import time silently saw an empty store
+ * and then wrote its emptiness back. That is how a set of workspace layouts
+ * was once replaced by one blank workspace per session.
+ *
+ * The server URL stays in real localStorage: it is what tells us which server
+ * to ask for these values, so it cannot live in them.
+ */
 export async function initializePreferences(): Promise<void> {
   const response = await fetch(apiUrl('/api/preferences'));
   if (!response.ok) throw new Error(`Could not load preferences (${response.status})`);
@@ -81,32 +90,6 @@ export async function initializePreferences(): Promise<void> {
   for (const key of Object.keys(legacy)) {
     if (values[key] !== undefined) localStorage.removeItem(key);
   }
-}
-
-/** Route the existing UI's storage calls through the shared profile. Keeping
- * this compatibility layer lets every established preference use the server
- * immediately, while the connection bootstrap key remains browser-local. */
-export function installServerBackedStorage(): void {
-  if (installed) return;
-  installed = true;
-  const nativeGet = Storage.prototype.getItem;
-  const nativeSet = Storage.prototype.setItem;
-  const nativeRemove = Storage.prototype.removeItem;
-  Storage.prototype.getItem = function(key: string): string | null {
-    return isPreferenceKey(key) ? values[key] ?? null : nativeGet.call(this, key);
-  };
-  Storage.prototype.setItem = function(key: string, value: string): void {
-    if (!isPreferenceKey(key)) return nativeSet.call(this, key, value);
-    values[key] = value;
-    pending[key] = value;
-    scheduleFlush();
-  };
-  Storage.prototype.removeItem = function(key: string): void {
-    if (!isPreferenceKey(key)) return nativeRemove.call(this, key);
-    delete values[key];
-    pending[key] = '';
-    scheduleFlush();
-  };
 }
 
 export const preferences = {

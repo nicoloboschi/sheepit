@@ -41,6 +41,7 @@ import {
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
 import { tildefy } from './utils';
+import { preferences } from './preferences';
 
 // ── App ──────────────────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ export default function App() {
 
   const connectSession = useCallback((sessionId: string) => {
     useStore.getState().setCurrentSessionId(sessionId);
-    localStorage.setItem('sheepit-last-session', sessionId);
+    preferences.setItem('sheepit-last-session', sessionId);
     syncHash();
     // Focus the terminal after session switch
     setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 100);
@@ -140,7 +141,7 @@ export default function App() {
       const store = useStore.getState();
       fromPopstateRef.current = true;
       store.setCurrentSessionId(target.workspaceId);
-      localStorage.setItem('sheepit-last-session', target.workspaceId);
+      preferences.setItem('sheepit-last-session', target.workspaceId);
       // Restore or clear zen mode
       if (target.zenSessionId && store.zenSessionId !== target.zenSessionId) {
         store.toggleZen(target.zenSessionId);
@@ -187,7 +188,7 @@ export default function App() {
         if (!store.currentSessionId) {
           const stateAfterRender = useStore.getState();
           // Priority: localStorage > first session
-          const lastId = localStorage.getItem('sheepit-last-session');
+          const lastId = preferences.getItem('sheepit-last-session');
           const lastTarget = lastId && stateAfterRender.workspaces[lastId] ? lastId : null;
           const targetId = lastTarget ?? visibleSessionList[0]?.id;
           if (targetId) connectSession(targetId);
