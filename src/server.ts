@@ -8,7 +8,7 @@ import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import type { BridgeMessage } from './protocol.js';
 import type { AIService } from './ai.js';
-import { stateDir } from './paths.js';
+import { vibeSessionsDir } from './paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -229,7 +229,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
               const nouns = ['phoenix', 'nebula', 'vortex', 'spark', 'pulse', 'nova', 'flux', 'drift', 'surge', 'wave', 'storm', 'forge', 'core', 'orbit', 'prism', 'cipher', 'vertex', 'synth', 'echo', 'glyph'];
               const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)]!;
               const name = `${pick(adjectives)}-${pick(nouns)}`;
-              const vibeDir = join(stateDir(), 'vibe-sessions', name);
+              const vibeDir = join(vibeSessionsDir(), name);
               mkdirSync(vibeDir, { recursive: true });
               path = vibeDir;
             }

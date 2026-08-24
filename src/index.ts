@@ -8,7 +8,7 @@ import { AIService } from './ai.js';
 import { createApp, logger } from './server.js';
 import { config } from './config.js';
 import { ensureAgentPluginInstalled } from './plugin-install.js';
-import { configDir } from './paths.js';
+import { configDir, migrateLegacyStateDir } from './paths.js';
 import { writeFileSync, mkdirSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +29,9 @@ program
   .action(async (opts) => {
     const port = parseInt(opts.port, 10);
     const host = opts.host;
+
+    // Fold the old second state root in before anything reads from it.
+    migrateLegacyStateDir(msg => logger.info(msg));
 
     const bridge = new DirectBridge();
     // Before start(): restored sessions bake this port into their environment,

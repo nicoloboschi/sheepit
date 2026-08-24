@@ -18,7 +18,7 @@ import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from '
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
-import { configDir } from './paths.js';
+import { configDir, ringBuffersDir } from './paths.js';
 import { logger } from './server.js';
 
 const execAsync = promisify(exec);
@@ -28,7 +28,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const CONFIG_DIR = configDir();
 const SESSIONS_FILE = join(CONFIG_DIR, 'direct-sessions.json');
-const RING_DIR = join(CONFIG_DIR, 'ring-buffers');
+const RING_DIR = ringBuffersDir();
 const RING_SIZE = 256 * 1024;
 
 /** Coalescing window for `current_input` broadcasts (see publishCurrentInput).
