@@ -601,14 +601,21 @@
     linear-gradient(var(--fence) 0 0) right   1px top    0    / 1.75px 9px no-repeat,
     linear-gradient(var(--fence) 0 0) left    1px bottom 0    / 1.75px 9px no-repeat,
     linear-gradient(var(--fence) 0 0) right   1px bottom 0    / 1.75px 9px no-repeat,
+    /* gateposts, flanking the opening the grip sits in */
+    linear-gradient(var(--fence) 0 0) calc(50% - 14px) 0 / 1.75px 8px no-repeat,
+    linear-gradient(var(--fence) 0 0) calc(50% + 14px) 0 / 1.75px 8px no-repeat,
     /* rails: one line along each edge, inset from the corners so the posts
-       terminate them rather than the rails turning a corner */
-    linear-gradient(var(--fence) 0 0) center  top    3.5px / calc(100% - 22px) 1px  no-repeat,
+       terminate them rather than the rails turning a corner. The top rail is
+       split into two runs with a gap in the middle — the gate, which is where
+       the drag grip stands. It used to be drawn straight through the grip. */
+    linear-gradient(var(--fence) 0 0) left  11px top 3.5px / calc(50% - 25px) 1px no-repeat,
+    linear-gradient(var(--fence) 0 0) right 11px top 3.5px / calc(50% - 25px) 1px no-repeat,
     linear-gradient(var(--fence) 0 0) center  bottom 3.5px / calc(100% - 22px) 1px  no-repeat,
     linear-gradient(var(--fence) 0 0) left    3.5px center  / 1px calc(100% - 22px) no-repeat,
     linear-gradient(var(--fence) 0 0) right   3.5px center  / 1px calc(100% - 22px) no-repeat,
     /* pickets */
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) center top    0 / calc(100% - 22px) 6px no-repeat,
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) left  11px top 0 / calc(50% - 25px) 6px no-repeat,
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) right 11px top 0 / calc(50% - 25px) 6px no-repeat,
     repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) center bottom 0 / calc(100% - 22px) 6px no-repeat,
     repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) left   0 center / 6px calc(100% - 22px) no-repeat,
     repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) right  0 center / 6px calc(100% - 22px) no-repeat;
@@ -833,9 +840,18 @@
   display: flex; align-items: center; justify-content: center;
   width: 22px; height: 22px;
   border-radius: 6px;
-  background: #1b2018;
+  /* A variable, so the state backgrounds below can layer grass over whatever
+     surface the chip currently sits on. Hardcoding the dark here left a
+     near-black hole punched in a selected pen. */
+  --chip: #1b2018;
+  background: var(--chip);
   border: 1px solid rgba(255, 255, 255, 0.14);
   font-size: 13px; line-height: 1;
+}
+/* Lift with the pen, the way the kind badge opposite it does. */
+.pane-card-active .pane-card-activity {
+  --chip: color-mix(in srgb, var(--primary) 22%, #1b2018);
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
 }
 .pane-card-activity::before {
   content: '\1F411';           /* a real glyph, so nothing is fetched */
@@ -863,7 +879,7 @@
   /* Grass inside the chip, under the hooves. */
   background:
     radial-gradient(ellipse 13px 6px at 50% 104%, rgba(156, 188, 127, 0.60), transparent 70%),
-    #1b2018;
+    var(--chip);
   border-color: rgba(156, 188, 127, 0.45);
 }
 .pane-card-busy .pane-card-activity::before {
@@ -877,7 +893,7 @@
 .pane-card-needs-attention .pane-card-activity {
   background:
     radial-gradient(ellipse 13px 6px at 50% 104%, rgba(142, 191, 162, 0.50), transparent 70%),
-    #1b2018;
+    var(--chip);
   border-color: rgba(142, 191, 162, 0.55);
   box-shadow: 0 0 9px rgba(142, 191, 162, 0.35);
 }
