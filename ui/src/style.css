@@ -550,14 +550,16 @@
   /* Inset the row so the card has breathing room on both sides. The extra
      top padding leaves room for the workspace-grip-top strip to sit on the
      top edge without overlapping the PaneGrid below. */
-  padding: 14px 10px 15px 11px;
+  padding: 16px 17px 15px 18px;
   margin: 0 7px 8px 7px;
   cursor: pointer;
   /* Subtle card look for inactive rows — flat dark background + hairline
      border + rounded corners. Each workspace reads as its own card even
      when nothing is selected. */
   background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  /* No border: the fence drawn in ::after is the pen's edge. A border here
+     would put a second, competing outline a pixel outside it. */
+  border: 1px solid transparent;
   border-radius: 10px;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
   min-width: 0;
@@ -574,38 +576,37 @@
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.025);
   transform: translateY(-1px);
 }
-/* The fence along the front of each pen.
-   Two rails and a row of pickets, drawn entirely in gradients — no image, and
-   one pseudo-element per pen rather than a sprite per picket. Deliberately
-   faint: with twenty pens open this has to read as a rhythm down the sidebar,
-   not twenty fences competing for attention. pointer-events:none so it can
-   never eat a click meant for the pen. */
+/* The fence around each pen — all four sides, because a pen is an enclosure.
+   Rails are the ::after's own rounded border; the pickets are four repeating
+   gradients, one per edge. Entirely drawn: no image, one pseudo-element per
+   pen rather than a sprite per picket. Kept faint on purpose — with twenty
+   pens open this has to read as a rhythm down the sidebar, not twenty fences
+   competing. pointer-events:none so it can never eat a click meant for the
+   pen. */
 .session-item::after {
   content: '';
   position: absolute;
-  left: 9px; right: 9px; bottom: 3px;
-  height: 8px;
+  inset: 2px;
   pointer-events: none;
-  opacity: 0.55;
+  border: 1px solid var(--fence);
+  border-radius: 9px;
+  opacity: 0.5;
   background:
-    linear-gradient(var(--fence) 0 0) 0 1.5px / 100% 1.25px no-repeat,
-    linear-gradient(var(--fence) 0 0) 0 5.5px / 100% 1.25px no-repeat,
-    repeating-linear-gradient(90deg, var(--fence) 0 1.5px, transparent 1.5px 11px);
-  /* Fade the ends so the fence sits in the card instead of butting into its
-     rounded corners. */
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
-          mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) top    / 100% 5px no-repeat,
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) bottom / 100% 5px no-repeat,
+    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) left   / 5px 100% no-repeat,
+    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) right  / 5px 100% no-repeat;
 }
 /* The pen you are in gets its fence in the light. */
 .session-item.active::after {
   --fence: color-mix(in srgb, var(--warning) 42%, var(--primary));
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .session-item.active {
   /* Selected row: surface and border carry the state without a menu-like rail. */
   background: linear-gradient(105deg, rgba(156, 188, 127, 0.18), rgba(111, 169, 140, 0.075));
-  border-color: rgba(156, 188, 127, 0.48);
+  border-color: transparent;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(142, 191, 162, 0.08);
 }
 
@@ -745,7 +746,7 @@
   gap: 6px;
   /* Left padding reserves a narrow strip for the corner badge's *interior*
      half; the other half hangs off the card's top-left edge. */
-  padding: 9px 11px 9px 18px;
+  padding: 9px 16px 9px 18px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 7px;
@@ -806,15 +807,19 @@
    Each state uses the same color for its dot and card surface: blue = working,
    green = ready for input, hollow neutral = idle. */
 .pane-card-activity {
-  /* Each sheep, standing in its pen. This was a 6px dot; its four states are
-     now the sheep's four postures. The colour that used to carry the state
-     moved to the ground under its feet — an emoji cannot be recoloured
-     reliably, but the patch of meadow it stands on can. */
-  position: relative;
-  width: 16px; height: 16px;
-  flex: 0 0 auto;
-  font-size: 12px; line-height: 16px; text-align: center;
-  border: 0; background: none; box-shadow: none;
+  /* Perched on the top-right corner, mirroring the kind badge on the left:
+     what is running is stamped on one corner, how it is doing on the other.
+     Same chip as the badge so the two read as a pair. */
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: #1b2018;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 13px; line-height: 1;
 }
 .pane-card-activity::before {
   content: '\1F411';           /* a real glyph, so nothing is fetched */
@@ -831,15 +836,19 @@
 .pane-card-unseen.pane-card-idle .pane-card-activity::before { opacity: 0.95; }
 .pane-card-unseen.pane-card-idle .pane-card-activity::after {
   content: '';
-  position: absolute; top: 0; right: -1px;
-  width: 5px; height: 5px; border-radius: 999px;
+  position: absolute; top: -2px; right: -2px;
+  width: 6px; height: 6px; border-radius: 999px;
   background: var(--warning);
   box-shadow: 0 0 0 1.5px var(--card), 0 0 5px rgba(217, 184, 74, 0.55);
 }
 
 /* Grazing: head down in the grass. The green under it is what it is eating. */
 .pane-card-busy .pane-card-activity {
-  background: radial-gradient(ellipse 10px 4px at 50% 92%, rgba(156, 188, 127, 0.55), transparent 70%);
+  /* Grass inside the chip, under the hooves. */
+  background:
+    radial-gradient(ellipse 13px 6px at 50% 104%, rgba(156, 188, 127, 0.60), transparent 70%),
+    #1b2018;
+  border-color: rgba(156, 188, 127, 0.45);
 }
 .pane-card-busy .pane-card-activity::before {
   opacity: 1;
@@ -850,7 +859,11 @@
    meadow, and it moves — a pen that wants you must be findable without
    reading a word. */
 .pane-card-needs-attention .pane-card-activity {
-  background: radial-gradient(ellipse 11px 5px at 50% 92%, rgba(142, 191, 162, 0.40), transparent 70%);
+  background:
+    radial-gradient(ellipse 13px 6px at 50% 104%, rgba(142, 191, 162, 0.50), transparent 70%),
+    #1b2018;
+  border-color: rgba(142, 191, 162, 0.55);
+  box-shadow: 0 0 9px rgba(142, 191, 162, 0.35);
 }
 .pane-card-needs-attention .pane-card-activity::before {
   opacity: 1;
@@ -858,7 +871,9 @@
 }
 .pane-card-needs-attention .pane-card-activity::after {
   content: 'baa';
-  position: absolute; left: 100%; top: -1px; margin-left: 1px;
+  /* To the left: the chip hangs off the card's right edge, so anything placed
+     further right would sit outside the sidebar. */
+  position: absolute; right: 100%; top: 1px; margin-right: 2px;
   font-size: 6.5px; font-weight: 600;
   color: var(--bleating);
   animation: sheep-baa 1.15s ease-in-out infinite;
@@ -877,8 +892,8 @@
 }
 @keyframes sheep-baa {
   0%, 100% { opacity: 0; transform: translateX(0); }
-  35%      { opacity: 0.95; transform: translateX(1px); }
-  75%      { opacity: 0; transform: translateX(3px); }
+  35%      { opacity: 0.95; transform: translateX(-1px); }
+  75%      { opacity: 0; transform: translateX(-3px); }
 }
 /* Grazing (a command is running) is the meadow green; bleating (the pane wants
    you) is the moss teal and pulses. Before the rebrand these were blue and
@@ -915,7 +930,7 @@
    showing that it is working. */
 
 /* Tight rows get a smaller animal, not a smaller box. */
-.pane-card-tight .pane-card-activity { width: 13px; height: 13px; font-size: 10px; line-height: 13px; }
+.pane-card-tight .pane-card-activity { width: 18px; height: 18px; font-size: 11px; top: -7px; right: -7px; }
 
 /* Row 1: name (icon is now the corner badge) */
 .pane-card-row {
