@@ -496,23 +496,6 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
   );
 }
 
-/** Two-letter tag for a pen, drawn at the head of its row.
- *
- *  Multi-word names use the first two initials ("agent-memory-…" -> "am").
- *  A single word ending in digits uses its first letter plus the last of those
- *  digits, which is what distinguishes the pens people actually accumulate:
- *  memlake4 -> "m4", memlake7 -> "m7", where plain initials would give both
- *  "me". Anything else falls back to the first two characters. */
-function monogram(name: string): string {
-  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  if (words.length > 1) return (words[0]![0]! + words[1]![0]!).toLowerCase();
-  const word = words[0] ?? name;
-  const trailingDigits = /(\d+)$/.exec(word)?.[1];
-  const raw = trailingDigits && word.length > trailingDigits.length
-    ? word[0]! + trailingDigits.slice(-1)
-    : word.slice(0, 2);
-  return raw.toLowerCase();
-}
 
 export default function SessionItem({ workspace, isActive, onConnect, send, isFavourite, onToggleFavourite }: SessionItemProps) {
   const showConfirm = useStore(s => s.showConfirm);
@@ -690,7 +673,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
           />
         ) : (
           <div className="workspace-title-row">
-            <span className="pen-monogram" aria-hidden>{monogram(displayName)}</span>
             <span className="workspace-title" title={displayName}>{displayName}</span>
             {onToggleFavourite && (
               <button
@@ -701,9 +683,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
                 <Star size={12} style={isFavourite ? { fill: 'var(--warning)' } : undefined} />
               </button>
             )}
-            <span className="pen-head-count" title={`${cellCount} ${cellCount === 1 ? 'pane' : 'panes'} in this pen`}>
-              {cellCount}
-            </span>
           </div>
         )}
         <PaneGrid
