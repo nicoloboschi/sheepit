@@ -35,8 +35,20 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 | **Bleating** | A pane waiting for your input | `sessionNeedsAttention[sessionId]` |
 | **Grazing** | A pane with a command still running | `sessionBusy[sessionId]` |
 
-A pane that is neither bleating nor grazing is just standing there; it gets no
-word of its own. Bleating wins over grazing when both would apply, so the two
+A pane that is neither bleating nor grazing is just standing there — but that
+still splits in two, because "finished, and you have read it" and "finished,
+and you have not" are different things to a shepherd with twenty pens open.
+The activity dot carries all four:
+
+| dot | means |
+|---|---|
+| teal, pulsing | bleating — wants your input |
+| meadow, steady | grazing — a command is running |
+| amber, filled | idle, with output you have not read (`sessionHasUnseen`) |
+| hollow ring | idle, and you have seen it |
+
+The two live states take precedence: a pane that is still working shows that it
+is working, unread or not. Bleating wins over grazing when both would apply, so the two
 counts never double-count a pane.
 
 Write `pen` in UI copy, `workspace` in code. A comment explaining a UI string
