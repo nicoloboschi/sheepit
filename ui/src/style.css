@@ -557,10 +557,11 @@
      border + rounded corners. Each workspace reads as its own card even
      when nothing is selected. */
   background: rgba(255, 255, 255, 0.02);
-  /* No border: the fence drawn in ::after is the pen's edge. A border here
-     would put a second, competing outline a pixel outside it. */
+  /* No border and barely any radius: the fence in ::after is the pen's edge.
+     A rounded card behind a straight fence reads as two enclosures, one of
+     them a rectangle with soft corners that nothing in a field has. */
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 3px;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
   min-width: 0;
   overflow: hidden;
@@ -588,14 +589,29 @@
   position: absolute;
   inset: 2px;
   pointer-events: none;
-  border: 1px solid var(--fence);
-  border-radius: 9px;
   opacity: 0.5;
+  /* Rails and pickets only — no border, no border-radius. An earlier version
+     drew the rails as a rounded 1px border, which is just a bordered card
+     with ticks on it: the eye reads "outline", not "fence". Straight rails
+     that stop short of the corners, with a taller post standing at each one,
+     read as an enclosure instead. */
   background:
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) top    / 100% 5px no-repeat,
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) bottom / 100% 5px no-repeat,
-    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) left   / 5px 100% no-repeat,
-    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) right  / 5px 100% no-repeat;
+    /* corner posts, one per corner, standing proud of the rails */
+    linear-gradient(var(--fence) 0 0) left    1px top    0    / 1.75px 9px no-repeat,
+    linear-gradient(var(--fence) 0 0) right   1px top    0    / 1.75px 9px no-repeat,
+    linear-gradient(var(--fence) 0 0) left    1px bottom 0    / 1.75px 9px no-repeat,
+    linear-gradient(var(--fence) 0 0) right   1px bottom 0    / 1.75px 9px no-repeat,
+    /* rails: one line along each edge, inset from the corners so the posts
+       terminate them rather than the rails turning a corner */
+    linear-gradient(var(--fence) 0 0) center  top    3.5px / calc(100% - 22px) 1px  no-repeat,
+    linear-gradient(var(--fence) 0 0) center  bottom 3.5px / calc(100% - 22px) 1px  no-repeat,
+    linear-gradient(var(--fence) 0 0) left    3.5px center  / 1px calc(100% - 22px) no-repeat,
+    linear-gradient(var(--fence) 0 0) right   3.5px center  / 1px calc(100% - 22px) no-repeat,
+    /* pickets */
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) center top    0 / calc(100% - 22px) 6px no-repeat,
+    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) center bottom 0 / calc(100% - 22px) 6px no-repeat,
+    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) left   0 center / 6px calc(100% - 22px) no-repeat,
+    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) right  0 center / 6px calc(100% - 22px) no-repeat;
 }
 /* The pen you are in gets its fence in the light. */
 .session-item.active::after {
