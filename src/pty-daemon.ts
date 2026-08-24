@@ -240,10 +240,19 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
       sessions.set(id, sess);
       attachSessionHandlers(sess);
 
+      // A pooled shell was spawned before this session id existed, so req.env
+      // never reached it. Export the variables here instead: the same write
+      // that repoints the shell also seeds its environment, so an agent
+      // launched in this pane — and the hooks it runs — can tell which
+      // vipershell session they belong to. `clear` below hides this line.
+      const exports = Object.entries(req.env ?? {})
+        .map(([k, v]) => `export ${k}=${shEscape(String(v))}; `)
+        .join('');
+
       // cd into the target, then clear the screen so the client sees a fresh
       // prompt in the right directory. `&& clear` fails loudly if the target
       // doesn't exist — better than silently landing in $HOME.
-      claimed.pty.write(`cd ${shEscape(targetCwd)} && clear\r`);
+      claimed.pty.write(`${exports}cd ${shEscape(targetCwd)} && clear\r`);
 
       daemonLog(`create ${id} via pool pid=${claimed.pid} cwd=${targetCwd} size=${cols}x${rows}`);
       sendMsg(socket, { type: 'ok', reqId: req.reqId, id, pid: claimed.pid });

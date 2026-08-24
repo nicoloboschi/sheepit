@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "vipershell",
+  "description": "Plugins that integrate coding agents with the vipershell terminal",
+  "owner": {
+    "name": "Nicol\u00f2 Boschi"
+  },
+  "plugins": [
+    {
+      "name": "vipershell",
+      "source": "./plugin",
+      "description": "Reports agent state and the last exchange to the vipershell session owning this terminal (Claude Code and Codex)"
+    }
+  ]
+}

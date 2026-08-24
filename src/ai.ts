@@ -42,116 +42,6 @@ function simpleHash(s: string): string {
   return h.toString(36);
 }
 
-/**
- * Patterns that match Claude Code / Codex TUI chrome lines we should drop
- * before feeding terminal content to the LLM. These are what caused nonsense
- * session names like "fluttering", "downloading", "bypass permissions" —
- * the LLM was faithfully naming the session after whatever random spinner
- * word or footer was on screen.
- *
- * Be conservative: we'd rather keep a "chrome-looking" line than lose a
- * real signal. These patterns are anchored and narrow.
- */
-const CLAUDE_TUI_CHROME_PATTERNS: RegExp[] = [
-  // Footer: "⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
-  /⏵⏵.*bypass\s*permissions/i,
-  /shift\s*\+\s*tab\s*to\s*cycle/i,
-  // "new task? /clear to save 469.5k tokens"
-  /new\s*task\?.*\/clear.*to\s*save/i,
-  // Spinner status line ending with "(1m 15s · ↓ 372 tokens)" or similar
-  /…?\s*\([^)]*tokens?\s*\)\s*$/i,
-  // "thinking with low/medium/high effort"
-  /thinking\s*with\s*(low|medium|high)\s*effort/i,
-  // Tool-call inline spinner: "  ⎿  Running…" / "  ⎿  Waiting…"
-  /^\s*⎿\s*(running|waiting|processing|working|computing|reading|writing|executing)\s*…?\s*$/i,
-  // Spinner-glyph + gerund line (Topsy-turvying, fluttering, forging, Baked, Worked, etc.)
-  // Matches: "✻ Baked for 34s", "* Topsy-turvying… (1m)", "✶ Forging thoughts…"
-  /^\s*[✻✶✢·*]\s*[A-Za-z][A-Za-z\-]{2,20}(ing|ed|y)?\s*(…|for\s+\d|\(|$)/,
-  // Horizontal separator lines
-  /^\s*[─━═]{3,}\s*$/,
-  // Just the input prompt marker "❯"
-  /^\s*❯\s*$/,
-  // Codex status: "• Working ✓ • Running command…"
-  /^\s*•\s*(working|running|thinking|processing|waiting)\s*(…|✓|✗)?\s*$/i,
-];
-
-/** Return true if `line` looks like Claude/Codex TUI chrome and should be dropped. */
-function isClaudeTuiChrome(line: string): boolean {
-  const trimmed = line.trim();
-  if (!trimmed) return false;
-  for (const re of CLAUDE_TUI_CHROME_PATTERNS) {
-    if (re.test(trimmed)) return true;
-  }
-  return false;
-}
-
-/**
- * Clean raw terminal output for LLM consumption.
- *
- * Raw ring buffer content from a PTY contains ANSI escape sequences,
- * cursor movements, and \r-based line rewrites. TUIs like Claude Code
- * repeatedly redraw the screen using these. The LLM gets confused by
- * the gibberish and produces generic nonsense names.
- *
- * Strategy:
- *  1. Strip OSC, CSI, and 2-byte ESC sequences (colors, cursor moves)
- *  2. Collapse \r\n → \n and handle bare \r as "overwrite current line"
- *  3. Drop remaining control chars except \n and tab
- *  4. Deduplicate consecutive identical lines (spinners, progress bars)
- *  5. Drop Claude Code / Codex TUI chrome lines (see CLAUDE_TUI_CHROME_PATTERNS)
- *  6. Trim trailing whitespace per line and collapse blank runs
- */
-function cleanTerminalText(raw: string): string {
-  // 1. Strip ANSI escape sequences
-  let s = raw.replace(
-    /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[\x20-\x3f]*[\x40-\x7e]|[PX^_].*?\x1b\\|.)/g,
-    ''
-  );
-
-  // 2. Normalize line endings and handle \r overwrite.
-  //    A bare \r means "overwrite the current line from column 0".
-  s = s.replace(/\r\n/g, '\n');
-  const rawLines = s.split('\n');
-  const resolved: string[] = [];
-  for (const line of rawLines) {
-    // Within a single line, \r restarts the line (spinners and progress bars)
-    const segments = line.split('\r');
-    let current = '';
-    for (const seg of segments) {
-      // Later segment overwrites earlier one from column 0, preserving
-      // any characters beyond the segment's length.
-      if (seg.length >= current.length) {
-        current = seg;
-      } else {
-        current = seg + current.slice(seg.length);
-      }
-    }
-    resolved.push(current);
-  }
-  s = resolved.join('\n');
-
-  // 3. Drop remaining control chars (except \n and \t)
-  s = s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-
-  // 4. Trim trailing whitespace per line, dedupe consecutive lines, and
-  //    drop TUI chrome lines (spinner words, footers, token counts, ...).
-  const lines = s.split('\n').map(l => l.trimEnd());
-  const deduped: string[] = [];
-  let prev = '\u0000';
-  for (const line of lines) {
-    if (line === prev) continue;
-    if (isClaudeTuiChrome(line)) continue;
-    deduped.push(line);
-    prev = line;
-  }
-
-  // 5. Collapse multiple blank lines to one
-  return deduped
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 const CONFIG_PATH = join(homedir(), '.config', 'vipershell', 'config.json');
 
 export type AIProvider = 'claude-code' | 'codex';
@@ -346,17 +236,26 @@ export class AIService {
 
   private async _nameSession(sessionId: string, provider: AIProvider): Promise<void> {
     try {
-      // Get raw ring buffer output and normalize it. Raw output contains
-      // ANSI escape sequences, cursor movements, and \r-based line rewrites
-      // (TUIs like Claude Code redraw the whole screen constantly). Without
-      // cleaning this up, the LLM sees gibberish and falls back to generic
-      // guesses like "fluttering" or "downloading".
-      const raw = await this.bridge!.snapshot(sessionId);
-      const cleaned = cleanTerminalText(raw);
-      if (!cleaned || cleaned.length < 10) return;
-
-      // Take last 3000 chars of cleaned text so the LLM sees recent activity
-      const snippet = cleaned.length > 3000 ? cleaned.slice(-3000) : cleaned;
+      // Name from the actual exchange, reported by the agent's own hooks.
+      //
+      // This used to scrape 3000 characters of terminal output, which for a
+      // TUI agent is mostly spinners, footers and redraws — most of the prompt
+      // below existed to talk the model out of naming sessions "fluttering".
+      // What the user asked and what the agent answered is the thing we
+      // actually wanted all along.
+      //
+      // No turn means no name: a plain shell, or an agent without the plugin.
+      // Guessing from raw output is what produced the bad names, so declining
+      // is the better answer.
+      const turn = this.bridge!.getAgentTurn(sessionId);
+      if (!turn?.prompt && !turn?.response) {
+        logger.debug(`AI naming ${sessionId}: no reported turn, skipping`);
+        return;
+      }
+      const snippet = [
+        turn.prompt ? `User asked:\n${turn.prompt}` : null,
+        turn.response ? `Agent answered:\n${turn.response}` : null,
+      ].filter(Boolean).join('\n\n');
 
       // Pull structured context (project, git branch, PR) from the session
       // itself — this is a much more reliable signal than the TUI snapshot
@@ -387,38 +286,27 @@ export class AIService {
         logger.debug(`AI naming ${sessionId}: content unchanged, skipping`);
         return;
       }
-      // Store hash immediately so unchanged content is never re-processed,
-      // even if the LLM call below fails or times out.
+      // Claim the content up front so a sweep that overlaps this one does not
+      // name the same session twice. Cleared again if the call fails, because
+      // holding it would retire the session permanently: the content hash
+      // would keep matching, and a transient failure — the CLI not logged in,
+      // a timeout — would mean it is never named again.
       this.lastContentHash.set(sessionId, contentHash);
 
-      const prompt = `You are naming a terminal session based on what the user is actually doing in it. Produce a concise name (2-5 words, lowercase, no emojis, no quotes, no punctuation).
+      const prompt = `Name this coding session after the task being worked on. Produce a concise name (2-5 words, lowercase, no emojis, no quotes, no punctuation).
 
 Examples of good names:
 - nextjs dev server
 - git rebase main
 - pytest integration tests
 - refactor auth middleware
-- npm install deps
 - debug memory leak
 
-IGNORE the following — these are UI chrome, not the task:
-- Spinner words like "fluttering", "forging", "Topsy-turvying", "Baked for 34s", "thinking with medium effort"
-- Claude Code / Codex footers like "bypass permissions", "shift+tab to cycle", "esc to interrupt"
-- Token counts like "(1m 15s · ↓ 372 tokens)" or "/clear to save N tokens"
-- The prompt marker "❯" on its own, horizontal separators, blank lines
-- Generic single verbs like "downloading", "importing", "running", "working" unless they are clearly part of a real command
-
-PREFER grounding the name in concrete signals:
-- Commands the user ran (npm, git, cargo, pytest, curl, etc.) and their arguments
-- Files or symbols being edited or searched
-- Git branch name or PR title, if they describe the task
-- Tool invocations the agent is making (Bash(...), Read(...), Edit(...))
-
-If the visible output is only UI chrome, empty prompts, or otherwise gives you no real signal about the task, output exactly: idle
-
-Do not guess. Do not invent names. Only base your answer on what you actually see.
+Base the name on the task itself, not on pleasantries, tool names, or how the
+agent phrased its reply. If the exchange describes no identifiable task, output
+exactly: idle
 ${sessionCtx ? `\nSession context:\n${sessionCtx}\n` : ''}
-Terminal output:
+Last exchange:
 ${snippet}
 
 Session name:`;
@@ -426,7 +314,7 @@ Session name:`;
       const invocation = buildNamerInvocation(provider, prompt);
       const cli = invocation.command;
 
-      logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of terminal)`);
+      logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of exchange)`);
       const t0 = Date.now();
 
       let name: string;
@@ -481,6 +369,8 @@ Session name:`;
       this.aiAssignedName.set(sessionId, name);
       logger.info(`AI renamed ${sessionId} → "${name}"`);
     } catch (e) {
+      // Release the claim so the next sweep retries this exact content.
+      this.lastContentHash.delete(sessionId);
       logger.debug(`AI naming failed for ${sessionId}: ${e}`);
     }
   }

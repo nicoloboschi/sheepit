@@ -6,7 +6,8 @@ import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writ
 import nodePath from 'path';
 import os from 'os';
 import si from 'systeminformation';
-import type { DirectBridge } from './direct-bridge.js';
+import type { DirectBridge, AgentState } from './direct-bridge.js';
+import { AGENT_STATES } from './direct-bridge.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -250,6 +251,60 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       if (!name?.trim()) return res.status(400).json({ error: 'name required' });
       await bridge.renameSession(req.params.id, name.trim());
       res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /** A coding agent reporting its own state, driven by that agent's hooks.
+   *
+   *  Authoritative, and the reason it exists: inferring "finished" from output
+   *  silence is late by design and fails outright for network-bound agents
+   *  that print nothing and burn no CPU while they think.
+   *
+   *  Kept agent-agnostic on purpose — `source` distinguishes the reporter so
+   *  Codex can post the same shapes through its own notify mechanism.
+   */
+  router.post('/sessions/:id/agent-state', (req, res) => {
+    try {
+      const { state, source, event, prompt, response } = req.body as
+        { state?: string; source?: string; event?: string; prompt?: string; response?: string };
+      if (!state || !AGENT_STATES.includes(state as AgentState)) {
+        return res.status(400).json({ error: `state must be one of ${AGENT_STATES.join(', ')}` });
+      }
+      // A hook firing just after its pane closed is ordinary, not an error
+      // worth logging loudly — but the caller should still know it missed.
+      const ok = bridge.setAgentState(
+        req.params.id,
+        state as AgentState,
+        `${source?.slice(0, 32) || 'unknown'}${event ? `/${String(event).slice(0, 32)}` : ''}`,
+        {
+          // Bounded here too: the endpoint is reachable by anything local, and
+          // this text ends up in an LLM prompt.
+          prompt: typeof prompt === 'string' ? prompt.slice(0, 4000) : undefined,
+          response: typeof response === 'string' ? response.slice(0, 4000) : undefined,
+        },
+      );
+      if (!ok) return res.status(404).json({ error: 'unknown session' });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /** Which session owns this process? Used by agent hooks that have no
+   *  VIPERSHELL_SESSION_ID — panes created before it existed, or an agent
+   *  started outside the shell we seeded. The caller sends its process
+   *  ancestry, nearest first. */
+  router.post('/sessions/resolve', (req, res) => {
+    try {
+      const { pids } = req.body as { pids?: unknown };
+      if (!Array.isArray(pids) || pids.some(p => !Number.isInteger(p))) {
+        return res.status(400).json({ error: 'pids must be an array of integers' });
+      }
+      const sessionId = bridge.resolveSessionByPids(pids.slice(0, 32) as number[]);
+      if (!sessionId) return res.status(404).json({ error: 'no session owns those pids' });
+      res.json({ sessionId });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
+import { config } from './config.js';
 import type { BridgeMessage, Session } from './bridge.js';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
@@ -37,6 +38,16 @@ const INPUT_PUBLISH_MS = 50;
 /** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
 const PERSIST_DEBOUNCE_MS = 1000;
 
+/** How long an agent-reported "busy" is trusted before the session is assumed
+ *  idle again.
+ *
+ *  The report is authoritative but its delivery is not: a `kill -9`, a crashed
+ *  agent or a hook that timed out means the matching "idle" never arrives, and
+ *  since nothing else drives this flag any more, such a session would spin
+ *  forever. An hour is far longer than any single model turn, so this only
+ *  fires for a session whose agent genuinely went away. */
+const AGENT_STATE_TTL_MS = 60 * 60_000;
+
 /** How much of a session's ring the preview sweep decodes. A preview is two
  *  lines; this is generous even for very wide panes. */
 const PREVIEW_TAIL_BYTES = 8 * 1024;
@@ -56,21 +67,6 @@ const EXEC_CONCURRENCY = 4;
  *  need a `ps` of every process on the machine, which is the expensive part. */
 const PROC_INFO_TTL_MS = 10_000;
 
-/** How long a session must produce no output before it counts as finished.
- *
- *  Agents repaint a spinner/elapsed timer roughly every second while working,
- *  so this only has to bridge the natural gaps between repaints — long enough
- *  not to flicker mid-turn, short enough that "done" feels immediate. */
-const BUSY_SILENCE_MS = 3000;
-
-/** How long output must have been flowing before a session counts as "running
- *  something", rather than just echoing a quick command.
- *
- *  Without this, any background `ls` would light up the sidebar and fire a
- *  "finished" notification three seconds later. A model turn spans many
- *  seconds of repaints, so it clears this easily. */
-const MIN_ACTIVE_SPAN_MS = 2000;
-
 /** Run a background sweep's command at reduced scheduling priority.
  *
  *  These sweeps (ps / git / gh) are housekeeping: nothing waits on them, and
@@ -79,6 +75,27 @@ const MIN_ACTIVE_SPAN_MS = 2000;
  *  raw `cat` echo showed a 200 ms p90 — letting them compete at normal priority
  *  with the PTYs and the browser is what turns housekeeping into input lag. */
 const nice = (cmd: string) => `nice -n 10 ${cmd}`;
+
+/** A state a coding agent reports about itself through its own hooks.
+ *
+ *  'waiting' is the one the output heuristics can never express: the agent is
+ *  alive but blocked on the user (a permission prompt), which looks identical
+ *  to "finished" from the outside — silent, no CPU.
+ *  'unknown' clears the record and hands the session back to the heuristics. */
+export type AgentState = 'busy' | 'idle' | 'waiting' | 'unknown';
+
+/** The last exchange in a session, as reported by the agent itself.
+ *
+ *  What the user asked and what the agent answered is a far better basis for
+ *  naming a session than its terminal output, which for a TUI agent is mostly
+ *  spinners, footers and redraws. */
+export interface AgentTurn {
+  prompt?: string;
+  response?: string;
+  at: number;
+}
+
+export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
 
 /** A desktop notification an app asked the terminal to show. */
 export interface TerminalNotification {
@@ -294,6 +311,23 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
     if ((index === 0 && base === 'agent') || base === 'cursor-agent' || token.includes('/cursor-agent/')) return 'cursor';
   }
   return null;
+}
+
+/** Environment handed to a session's shell so anything launched inside it can
+ *  report back to this server.
+ *
+ *  This is what lets an agent say "session direct-42 just finished" instead of
+ *  us inferring it from output silence. Hooks run as grandchildren of this
+ *  shell, so the variables reach them by normal inheritance.
+ *
+ *  The URL carries the port because the server is configurable (config.ts) and
+ *  a dev instance runs on a different one than production — a hook that
+ *  assumed 4444 would report into the wrong server, or none. */
+export function agentEnv(sessionId: string, port: number): Record<string, string> {
+  return {
+    VIPERSHELL_SESSION_ID: sessionId,
+    VIPERSHELL_URL: `http://127.0.0.1:${port}`,
+  };
 }
 
 /** Map with bounded concurrency, preserving input order in the result. */
@@ -709,13 +743,15 @@ export class DirectBridge {
   /** Ring version last used to build a preview / written to disk, per session.
    *  Both periodic sweeps use these to skip sessions that produced no output. */
   private previewVersions = new Map<string, number>();
-  /** When each session last produced output, and the busy state last published
-   *  for it — together these turn "went quiet" into a finished event. */
-  private lastOutputAt = new Map<string, number>();
-  private firstOutputAt = new Map<string, number>();
   private lastBusy = new Map<string, boolean>();
   /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
   private oscBusy = new Map<string, boolean>();
+  /** State an agent reported through its own hooks (see setAgentState). The
+   *  strongest signal we have: the agent says so, rather than us guessing from
+   *  output. In memory only — a restart falls back to the heuristics. */
+  private agentState = new Map<string, { state: AgentState; source: string; at: number }>();
+  /** Last prompt/response pair per session (see AgentTurn). */
+  private agentTurns = new Map<string, AgentTurn>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -725,8 +761,11 @@ export class DirectBridge {
   private flushedVersions = new Map<string, number>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number; busy: boolean }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
+  /** Port the HTTP server is actually listening on, told to us by index.ts.
+   *  Defaults to the configured port for callers that never set it. */
+  private listenPort = config.port;
 
   constructor() {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -742,12 +781,6 @@ export class DirectBridge {
           // startup, so a server restart that loses them can't recover from the
           // ring alone (the setup bytes have long rolled off a busy session).
           if (trackPrivateModes(sess.modes ??= new Set(), data)) this.schedulePersist();
-          const outputNow = Date.now();
-          // A gap longer than the silence window starts a new burst.
-          if (outputNow - (this.lastOutputAt.get(id) ?? 0) > BUSY_SILENCE_MS) {
-            this.firstOutputAt.set(id, outputNow);
-          }
-          this.lastOutputAt.set(id, outputNow);
 
           // The agent announcing completion is worth more than any heuristic:
           // publish it straight through so the sidebar can light up the moment
@@ -865,30 +898,116 @@ export class DirectBridge {
     this.pubsub.publish('__sessions__', { type: 'sessions', sessions });
   }
 
+  /** Record a state an agent reported about itself.
+   *
+   *  Called by POST /api/sessions/:id/agent-state, which agent hooks drive.
+   *  Deliberately agent-agnostic: Claude Code posts from its Stop/
+   *  UserPromptSubmit hooks today, Codex is expected to post the same shapes
+   *  through its own notify mechanism. Returns false for an unknown session so
+   *  the caller can answer 404 rather than accumulate state for a dead pane. */
+  setAgentState(sessionId: string, state: AgentState, source: string, turn?: { prompt?: string; response?: string }): boolean {
+    if (!this.sessions.has(sessionId)) return false;
+
+    // Merge rather than replace: the prompt arrives when the turn starts and
+    // the response when it ends, so each report carries only half the pair.
+    if (turn?.prompt || turn?.response) {
+      const prev = this.agentTurns.get(sessionId);
+      this.agentTurns.set(sessionId, {
+        prompt: turn.prompt ?? prev?.prompt,
+        response: turn.response ?? prev?.response,
+        at: Date.now(),
+      });
+    }
+    // A new prompt starts a new exchange; the previous answer is stale.
+    if (turn?.prompt && !turn.response) {
+      const entry = this.agentTurns.get(sessionId);
+      if (entry) entry.response = undefined;
+    }
+
+    if (state === 'unknown') this.agentState.delete(sessionId);
+    else this.agentState.set(sessionId, { state, source, at: Date.now() });
+    logger.info(`agent-state ${sessionId} -> ${state} (${source})`);
+
+    // 'waiting' means the agent is blocked on the user — a permission prompt,
+    // not a finished turn. It must be announced as attention, because the
+    // busy->false transition alone is what the UI turns into "X finished", and
+    // reporting a prompt as a completed turn is worse than saying nothing.
+    //
+    // Published BEFORE the preview below, and the ordering is load-bearing:
+    // the attention handler clears the client's busy flag, so the preview that
+    // follows sees it already false and does not also fire "finished".
+    if (state === 'waiting') {
+      this.pubsub.publish('__sessions__', {
+        type: 'attention', session_id: sessionId, message: 'needs your input',
+      });
+    }
+
+    // Publish immediately: waiting for the next sweep would give back the very
+    // latency this whole mechanism exists to remove.
+    this.publishPreviews();
+    return true;
+  }
+
+  /** Last reported exchange, for naming. Undefined when the agent never
+   *  reported one — a plain shell, or an agent without the plugin. */
+  getAgentTurn(sessionId: string): AgentTurn | undefined {
+    return this.agentTurns.get(sessionId);
+  }
+
+  /** Is this session's agent working?
+   *
+   *  The agent's own report, and nothing else. Output silence and CPU used to
+   *  stand in for it; both were guesses, and both were wrong in the case that
+   *  mattered most — an agent waiting on the network prints nothing and burns
+   *  no CPU, so it read as finished mid-turn. A wrong "finished" notification
+   *  is worse than none.
+   *
+   *  A session with no agent reporting — a plain shell, or an agent whose
+   *  reporter is not installed — is simply never busy. */
+  isSessionBusy(sessionId: string): boolean {
+    return this.freshAgentState(sessionId) === 'busy';
+  }
+
+  /** The agent-reported state, or undefined once it has gone stale. */
+  private freshAgentState(sessionId: string): AgentState | undefined {
+    const entry = this.agentState.get(sessionId);
+    if (!entry) return undefined;
+    if (Date.now() - entry.at > AGENT_STATE_TTL_MS) {
+      this.agentState.delete(sessionId);
+      return undefined;
+    }
+    return entry.state;
+  }
+
+  /** Find the session that owns one of these process ids.
+   *
+   *  The fallback for panes that predate VIPERSHELL_SESSION_ID, and the reason
+   *  we do not have to write `export` into a live shell to retrofit them —
+   *  which would type into whatever is running there. A hook instead walks its
+   *  own ancestry (hook -> agent -> shell) and asks us which session that
+   *  shell belongs to.
+   *
+   *  Ordered by the caller's chain, so the nearest ancestor wins if a session
+   *  somehow nests inside another. */
+  resolveSessionByPids(pids: number[]): string | null {
+    for (const pid of pids) {
+      for (const sess of this.sessions.values()) {
+        if (sess.pid === pid) return sess.id;
+      }
+    }
+    return null;
+  }
+
+  /** Told by index.ts once the real port is known, before start() — sessions
+   *  restored during start() bake this into their environment. */
+  setListenPort(port: number): void { this.listenPort = port; }
+
   getCachedSessions(): Session[] { return this.cachedSessions; }
 
   /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
   private publishPreviews(): void {
-    const now = Date.now();
     for (const sess of this.sessions.values()) {
-      // Is this session still producing output? Agents repaint a spinner and an
-      // elapsed timer while they work, so silence is what "finished" looks like.
-      //
-      // This is the signal that drives the sidebar highlight, because CPU alone
-      // can't: Codex is network-bound and sampled at ~0% most instants (with
-      // rare spikes), so it never crossed the busy threshold and its sessions
-      // never lit up when the model was done. CPU is still OR'd in, to cover
-      // work that burns cycles without printing anything.
-      const lastOut = this.lastOutputAt.get(sess.id) ?? 0;
-      const activeSpan = lastOut - (this.firstOutputAt.get(sess.id) ?? lastOut);
-      const cached = this.cachedSessions.find(s => s.id === sess.id);
-      // An app that reports its own progress is authoritative; otherwise fall
-      // back to sustained output, then to CPU.
-      const reported = this.oscBusy.get(sess.id);
-      const busy = reported ?? (
-        (now - lastOut < BUSY_SILENCE_MS && activeSpan >= MIN_ACTIVE_SPAN_MS)
-        || (cached?.busy ?? false)
-      );
+      const busy = this.isSessionBusy(sess.id);
 
       // A session that has gone quiet stops bumping its ring version, so the
       // skip below would never let us announce that it finished. Publish
@@ -947,6 +1066,7 @@ export class DirectBridge {
     // client doesn't need to care which path was taken.
     const resp = await this.daemon.request({
       type: 'create', id, cwd: sessionPath, cols, rows, fromPool: true,
+      env: agentEnv(id, this.listenPort),
     });
 
     const sess: DirectSession = {
@@ -1181,7 +1301,7 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0, busy = false;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
@@ -1191,10 +1311,9 @@ export class DirectBridge {
           else if (app === 'copilot') isCopilot = true;
           else if (app === 'grok') isGrok = true;
           else if (app === 'cursor') isCursor = true;
-          if (c.cpu > 5) busy = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb), busy });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -1212,7 +1331,7 @@ export class DirectBridge {
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
-        busy: procs?.busy ?? false, isClaudeCode: procs?.isClaudeCode ?? false,
+        busy: this.isSessionBusy(sess.id), isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, ...git,
@@ -1405,7 +1524,7 @@ export class DirectBridge {
       } else {
         // Session died (reboot). Recreate with fresh shell, restore scrollback.
         try {
-          const resp = await this.daemon.request({ type: 'create', id, cwd: info.path, cols: 120, rows: 40 });
+          const resp = await this.daemon.request({ type: 'create', id, cwd: info.path, cols: 120, rows: 40, env: agentEnv(id, this.listenPort) });
           const sess: DirectSession = {
             id, name: info.name, path: info.path, pid: resp.pid ?? 0,
             ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
