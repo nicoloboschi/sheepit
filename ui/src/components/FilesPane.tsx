@@ -610,7 +610,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   // Height of the file-list panel, which sits ABOVE the file viewer (the list
   // and viewer are stacked vertically). Drag the divider to resize.
   const [listHeight, setListHeight] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem('vipershell:files-list-h') ?? '') || 240; } catch { return 240; }
+    try { return parseInt(localStorage.getItem('sheepit:files-list-h') ?? '') || 240; } catch { return 240; }
   });
   // Mobile: 'list' | 'preview'
   const [mobileView,   setMobileView]   = useState<'list' | 'preview'>('list');
@@ -721,7 +721,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       draggingRef.current = false;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setListHeight(h => { try { localStorage.setItem('vipershell:files-list-h', String(h)); } catch {} return h; });
+      setListHeight(h => { try { localStorage.setItem('sheepit:files-list-h', String(h)); } catch {} return h; });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -737,7 +737,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   useEffect(() => {
     if (!sessionId) { setOpenTabs([]); return; }
     try {
-      const raw = localStorage.getItem(`vipershell:files-tabs:${sessionId}`);
+      const raw = localStorage.getItem(`sheepit:files-tabs:${sessionId}`);
       const arr = raw ? JSON.parse(raw) : [];
       setOpenTabs(Array.isArray(arr) ? arr.filter((p): p is string => typeof p === 'string') : []);
     } catch { setOpenTabs([]); }
@@ -746,7 +746,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   // Persist tabs whenever they change.
   useEffect(() => {
     if (!sessionId) return;
-    try { localStorage.setItem(`vipershell:files-tabs:${sessionId}`, JSON.stringify(openTabs)); } catch {}
+    try { localStorage.setItem(`sheepit:files-tabs:${sessionId}`, JSON.stringify(openTabs)); } catch {}
   }, [openTabs, sessionId]);
 
   // Fetch git status and refresh every 5s

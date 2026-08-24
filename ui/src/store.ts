@@ -251,13 +251,13 @@ export const MAX_FONT_SIZE = 32;
 
 // ── Storage keys ────────────────────────────────────────────────────────────
 // New (post-refactor) keys:
-const WORKSPACES_KEY      = 'vipershell:workspaces';
-const WORKSPACE_ZOOM_KEY  = 'vipershell:workspace-zoom';
-const LAST_WORKSPACE_KEY  = 'vipershell-last-workspace';
+const WORKSPACES_KEY      = 'sheepit:workspaces';
+const WORKSPACE_ZOOM_KEY  = 'sheepit:workspace-zoom';
+const LAST_WORKSPACE_KEY  = 'sheepit-last-workspace';
 // Old (legacy) keys — read-only, used for one-shot migration:
-const LEGACY_GRID_KEY     = 'vipershell:term-grid';
-const LEGACY_ZOOM_KEY     = 'vipershell:session-zoom';
-const LEGACY_LAST_KEY     = 'vipershell-last-session';
+const LEGACY_GRID_KEY     = 'sheepit:term-grid';
+const LEGACY_ZOOM_KEY     = 'sheepit:session-zoom';
+const LEGACY_LAST_KEY     = 'sheepit-last-session';
 
 // ── Workspace id generation ─────────────────────────────────────────────────
 function generateWorkspaceId(): string {
@@ -267,7 +267,7 @@ function generateWorkspaceId(): string {
 }
 
 // ── Migration from the legacy session-id-keyed shape ────────────────────────
-/** Runs once on first load after the refactor. Reads `vipershell:term-grid`
+/** Runs once on first load after the refactor. Reads `sheepit:term-grid`
  *  (which was keyed by the root session id) and converts each entry into a
  *  workspace with a synthetic id. Also migrates the last-session selection
  *  and the per-grid zoom map. Leaves the legacy keys in place so a user can
@@ -328,7 +328,7 @@ function migrateLegacyWorkspaces(): {
   // Favourites were keyed by the root session id. Re-key them to the new
   // synthetic workspace ids so the user's starred list survives the migration.
   try {
-    const FAV_KEY = 'vipershell:favourite-sessions';
+    const FAV_KEY = 'sheepit:favourite-sessions';
     const rawFavs = localStorage.getItem(FAV_KEY);
     if (rawFavs) {
       const oldFavs = JSON.parse(rawFavs) as string[];
@@ -393,7 +393,7 @@ function saveWorkspaceZooms(zooms: Record<string, number>): void {
 }
 
 // Global terminal font size — one value shared by every workspace/pane.
-const FONT_SIZE_KEY = 'vipershell:font-size';
+const FONT_SIZE_KEY = 'sheepit:font-size';
 function loadFontSize(): number {
   try {
     const raw = localStorage.getItem(FONT_SIZE_KEY);
@@ -410,7 +410,7 @@ function saveFontSize(size: number): void {
 
 function loadWorkspaceFilter(): 'all' | 'active' | 'favourites' {
   try {
-    const v = localStorage.getItem('vipershell:ws-filter');
+    const v = localStorage.getItem('sheepit:ws-filter');
     if (v === 'active' || v === 'favourites') return v;
   } catch { /* fall through */ }
   return 'all';
@@ -486,7 +486,7 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   setWorkspaceFilter(filter: 'all' | 'active' | 'favourites') {
-    try { localStorage.setItem('vipershell:ws-filter', filter); } catch { /* quota */ }
+    try { localStorage.setItem('sheepit:ws-filter', filter); } catch { /* quota */ }
     set({ workspaceFilter: filter });
   },
 
@@ -1199,7 +1199,7 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   setTheme(theme: AppTheme) {
-    try { localStorage.setItem('vipershell:theme', theme); } catch { /* quota */ }
+    try { localStorage.setItem('sheepit:theme', theme); } catch { /* quota */ }
     applyTheme(theme);
     set({ theme });
   },

@@ -3,7 +3,7 @@ import { Trash2, Plus } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
 
-const STORAGE_KEY = 'vipershell-commands';
+const STORAGE_KEY = 'sheepit-commands';
 
 interface Command {
   id: number;

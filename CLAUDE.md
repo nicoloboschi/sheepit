@@ -1,8 +1,9 @@
 # sheepit — notes for Claude
 
-The project was called **vipershell** until the rebrand. A few things
-deliberately still say `vipershell` — see [Legacy names](#legacy-names-dont-rename-just-document)
-at the bottom. Everything a user reads says sheepit.
+The project was called **vipershell** until the rebrand. The code is now
+sheepit end to end; the only thing that still carries the old name is the set
+of GitHub URLs, because the repository has not been renamed — see
+[Legacy names](#legacy-names-dont-rename-just-document) at the bottom.
 
 ## Glossary (authoritative — use these terms)
 
@@ -175,26 +176,26 @@ there is something behind it — don't reintroduce the inline readouts.
 
 ## Legacy names — don't rename, just document
 
-These deliberately still say `vipershell`. Each one is load-bearing:
+One name is deliberately still `vipershell`, and it is load-bearing:
 
-- **`vipershell:` / `vipershell-` preference keys** (`ui/src/preferences.ts`).
-  Every saved workspace, layout and font size is stored under these keys in the
-  server-side profile. Renaming the prefix orphans all of them. It is an
-  internal namespace and never shown to a user.
-- **`~/.config/vipershell` and `~/.vipershell`.** `src/paths.ts` prefers the
-  sheepit paths and falls back to these when they are the only ones present, so
-  an existing install keeps its sessions. Never write to a hard-coded path —
-  go through `configDir()` / `stateDir()`.
+- **GitHub URLs** (`github.com/nicoloboschi/vipershell`) in `package.json`,
+  `release.sh` and the README. The repository itself has not been renamed;
+  these links still have to resolve. Flip them only when the repo is renamed.
 
-  `configDir()` additionally refuses to switch away from a directory whose PTY
-  daemon is still alive. This is not defensive padding: a running daemon is
-  reachable *only* through the socket in its own directory, so a switch would
-  leave the next server spawning a second daemon and reporting zero sessions
-  while the first one still held every live shell. Keep that guard ahead of the
-  plain `existsSync` checks in any future change to this file.
-- **`VIPERSHELL_HOST` / `_PORT` / `_LOG_LEVEL` / `_SHELL_POOL_SIZE`.** Read as
-  fallbacks after the `SHEEPIT_*` names so an existing shell profile keeps
-  working. The dev-only vars (`SHEEPIT_UI_PORT`, `SHEEPIT_DESKTOP_*`) were
-  renamed outright — nothing outside the repo sets them.
-- **GitHub URLs** (`github.com/nicoloboschi/vipershell`). The repository itself
-  has not been renamed; these links still have to resolve.
+Everything else is now sheepit end to end — `~/.config/sheepit`, `~/.sheepit`,
+`SHEEPIT_*` env vars, and the `sheepit:` preference-key namespace. There are no
+compatibility fallbacks: `src/paths.ts` returns one fixed path per directory,
+because a config directory that varies with filesystem state would let one
+server strand another server's PTY daemon and every shell it holds.
+
+Upgrading a pre-rename machine is the one-shot
+`scripts/migrate-from-vipershell.sh`, which moves both directories and re-keys
+`preferences.json`. It is the only file in the repo that should know the old
+name; delete it once nobody is upgrading from vipershell any more.
+
+### The preference-key namespace
+
+`ui/src/preferences.ts` writes `sheepit:*` keys and `src/api.ts` validates the
+same prefix before persisting them to the server-side profile. **They must be
+changed together** — the UI's storage calls are proxied through that endpoint,
+so a prefix mismatch silently drops every write.

@@ -31,7 +31,7 @@ interface TerminalGridProps {
 // ── Sizes persistence (panel percentages, keyed by workspace id) ────────────
 // Kept separate from the store — this is purely visual chrome and never needs
 // to be observed cross-component.
-const SIZES_KEY = 'vipershell:workspace-sizes';
+const SIZES_KEY = 'sheepit:workspace-sizes';
 
 function loadSizes(workspaceId: string): GroupSizes {
   try {

@@ -127,29 +127,30 @@ Example `~/.config/sheepit/config.json`:
 
 ### Upgrading from vipershell
 
-sheepit was called **vipershell** until the rebrand, and an existing install
-keeps working without any migration step:
-
-- `~/.config/vipershell` and `~/.vipershell` are still read when the sheepit
-  directories don't exist, so your sessions, scrollback and notes survive.
-- The `VIPERSHELL_HOST` / `_PORT` / `_LOG_LEVEL` environment variables are still
-  honoured as fallbacks after the `SHEEPIT_*` names.
-- The npm package is now `sheepit` and the binary is `sheepit`.
-
-To actually move to the new directory names, stop the server (the PTY daemon
-keeps your shells alive on its own) and move them:
+sheepit was called **vipershell** until the rebrand. Nothing is read from the
+old locations any more — the config directory, the state directory and the
+stored preference keys all moved — so an existing install needs one explicit
+cutover:
 
 ```bash
-mv ~/.config/vipershell ~/.config/sheepit
-mv ~/.vipershell        ~/.sheepit
+./scripts/migrate-from-vipershell.sh --dry-run   # show the plan
+./scripts/migrate-from-vipershell.sh             # do it
 ```
 
-This is safe with sessions running. The daemon is reached through a unix socket
-*inside* that directory, and a socket is bound by inode, so it keeps serving
-through a rename of its parent — the next `sheepit` start reconnects to the
-same daemon and finds every shell where it left it. Do the move rather than a
-copy: two directories, each with a daemon claiming the same PID, is the one
-shape that confuses the lookup.
+It moves `~/.config/vipershell` → `~/.config/sheepit` and `~/.vipershell` →
+`~/.sheepit`, and re-keys every `vipershell:*` entry in `preferences.json` to
+`sheepit:*` (keeping a `.pre-sheepit.bak` alongside it).
+
+**Running shells survive.** The PTY daemon is reached through a unix socket
+*inside* the config directory, and a socket is bound by inode rather than by
+path, so it keeps serving through a rename of its parent — the next `sheepit`
+start reconnects to the same daemon process and finds every shell where it left
+it. Stop the server before running the script (the daemon ignores SIGTERM and
+stays up on its own); the script refuses to run if either destination already
+exists, rather than merging two layouts.
+
+The `VIPERSHELL_HOST` / `_PORT` / `_LOG_LEVEL` environment variables are gone
+too — use the `SHEEPIT_*` names.
 
 ## Requirements
 

@@ -83,10 +83,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
     const current = loadPreferences();
     for (const [key, value] of Object.entries(supplied as Record<string, unknown>)) {
-      // The stored preference namespace predates the sheepit rename and stays
-      // `vipershell*` — see the legacy-names note in /CLAUDE.md. Renaming it
-      // would orphan every saved workspace in an existing profile.
-      if (!key.startsWith('vipershell') || key.length > 200 || typeof value !== 'string' || value.length > 1_000_000) {
+      // Every stored preference is namespaced `sheepit:` (or the older
+      // `sheepit-` spelling), so anything else is not ours to persist.
+      if (!key.startsWith('sheepit') || key.length > 200 || typeof value !== 'string' || value.length > 1_000_000) {
         return res.status(400).json({ error: 'Invalid preference value' });
       }
       if (value === '') delete current[key]; else current[key] = value;

@@ -2,7 +2,7 @@ import type { ITheme } from 'xterm';
 
 export type AppTheme = 'dark' | 'light';
 
-export const THEME_STORAGE_KEY = 'vipershell:theme';
+export const THEME_STORAGE_KEY = 'sheepit:theme';
 
 export function readTheme(): AppTheme {
   try { return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'; }
