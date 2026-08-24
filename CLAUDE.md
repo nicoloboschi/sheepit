@@ -185,6 +185,13 @@ These deliberately still say `vipershell`. Each one is load-bearing:
   sheepit paths and falls back to these when they are the only ones present, so
   an existing install keeps its sessions. Never write to a hard-coded path —
   go through `configDir()` / `stateDir()`.
+
+  `configDir()` additionally refuses to switch away from a directory whose PTY
+  daemon is still alive. This is not defensive padding: a running daemon is
+  reachable *only* through the socket in its own directory, so a switch would
+  leave the next server spawning a second daemon and reporting zero sessions
+  while the first one still held every live shell. Keep that guard ahead of the
+  plain `existsSync` checks in any future change to this file.
 - **`VIPERSHELL_HOST` / `_PORT` / `_LOG_LEVEL` / `_SHELL_POOL_SIZE`.** Read as
   fallbacks after the `SHEEPIT_*` names so an existing shell profile keeps
   working. The dev-only vars (`SHEEPIT_UI_PORT`, `SHEEPIT_DESKTOP_*`) were

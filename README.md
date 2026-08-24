@@ -136,6 +136,21 @@ keeps working without any migration step:
   honoured as fallbacks after the `SHEEPIT_*` names.
 - The npm package is now `sheepit` and the binary is `sheepit`.
 
+To actually move to the new directory names, stop the server (the PTY daemon
+keeps your shells alive on its own) and move them:
+
+```bash
+mv ~/.config/vipershell ~/.config/sheepit
+mv ~/.vipershell        ~/.sheepit
+```
+
+This is safe with sessions running. The daemon is reached through a unix socket
+*inside* that directory, and a socket is bound by inode, so it keeps serving
+through a rename of its parent — the next `sheepit` start reconnects to the
+same daemon and finds every shell where it left it. Do the move rather than a
+copy: two directories, each with a daemon claiming the same PID, is the one
+shape that confuses the lookup.
+
 ## Requirements
 
 - **Node.js** 18+
