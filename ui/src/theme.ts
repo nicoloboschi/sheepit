@@ -1,11 +1,12 @@
 import type { ITheme } from 'xterm';
+import { preferences } from './preferences';
 
 export type AppTheme = 'dark' | 'light';
 
 export const THEME_STORAGE_KEY = 'sheepit:theme';
 
 export function readTheme(): AppTheme {
-  try { return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'; }
+  try { return preferences.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'; }
   catch { return 'dark'; }
 }
 

@@ -13,12 +13,13 @@ import { promisify } from 'util';
 import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
 import { config } from './config.js';
-import type { BridgeMessage, Session } from './bridge.js';
+import type { BridgeMessage, Session } from './protocol.js';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
-import { configDir } from './paths.js';
+import { configDir, ringBuffersDir } from './paths.js';
+import { SessionStore, type StoredSession } from './session-store.js';
 import { logger } from './server.js';
 
 const execAsync = promisify(exec);
@@ -27,8 +28,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const CONFIG_DIR = configDir();
-const SESSIONS_FILE = join(CONFIG_DIR, 'direct-sessions.json');
-const RING_DIR = join(CONFIG_DIR, 'ring-buffers');
+const RING_DIR = ringBuffersDir();
 const RING_SIZE = 256 * 1024;
 
 /** Coalescing window for `current_input` broadcasts (see publishCurrentInput).
@@ -558,23 +558,6 @@ interface DirectSession {
   liveApp?: boolean;
 }
 
-/** One row of `ps` output (see snapshotDescendants). */
-interface ProcSnapshot {
-  pid: number;
-  cpu: number;
-  rssKb: number;
-  args: string;
-}
-
-interface SavedDirectSession {
-  name: string;
-  path: string;
-  sessionType?: string | null;
-  isHeadless?: boolean;
-  /** Sticky DEC private modes active at the last write. Persisted because the
-   *  ring can't be trusted to still hold an app's one-time setup sequences. */
-  modes?: number[];
-}
 
 // ── Daemon Client ────────────────────────────────────────────────────────────
 
@@ -720,6 +703,14 @@ class DaemonClient {
 
 // ── DirectBridge ─────────────────────────────────────────────────────────────
 
+/** One row of `ps` output (see snapshotDescendants). */
+interface ProcSnapshot {
+  pid: number;
+  cpu: number;
+  rssKb: number;
+  args: string;
+}
+
 export class DirectBridge {
   readonly pubsub = new PubSub<BridgeMessage>();
   private sessions = new Map<string, DirectSession>();
@@ -764,6 +755,8 @@ export class DirectBridge {
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
   private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
+  /** Per-session state on disk, one file each (see session-store.ts). */
+  private store = new SessionStore();
   /** Port the HTTP server is actually listening on, told to us by index.ts.
    *  Defaults to the configured port for callers that never set it. */
   private listenPort = config.port;
@@ -872,6 +865,8 @@ export class DirectBridge {
   }
 
   stop(): void {
+    // Debounced writes would otherwise be lost on a clean shutdown.
+    this.store.flush();
     if (this.ringFlushInterval) clearInterval(this.ringFlushInterval);
     if (this.sessionListInterval) clearInterval(this.sessionListInterval);
     if (this.previewInterval) clearInterval(this.previewInterval);
@@ -928,6 +923,10 @@ export class DirectBridge {
     if (state === 'unknown') this.agentState.delete(sessionId);
     else this.agentState.set(sessionId, { state, source, at: Date.now() });
     logger.info(`agent-state ${sessionId} -> ${state} (${source})`);
+    // Persist it: unlike previews or CPU this cannot be re-derived from
+    // output, and the agent keeps running across a server restart, so a
+    // report dropped here is information genuinely lost.
+    this.persistSession(sessionId);
 
     // 'waiting' means the agent is blocked on the user — a permission prompt,
     // not a finished turn. It must be announced as attention, because the
@@ -1090,7 +1089,11 @@ export class DirectBridge {
     this.clearInputPublish(sessionId);
     const ringPath = join(RING_DIR, `${sessionId}.buf`);
     try { if (existsSync(ringPath)) unlinkSync(ringPath); } catch {}
-    this.persist();
+    // Drop everything else keyed by this session too, or it accumulates for
+    // the life of the machine — which is exactly what the shared blob did.
+    this.agentState.delete(sessionId);
+    this.agentTurns.delete(sessionId);
+    this.store.delete(sessionId);
   }
 
   // ── Atomic subscribe ─────────────────────────────────────────────────────
@@ -1460,17 +1463,29 @@ export class DirectBridge {
 
   // ── Persistence ──────────────────────────────────────────────────────────
 
-  private persist(): void {
-    const saved: Record<string, SavedDirectSession> = {};
-    for (const [id, sess] of this.sessions) {
-      saved[id] = {
-        name: sess.name, path: sess.path, sessionType: sess.sessionType,
-        isHeadless: sess.isHeadless,
-        modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
-      };
-    }
-    try { writeFileSync(SESSIONS_FILE, JSON.stringify(saved, null, 2)); } catch {}
+  /** Write one session's state. Debounced per session by the store. */
+  private persistSession(id: string): void {
+    const sess = this.sessions.get(id);
+    if (!sess) return;
+    this.store.write(id, this.toStored(sess));
   }
+
+  /** Write every session. Used where a change is not attributable to one. */
+  private persist(): void {
+    for (const id of this.sessions.keys()) this.persistSession(id);
+  }
+
+  private toStored(sess: DirectSession): StoredSession {
+    const agent = this.agentState.get(sess.id);
+    const turn = this.agentTurns.get(sess.id);
+    return {
+      name: sess.name, path: sess.path, sessionType: sess.sessionType,
+      isHeadless: sess.isHeadless,
+      modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
+      agent, turn,
+    };
+  }
+
 
   /** Coalesced persist for mode changes. An interactive shell re-emits
    *  bracketed-paste (?2004h/l) around every command, so writing the file
@@ -1484,6 +1499,8 @@ export class DirectBridge {
   }
 
   private async restoreSessions(): Promise<void> {
+    // Bring the old single-file registry across before reading, once.
+    this.store.migrateFromLegacyFile(msg => logger.info(msg));
     const saved = this.loadSaved();
     const entries = Object.entries(saved);
     if (entries.length === 0) return;
@@ -1497,6 +1514,20 @@ export class DirectBridge {
     const daemonMap = new Map(daemonSessions.map(s => [s.id, s]));
 
     for (const [id, info] of entries) {
+      // The agent keeps running across a server restart, so a "busy" it
+      // reported before we went down is still true — that is the point of
+      // persisting it. Anything past the trust window is dropped rather than
+      // restored: an agent that died while we were down would otherwise come
+      // back busy and stay that way, with no hook left to say otherwise.
+      if (info.agent && Date.now() - info.agent.at <= AGENT_STATE_TTL_MS) {
+        this.agentState.set(id, {
+          state: info.agent.state as AgentState,
+          source: info.agent.source,
+          at: info.agent.at,
+        });
+      }
+      if (info.turn) this.agentTurns.set(id, info.turn);
+
       const ring = new RingBuffer(RING_SIZE);
       ring.loadFrom(join(RING_DIR, `${id}.buf`));
 
@@ -1558,12 +1589,10 @@ export class DirectBridge {
     }
   }
 
-  private loadSaved(): Record<string, SavedDirectSession> {
-    try {
-      if (existsSync(SESSIONS_FILE)) return JSON.parse(readFileSync(SESSIONS_FILE, 'utf-8'));
-    } catch {}
-    return {};
+  private loadSaved(): Record<string, StoredSession> {
+    return this.store.readAll();
   }
+
 
   /** Persist rings that changed since the last flush.
    *

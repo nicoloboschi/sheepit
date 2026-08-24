@@ -5,7 +5,7 @@ import { rgPath } from '@vscode/ripgrep';
 import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
-import { configDir, stateDir } from './paths.js';
+import { configDir, notesDir } from './paths.js';
 import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
@@ -655,9 +655,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
 
   // ── Notes ───────────────────────────────────────────────────────────────────
 
-  const NOTES_DIR = nodePath.join(stateDir(), 'notes');
+  const NOTES_DIR = notesDir();
   // Migrate old single-file notes to sheets dir
-  const OLD_NOTES_PATH = nodePath.join(stateDir(), 'notes.md');
+  const OLD_NOTES_PATH = nodePath.join(configDir(), 'notes.md');
   try {
     if (existsSync(OLD_NOTES_PATH)) {
       mkdirSync(NOTES_DIR, { recursive: true });

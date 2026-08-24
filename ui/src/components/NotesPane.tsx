@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X, FileText, Folder } from 'lucide-react';
 import { FileViewer } from './FilesPane';
+import { preferences } from '../preferences';
 
 export default function NotesPane(): JSX.Element {
   const [sheets, setSheets] = useState<string[]>([]);
@@ -20,7 +21,7 @@ export default function NotesPane(): JSX.Element {
         setActiveSheet(prev => {
           if (selectAfter) return selectAfter(d.sheets);
           if (prev && d.sheets.includes(prev)) return prev;
-          const saved = localStorage.getItem('sheepit:active-note-sheet');
+          const saved = preferences.getItem('sheepit:active-note-sheet');
           return d.sheets.includes(saved ?? '') ? saved! : (d.sheets[0] ?? null);
         });
       })
@@ -28,7 +29,7 @@ export default function NotesPane(): JSX.Element {
   };
 
   useEffect(() => { loadSheets(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeSheet) localStorage.setItem('sheepit:active-note-sheet', activeSheet); }, [activeSheet]);
+  useEffect(() => { if (activeSheet) preferences.setItem('sheepit:active-note-sheet', activeSheet); }, [activeSheet]);
 
   // Absolute (home-relative) path of the active sheet — the notes are plain .md
   // files on disk, so the Files pane's FileViewer can edit/open/copy them via
