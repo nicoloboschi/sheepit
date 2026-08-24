@@ -191,11 +191,8 @@ function PaneCard({
   // pane working on" signal, and the name can drift when the user renames or
   // cd's around. Even if they briefly match, keeping them both is consistent.
   const hasCwd = !!cwd;
-  const hasGit = !!session?.gitBranch;
   const hasPr  = !!session?.prNum;
-  const branchColor = session?.gitDirty ? 'var(--warning)' : 'var(--muted-foreground)';
   const prColor = session?.prNum ? (PR_STATE_COLORS[session.prState ?? ''] ?? 'var(--muted-foreground)') : '';
-  const branchMax = tight ? 14 : 22;
 
   // ── dnd-kit useSortable ────────────────────────────────────────────────
   // PaneCards are sortable items inside a SortableContext rendered by their
@@ -287,22 +284,19 @@ function PaneCard({
           {time && <span className="pane-card-time">{time}</span>}
         </div>
       )}
-      {(hasGit || hasPr) && (
+      {/* Branch dropped: it repeated what the path already says for a
+          worktree-per-branch layout, and cost a whole row to do it. The PR
+          number stays — that is the thing you cannot infer from anywhere else
+          on the card. The dirty dot rides along with it. */}
+      {hasPr && (
         <div className="pane-card-git">
-          {hasGit && (
-            <span style={{ minWidth: 0, color: branchColor, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span>{truncateBranch(session!.gitBranch!, branchMax)}</span>
-              {session!.gitDirty && <span className="pane-card-dirty-dot" />}
-            </span>
-          )}
-          {hasPr && (
-            <span
-              style={{ color: prColor, flexShrink: 0, fontWeight: 600 }}
-              title={`PR #${session!.prNum} ${session!.prState?.toLowerCase() ?? ''}`}
-            >
-              #{session!.prNum}
-            </span>
-          )}
+          <span
+            style={{ color: prColor, flexShrink: 0, fontWeight: 600 }}
+            title={`PR #${session!.prNum} ${session!.prState?.toLowerCase() ?? ''}`}
+          >
+            #{session!.prNum}
+          </span>
+          {session!.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
         </div>
       )}
     </div>
