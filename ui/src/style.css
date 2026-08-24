@@ -814,6 +814,21 @@
   border-color: rgba(142, 191, 162, 0.55);
   box-shadow: inset 0 1px rgba(182, 214, 194, 0.10);
 }
+/* Idle, but with output nobody has looked at yet.
+   The three live states are told apart by hue and motion — bleating pulses
+   teal, grazing holds meadow green, idle is a hollow ring. A finished pane
+   with unread output used to be *only* a faint amber tint on the corner
+   badge, which sat behind the vendor icon and read as plain idle at a
+   glance. It gets the dot instead: filled, so it reads as "something is
+   here", amber, so it can never be mistaken for either live state.
+   Scoped below the live states so a pane that is still working keeps
+   showing that it is working. */
+.pane-card-unseen:not(.pane-card-busy):not(.pane-card-needs-attention) .pane-card-activity {
+  border-color: var(--warning);
+  background: var(--warning);
+  box-shadow: 0 0 0 2px rgba(217, 184, 74, 0.12), 0 0 8px rgba(217, 184, 74, 0.45);
+}
+
 .pane-card-tight .pane-card-activity { width: 5px; height: 5px; }
 @keyframes pane-activity-pulse {
   0%, 100% { opacity: 0.65; transform: scale(0.88); }
