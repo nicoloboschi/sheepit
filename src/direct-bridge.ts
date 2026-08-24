@@ -326,8 +326,8 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
  *  assumed 4444 would report into the wrong server, or none. */
 export function agentEnv(sessionId: string, port: number): Record<string, string> {
   return {
-    VIPERSHELL_SESSION_ID: sessionId,
-    VIPERSHELL_URL: `http://127.0.0.1:${port}`,
+    SHEEPIT_SESSION_ID: sessionId,
+    SHEEPIT_URL: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -982,7 +982,7 @@ export class DirectBridge {
 
   /** Find the session that owns one of these process ids.
    *
-   *  The fallback for panes that predate VIPERSHELL_SESSION_ID, and the reason
+   *  The fallback for panes that predate SHEEPIT_SESSION_ID, and the reason
    *  we do not have to write `export` into a live shell to retrofit them —
    *  which would type into whatever is running there. A hook instead walks its
    *  own ancestry (hook -> agent -> shell) and asks us which session that

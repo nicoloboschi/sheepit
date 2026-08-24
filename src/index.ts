@@ -8,8 +8,8 @@ import { AIService } from './ai.js';
 import { createApp, logger } from './server.js';
 import { config } from './config.js';
 import { ensureAgentPluginInstalled } from './plugin-install.js';
+import { configDir } from './paths.js';
 import { writeFileSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgVersion: string = (() => {
@@ -46,11 +46,11 @@ program
       const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
 
       // Advertise where we are, for agent hooks that were not given
-      // VIPERSHELL_URL — panes created before this existed, or an agent
+      // SHEEPIT_URL — panes created before this existed, or an agent
       // launched outside the shell we seeded. Always loopback: a hook runs on
       // this machine, and the bind host may be 0.0.0.0.
       try {
-        const dir = join(homedir(), '.config', 'vipershell');
+        const dir = configDir();
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, 'server.json'),
           JSON.stringify({ url: `http://127.0.0.1:${port}`, port, pid: process.pid }, null, 2) + '\n');

@@ -8,7 +8,7 @@ import { logger } from './server.js';
 
 const execFileAsync = promisify(execFile);
 
-const MARKETPLACE = 'vipershell';
+const MARKETPLACE = 'sheepit';
 const PLUGIN_ID = `${MARKETPLACE}@${MARKETPLACE}`;
 
 /** Root of the shipped package — dist/ lives one level under it, and the
@@ -59,18 +59,18 @@ function installedVersion(): string | null {
  *
  * Done at server start rather than in a postinstall script: `npm install`
  * should not quietly rewrite a user's global Claude Code configuration, and at
- * this point we at least know vipershell is being *used*. Opt out with
- * VIPERSHELL_NO_PLUGIN_INSTALL=1.
+ * this point we at least know sheepit is being *used*. Opt out with
+ * SHEEPIT_NO_PLUGIN_INSTALL=1.
  *
  * `claude plugin install` copies the plugin into a version-keyed directory
- * under ~/.claude/plugins/cache, so a new vipershell release only takes effect
+ * under ~/.claude/plugins/cache, so a new sheepit release only takes effect
  * once the version in plugin.json is bumped — which is what we compare here.
  *
  * Every failure is logged and swallowed: the plugin is an optimisation, and
  * the output heuristics still work without it.
  */
 export async function ensureAgentPluginInstalled(): Promise<void> {
-  if (process.env.VIPERSHELL_NO_PLUGIN_INSTALL === '1') return;
+  if (process.env.SHEEPIT_NO_PLUGIN_INSTALL === '1') return;
 
   const root = packageRoot();
   const shipped = shippedVersion(root);
@@ -125,7 +125,7 @@ async function installIntoClaude(root: string, shipped: string): Promise<void> {
   if (current === shipped) return;
 
   // No Claude Code on this machine — nothing to install into, and not worth a
-  // warning: plenty of vipershell users do not run it.
+  // warning: plenty of sheepit users do not run it.
   try {
     await execFileAsync('claude', ['--version'], { timeout: 10_000 });
   } catch { return; }
