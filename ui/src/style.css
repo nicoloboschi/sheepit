@@ -658,12 +658,11 @@
 @media (prefers-reduced-motion: reduce) {
   .session-item,
   .sidebar-resize-handle { transition: none; }
-  .pane-card-busy .pane-card-activity::before,
-  .pane-card-needs-attention .pane-card-activity::before,
-  .pane-card-needs-attention .pane-card-activity::after { animation: none; }
-  /* The flock stays, the movement goes — so the "baa" has to be legible
-     standing still. */
-  .pane-card-needs-attention .pane-card-activity::after { opacity: 0.95; }
+  .pane-card-busy .pane-card-activity,
+  .pane-card-needs-attention .pane-card-activity { animation: none; }
+  /* The flock stays, the movement goes — so a bleating sheep still holds its
+     tail up, which is the half of the signal that does not depend on motion. */
+  .pane-card-needs-attention .pane-card-activity { transform: rotate(-20deg); }
 }
 
 .session-icon {
@@ -894,103 +893,76 @@
    mix of idle shells, work in progress, and turns waiting for the user.
    Each state uses the same color for its dot and card surface: blue = working,
    green = ready for input, hollow neutral = idle. */
+/* The tail, at the animal's rear, carrying its state.
+ *
+ * This used to be a 🐑 in a chip perched on the corner, which put a sheep on
+ * a card that was already a sheep. The card is the animal: the kind badge is
+ * its head, the fleece its back, and this is the tail — so the state lives
+ * where you would look for a tail to flick.
+ *
+ * Being drawn rather than an emoji, it can finally take the state's colour
+ * directly instead of standing on a coloured patch to imply it.
+ */
 .pane-card-activity {
-  /* Perched on the top-right corner, mirroring the kind badge on the left:
-     what is running is stamped on one corner, how it is doing on the other.
-     Same chip as the badge so the two read as a pair. */
   position: absolute;
-  top: -9px;
-  right: -9px;
-  z-index: 2;
-  display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  /* A variable, so the state backgrounds below can layer grass over whatever
-     surface the chip currently sits on. Hardcoding the dark here left a
-     near-black hole punched in a selected pen. */
-  --chip: #1b2018;
-  background: var(--chip);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 13px; line-height: 1;
+  right: -7px;
+  top: 16px;
+  width: 13px; height: 8px;
+  --tail: rgba(255, 255, 255, 0.18);
+  transform-origin: 0 50%;
 }
-/* Lift with the pen, the way the kind badge opposite it does. */
-.pane-card-active .pane-card-activity {
-  --chip: color-mix(in srgb, var(--primary) 22%, #1b2018);
-  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
-}
-.pane-card-activity::before {
-  content: '\1F411';           /* a real glyph, so nothing is fetched */
-  display: block;
-  transform-origin: 50% 85%;   /* hooves, so a hop lifts the whole animal */
-}
-
-/* Idle: standing about. Faded, so quiet pens recede and the busy ones read
-   first — the job the hollow ring used to do. */
-.pane-card-idle .pane-card-activity::before { opacity: 0.4; }
-
-/* Idle, unread: awake, wearing an amber ear tag. Done, with something to show
-   you. */
-.pane-card-unseen.pane-card-idle .pane-card-activity::before { opacity: 0.95; }
-.pane-card-unseen.pane-card-idle .pane-card-activity::after {
+.pane-card-activity::before {   /* the tail itself */
   content: '';
-  position: absolute; top: -2px; right: -2px;
-  width: 6px; height: 6px; border-radius: 999px;
-  background: var(--warning);
-  box-shadow: 0 0 0 1.5px var(--card), 0 0 5px rgba(217, 184, 74, 0.55);
+  position: absolute; left: 0; top: 3px;
+  width: 9px; height: 2.5px;
+  border-radius: 2px;
+  background: var(--tail);
+}
+.pane-card-activity::after {    /* the tuft on the end */
+  content: '';
+  position: absolute; right: 0; top: 0;
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: var(--tail);
 }
 
-/* Grazing: head down in the grass. The green under it is what it is eating. */
+/* Idle: hanging still, faint, so quiet sheep recede. */
+.pane-card-idle .pane-card-activity { --tail: rgba(255, 255, 255, 0.16); }
+
+/* Idle, unread: finished, with something to show you. */
+.pane-card-unseen.pane-card-idle .pane-card-activity {
+  --tail: var(--warning);
+  filter: drop-shadow(0 0 4px rgba(217, 184, 74, 0.45));
+}
+
+/* Grazing: a slow contented swish. */
 .pane-card-busy .pane-card-activity {
-  /* Grass inside the chip, under the hooves. */
-  background:
-    radial-gradient(ellipse 13px 6px at 50% 104%, rgba(156, 188, 127, 0.60), transparent 70%),
-    var(--chip);
-  border-color: rgba(156, 188, 127, 0.45);
-}
-.pane-card-busy .pane-card-activity::before {
-  opacity: 1;
-  animation: sheep-graze 2.6s ease-in-out infinite;
+  --tail: var(--grazing);
+  animation: pane-tail-swish 2.6s ease-in-out infinite;
 }
 
-/* Bleating: up on its hooves calling, with a puff of sound. Teal rather than
-   meadow, and it moves — a pen that wants you must be findable without
-   reading a word. */
+/* Bleating: tail up and flicking. Teal rather than meadow, and it moves — a
+   sheep that wants you must be findable without reading a word.
+   No "baa" here: at this size the only place for it was over the pen's name,
+   where it read as "ble-baa-ng". The pasture at the foot of the sidebar has
+   room for the sound, and keeps it. */
 .pane-card-needs-attention .pane-card-activity {
-  background:
-    radial-gradient(ellipse 13px 6px at 50% 104%, rgba(142, 191, 162, 0.50), transparent 70%),
-    var(--chip);
-  border-color: rgba(142, 191, 162, 0.55);
-  box-shadow: 0 0 9px rgba(142, 191, 162, 0.35);
-}
-.pane-card-needs-attention .pane-card-activity::before {
-  opacity: 1;
-  animation: sheep-bleat 1.15s ease-in-out infinite;
-}
-.pane-card-needs-attention .pane-card-activity::after {
-  content: 'baa';
-  /* To the left: the chip hangs off the card's right edge, so anything placed
-     further right would sit outside the sidebar. */
-  position: absolute; right: 100%; top: 1px; margin-right: 2px;
-  font-size: 6.5px; font-weight: 600;
-  color: var(--bleating);
-  animation: sheep-baa 1.15s ease-in-out infinite;
+  --tail: var(--bleating);
+  filter: drop-shadow(0 0 5px rgba(142, 191, 162, 0.55));
+  animation: pane-tail-flick 1.15s ease-in-out infinite;
 }
 
-@keyframes sheep-graze {
-  /* A nod down to the grass, not a bounce. */
-  0%, 100% { transform: rotate(0deg) translateY(0); }
-  45%      { transform: rotate(-11deg) translateY(1px); }
-  60%      { transform: rotate(-9deg) translateY(1px); }
+/* Named apart from the pasture's keyframes on purpose: duplicate @keyframes
+   names do not scope, the last definition simply wins, and an earlier version
+   of this file redefined the pasture's sheep-graze out from under it. */
+@keyframes pane-tail-swish {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-14deg); }
 }
-@keyframes sheep-bleat {
-  0%, 100% { transform: translateY(0) scale(1); }
-  30%      { transform: translateY(-2.5px) scale(1.06); }
-  55%      { transform: translateY(0) scale(1); }
-}
-@keyframes sheep-baa {
-  0%, 100% { opacity: 0; transform: translateX(0); }
-  35%      { opacity: 0.95; transform: translateX(-1px); }
-  75%      { opacity: 0; transform: translateX(-3px); }
+@keyframes pane-tail-flick {
+  0%, 100% { transform: rotate(-22deg); }
+  35%      { transform: rotate(4deg); }
+  60%      { transform: rotate(-16deg); }
 }
 /* Grazing (a command is running) is the meadow green; bleating (the pane wants
    you) is the moss teal and pulses. Before the rebrand these were blue and
@@ -1027,7 +999,7 @@
    showing that it is working. */
 
 /* Tight rows get a smaller animal, not a smaller box. */
-.pane-card-tight .pane-card-activity { width: 18px; height: 18px; font-size: 11px; top: -7px; right: -7px; }
+.pane-card-tight .pane-card-activity { top: 12px; }
 
 /* Row 1: name (icon is now the corner badge) */
 .pane-card-row {
