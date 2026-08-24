@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Report this agent's state to the vipershell session that owns the terminal.
+ * Report this agent's state to the sheepit session that owns the terminal.
  *
  * Invoked by ../hooks/hooks.json with the state as argv[2]; the hook payload
  * arrives on stdin as JSON.
@@ -10,13 +10,13 @@
  *  1. Never break the agent. Every path exits 0 and prints nothing. A hook
  *     that errors or writes stray output corrupts the session it is meant to
  *     be observing, while a missed report only costs a fallback to
- *     vipershell's output heuristics.
+ *     sheepit's output heuristics.
  *  2. Never hang. Hooks run on the agent's critical path, so requests are
  *     time-bounded and abandoned.
  *  3. Stay agent-agnostic. Nothing here is Claude-specific beyond the stdin
  *     shape, so Codex can invoke the same script.
  */
-// .mjs, not .js, on purpose: this file is ESM inside the vipershell package
+// .mjs, not .js, on purpose: this file is ESM inside the sheepit package
 // (which is "type": "module") but would be treated as CommonJS once
 // `claude plugin install` copies it into ~/.claude/plugins/cache, where no
 // package.json applies. The explicit extension makes it ESM in both places.
@@ -28,7 +28,7 @@ import { homedir } from 'os';
 const STATE = process.argv[2];
 // Overridden per-agent below once the payload has been read; the env var is
 // an escape hatch for anything invoking this script directly.
-let SOURCE = process.env.VIPERSHELL_AGENT_SOURCE || 'agent';
+let SOURCE = process.env.SHEEPIT_AGENT_SOURCE || 'agent';
 const TIMEOUT_MS = 3000;
 
 function done() { process.exit(0); }
@@ -36,21 +36,19 @@ if (!STATE) done();
 
 /** Where the server said it is listening (written at startup). */
 function discoverBaseUrl() {
-  if (process.env.VIPERSHELL_URL) return process.env.VIPERSHELL_URL;
-  for (const dir of ['vipershell', 'sheepit']) {
-    try {
-      const raw = readFileSync(join(homedir(), '.config', dir, 'server.json'), 'utf8');
-      const url = JSON.parse(raw).url;
-      if (url) return url;
-    } catch { /* try the next one */ }
+  if (process.env.SHEEPIT_URL) return process.env.SHEEPIT_URL;
+  try {
+    const raw = readFileSync(join(homedir(), '.config', 'sheepit', 'server.json'), 'utf8');
+    return JSON.parse(raw).url || null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /** Our process ancestry, nearest first: hook -> agent -> ... -> session shell.
  *
- *  Only walked when VIPERSHELL_SESSION_ID is absent, which is the case for
- *  panes created before vipershell seeded it. Bounded because a cycle or a
+ *  Only walked when SHEEPIT_SESSION_ID is absent, which is the case for
+ *  panes created before sheepit seeded it. Bounded because a cycle or a
  *  reparent would otherwise spin, and `ps` is cheap but not free. */
 function ancestorPids() {
   const pids = [];
@@ -124,7 +122,7 @@ async function post(url, body, signal) {
 
 async function run(raw) {
   const baseUrl = discoverBaseUrl();
-  // Not running under a vipershell server — the normal case for an agent in a
+  // Not running under a sheepit server — the normal case for an agent in a
   // plain terminal. Must be silent.
   if (!baseUrl) return;
   const base = baseUrl.replace(/\/+$/, '');
@@ -132,7 +130,7 @@ async function run(raw) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    let sessionId = process.env.VIPERSHELL_SESSION_ID;
+    let sessionId = process.env.SHEEPIT_SESSION_ID;
     if (!sessionId) {
       const res = await post(`${base}/api/sessions/resolve`, { pids: ancestorPids() }, controller.signal);
       if (!res.ok) return;
@@ -146,7 +144,7 @@ async function run(raw) {
     // Which agent is reporting. Codex carries turn_id on every event, Claude
     // Code carries none — last_assistant_message is not usable for this, since
     // it only appears on Stop and would mislabel the other events.
-    if (!process.env.VIPERSHELL_AGENT_SOURCE) {
+    if (!process.env.SHEEPIT_AGENT_SOURCE) {
       SOURCE = typeof payload.agent_type === 'string' && payload.agent_type
         ? payload.agent_type
         : payload.turn_id !== undefined ? 'codex' : 'claude';

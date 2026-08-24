@@ -5,6 +5,8 @@
 #   ~/.config/vipershell            ->  ~/.config/sheepit
 #   ~/.vipershell                   ->  ~/.sheepit
 #   preferences.json  vipershell:*  ->  sheepit:*
+#   agent plugin      vipershell@vipershell  uninstalled (sheepit@sheepit
+#                     is installed by the server on its next start)
 #
 # Live shells survive this. The PTY daemon is reached through a unix socket
 # *inside* the config directory, and a socket is bound by inode, not by path —
@@ -113,6 +115,30 @@ else:
 PY
 else
   say "no preferences.json, skipping"
+fi
+
+# ── Retire the old agent plugin ─────────────────────────────────────────────
+# The state-reporting plugin is installed into Claude Code and Codex under the
+# old marketplace name. The new server installs `sheepit@sheepit` on its next
+# start; left alone, `vipershell@vipershell` would keep firing its hooks on
+# every agent turn, look for a server directory that no longer exists, and
+# exit — harmless, but it is real latency on every turn for nothing.
+step "Retiring the vipershell agent plugin"
+OLD_PLUGIN='vipershell@vipershell'
+if command -v claude >/dev/null 2>&1 &&
+   grep -q "$OLD_PLUGIN" "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null; then
+  say "Claude Code: removing $OLD_PLUGIN"
+  run claude plugin uninstall "$OLD_PLUGIN" || say "  (uninstall failed — remove it by hand with: claude plugin uninstall $OLD_PLUGIN)"
+  run claude plugin marketplace remove vipershell || true
+else
+  say "Claude Code: $OLD_PLUGIN not installed"
+fi
+if command -v codex >/dev/null 2>&1 &&
+   grep -q "plugins.\"$OLD_PLUGIN\"" "$HOME/.codex/config.toml" 2>/dev/null; then
+  say "Codex: removing $OLD_PLUGIN"
+  run codex plugin remove "$OLD_PLUGIN" || say "  (remove failed — remove it by hand with: codex plugin remove $OLD_PLUGIN)"
+else
+  say "Codex: $OLD_PLUGIN not installed"
 fi
 
 step "Done"

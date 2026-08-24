@@ -296,7 +296,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   });
 
   /** Which session owns this process? Used by agent hooks that have no
-   *  VIPERSHELL_SESSION_ID — panes created before it existed, or an agent
+   *  SHEEPIT_SESSION_ID — panes created before it existed, or an agent
    *  started outside the shell we seeded. The caller sends its process
    *  ancestry, nearest first. */
   router.post('/sessions/resolve', (req, res) => {

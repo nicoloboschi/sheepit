@@ -138,8 +138,10 @@ cutover:
 ```
 
 It moves `~/.config/vipershell` → `~/.config/sheepit` and `~/.vipershell` →
-`~/.sheepit`, and re-keys every `vipershell:*` entry in `preferences.json` to
-`sheepit:*` (keeping a `.pre-sheepit.bak` alongside it).
+`~/.sheepit`, re-keys every `vipershell:*` entry in `preferences.json` to
+`sheepit:*` (keeping a `.pre-sheepit.bak` alongside it), and uninstalls the old
+`vipershell@vipershell` agent plugin from Claude Code and Codex — the server
+installs `sheepit@sheepit` on its next start.
 
 **Running shells survive.** The PTY daemon is reached through a unix socket
 *inside* the config directory, and a socket is bound by inode rather than by

@@ -1,5 +1,5 @@
 {
-  "description": "Report agent state to vipershell",
+  "description": "Report agent state to sheepit",
   "hooks": {
     "UserPromptSubmit": [
       {

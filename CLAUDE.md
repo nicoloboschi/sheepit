@@ -189,9 +189,27 @@ because a config directory that varies with filesystem state would let one
 server strand another server's PTY daemon and every shell it holds.
 
 Upgrading a pre-rename machine is the one-shot
-`scripts/migrate-from-vipershell.sh`, which moves both directories and re-keys
-`preferences.json`. It is the only file in the repo that should know the old
-name; delete it once nobody is upgrading from vipershell any more.
+`scripts/migrate-from-vipershell.sh`, which moves both directories, re-keys
+`preferences.json`, and uninstalls the old `vipershell@vipershell` agent
+plugin. It is the only file in the repo that should know the old name; delete
+it once nobody is upgrading from vipershell any more.
+
+### The agent-state plugin
+
+`plugin/` is installed into Claude Code and Codex at server start
+(`src/plugin-install.ts`), and reports agent state back over HTTP. Three names
+have to agree or the hooks silently no-op:
+
+- the marketplace/plugin id — `MARKETPLACE` in `plugin-install.ts`, and the
+  `name` fields in `.claude-plugin/marketplace.json` and
+  `plugin/.claude-plugin/plugin.json`;
+- the env vars seeded into every pane — `SHEEPIT_SESSION_ID` / `SHEEPIT_URL`
+  in `direct-bridge.ts`, read by `plugin/bin/report-state.mjs`;
+- the server-advertisement file — `configDir()/server.json`, written in
+  `index.ts` and read by the same script when the env vars are absent.
+
+Bump `plugin/.claude-plugin/plugin.json`'s `version` whenever the plugin
+changes: the installer compares versions and does nothing when they match.
 
 ### The preference-key namespace
 

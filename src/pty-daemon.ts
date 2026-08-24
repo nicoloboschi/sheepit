@@ -245,7 +245,7 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
       // never reached it. Export the variables here instead: the same write
       // that repoints the shell also seeds its environment, so an agent
       // launched in this pane — and the hooks it runs — can tell which
-      // vipershell session they belong to. `clear` below hides this line.
+      // sheepit session they belong to. `clear` below hides this line.
       const exports = Object.entries(req.env ?? {})
         .map(([k, v]) => `export ${k}=${shEscape(String(v))}; `)
         .join('');
