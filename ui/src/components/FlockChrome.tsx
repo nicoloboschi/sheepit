@@ -5,19 +5,19 @@
  * Both are shared by the desktop sidebar and the mobile Pens sheet, so the
  * flock looks and reports the same wherever you open it.
  */
-import { useFlockCounts, plural } from '../flock';
+import { useFlockCounts, plural, sheepCount } from '../flock';
 import FlockGrass from './FlockGrass';
 import FlockSheep from './FlockSheep';
 
 /** The band above the pen list: what the column is, and how big the flock is
  *  right now. */
 export function FlockBand(): React.ReactElement {
-  const { panes, pens } = useFlockCounts();
+  const { sheep, pens } = useFlockCounts();
   return (
     <div className="flock-band">
       <span className="flock-band-title">The&nbsp;flock</span>
       <span className="flock-band-count">
-        {plural(panes, 'pane')}<span className="flock-sep">&middot;</span>{plural(pens, 'pen')}
+        {sheepCount(sheep)}<span className="flock-sep">&middot;</span>{plural(pens, 'pen')}
       </span>
     </div>
   );

@@ -603,7 +603,7 @@ export default function StatChips({ sessionId, send }: StatChipsProps): React.Re
       <GitChip sessionId={sessionId} send={send} />
       <Popover>
         <PopoverTrigger asChild>
-          <button className="pane-footer-more" title={`This pane: ${label}`}>
+          <button className="pane-footer-more" title={`This sheep: ${label}`}>
             <ListTree size={12} />
           </button>
         </PopoverTrigger>

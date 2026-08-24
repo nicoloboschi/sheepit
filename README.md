@@ -56,16 +56,25 @@ process" — it is "which one needs me right now".
 
 | Word | Means |
 |---|---|
-| **Pane** | One terminal. Backed by one shell process. |
-| **Pen** | A row in the sidebar: one to four panes sharing a layout and a name. |
+| **Sheep** | One terminal. Backed by one shell process. |
+| **Pen** | A row in the sidebar: one to four sheep sharing a layout and a name. |
 | **The flock** | Every pen you have open. |
-| **Grazing** | A pane working away on its own — a command is still running. |
-| **Bleating** | A pane that wants you. It asked a question and is waiting on an answer. |
+| **Grazing** | A sheep working away on its own — a command is still running. |
+| **Bleating** | A sheep that wants you. It asked a question and is waiting on an answer. |
+
+A pen is the enclosure rather than the animals in it: it keeps its name, layout
+and place in the sidebar whether or not anything is running, which is why
+closing a pen closes what it holds. And the plural of sheep is sheep — three
+sheep, one sheep, never sheeps.
 
 The sidebar counts both at a glance, and the pasture along its bottom edge puts
 one sheep in the grass per pen — the bleating ones hop and call out, the grazing
 ones keep their heads down. It is decoration, but it is decoration that tells
 you whether anything needs you before you have read a single word.
+
+These are the words the interface uses. Underneath, the server and its API keep
+the ordinary ones — a sheep is a pane and a pen is a workspace — so nothing on
+the wire needs to know about livestock.
 
 ## Features
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
 import useStore from '../store';
-import { useFlockCounts, plural } from '../flock';
+import { useFlockCounts, sheepCount } from '../flock';
 import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
 
@@ -35,7 +35,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
-  const { panes, bleating, grazing } = useFlockCounts(sessionId);
+  const { sheep, bleating, grazing } = useFlockCounts(sessionId);
 
   if (!sessionId) return null;
 
@@ -220,7 +220,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   // how many panes are in here, and whether any of them wants you.
   const penCounts = (
     <span className="pen-counts">
-      <span>{plural(panes, 'pane')}</span>
+      <span>{sheepCount(sheep)}</span>
       {bleating > 0 && <>
         <span className="pen-counts-sep">&middot;</span>
         <span style={{ color: 'var(--bleating)', fontWeight: 600 }}>{bleating} bleating</span>

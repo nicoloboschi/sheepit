@@ -30,12 +30,23 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 
 | UI word | Means | Store field |
 |---|---|---|
-| **Pen** | A workspace — one sidebar row | `workspaces[id]` |
-| **The flock** | Every workspace together (the sidebar heading) | `workspaceOrder` |
-| **Bleating** | A pane waiting for your input | `sessionNeedsAttention[sessionId]` |
-| **Grazing** | A pane with a command still running | `sessionBusy[sessionId]` |
+| **Sheep** | A pane — one terminal, backed by one session | `workspaces[id].cells[n]` |
+| **Pen** | A workspace — one sidebar row, holding 1–4 sheep | `workspaces[id]` |
+| **The flock** | Every pen together (the sidebar heading) | `workspaceOrder` |
+| **Bleating** | A sheep waiting for your input | `sessionNeedsAttention[sessionId]` |
+| **Grazing** | A sheep with a command still running | `sessionBusy[sessionId]` |
 
-A pane that is neither bleating nor grazing is just standing there — but that
+**The plural of sheep is "sheep".** Never "sheeps" — `3 sheep`, `1 sheep`.
+`plural()` in `flock.ts` defaults to adding an s, so counts of sheep go
+through `sheepCount()` instead of each call site remembering to pass the
+plural twice.
+
+A pen is the enclosure, not the animals: it keeps its name, layout and
+position whether or not anything is running in it, which is why closing a pen
+closes what it holds. The flock is every pen together — so pens live *inside*
+the flock, and a pen is never itself called a flock.
+
+A sheep that is neither bleating nor grazing is just standing there — but that
 still splits in two, because "finished, and you have read it" and "finished,
 and you have not" are different things to a shepherd with twenty pens open.
 The activity dot carries all four:
@@ -47,18 +58,21 @@ The activity dot carries all four:
 | amber, filled | idle, with output you have not read (`sessionHasUnseen`) |
 | hollow ring | idle, and you have seen it |
 
-The two live states take precedence: a pane that is still working shows that it
-is working, unread or not. Bleating wins over grazing when both would apply, so the two
+The two live states take precedence: a sheep that is still working shows that
+it is working, unread or not. Bleating wins over grazing when both would apply, so the two
 counts never double-count a pane.
 
-Write `pen` in UI copy, `workspace` in code. A comment explaining a UI string
-may use either, whichever makes the sentence clearer.
+Write `sheep`/`pen` in UI copy and `pane`/`workspace` in code — including on
+the wire, where the server and its API keep the plain names. A comment
+explaining a UI string may use either, whichever makes the sentence clearer.
 
 ### Terms to avoid
 - ❌ "primary session" / "primary pane" → ✅ **root pane**
 - ❌ "grid" as a user-facing noun (in UI strings, comments, or docs) → ✅ **workspace** (or **pen** in UI copy)
 - ❌ "split" as a noun → ✅ **pane** (or "non-root pane" when the distinction matters)
 - ❌ "session" to mean "sidebar row" → ✅ **workspace**
+- ❌ "sheeps" → ✅ **sheep** (its own plural)
+- ❌ "flock" for a single workspace → ✅ **pen** (the flock is all of them)
 - ❌ "vipershell" in anything a user reads → ✅ **sheepit**
 
 ### Legacy field names — don't rename, just document

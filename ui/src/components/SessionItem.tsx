@@ -268,8 +268,8 @@ function PaneCard({
         <span
           className="pane-card-activity"
           aria-label={
-            needsAttention ? 'Pane is bleating — it wants your input'
-              : busy ? 'Pane is grazing — a command is running'
+            needsAttention ? 'Sheep is bleating — it wants your input'
+              : busy ? 'Sheep is grazing — a command is running'
               : unseen ? 'Pane is idle, with output you have not read'
               : 'Pane is idle'
           }

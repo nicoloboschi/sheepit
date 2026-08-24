@@ -69,15 +69,15 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
             aria-label="Voice transcript"
             style={{ width: 180, height: 22, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--ring)', background: 'var(--background)', color: 'var(--foreground)', font: '11px inherit' }}
           />
-          <button onClick={insert} title="Insert transcript into pane" style={{ color: 'var(--success)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><Check size={13} /></button>
+          <button onClick={insert} title="Insert transcript into this sheep" style={{ color: 'var(--success)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><Check size={13} /></button>
           <button onClick={() => setTranscript('')} title="Discard transcript" style={{ color: 'var(--muted-foreground)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><X size={13} /></button>
         </div>
       )}
       {error && <span title={error} style={{ color: 'var(--destructive)', fontSize: 9 }}>mic</span>}
       <button
         onClick={listening ? stop : start}
-        title={listening ? 'Stop listening' : 'Dictate into pane'}
-        aria-label={listening ? 'Stop listening' : 'Dictate into pane'}
+        title={listening ? 'Stop listening' : 'Dictate into this sheep'}
+        aria-label={listening ? 'Stop listening' : 'Dictate into this sheep'}
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, border: '1px solid rgba(140, 148, 132,0.18)', cursor: 'pointer', color: listening ? 'var(--destructive)' : '#c3c9bc', background: listening ? 'rgba(224, 144, 123,0.16)' : 'rgba(140, 148, 132,0.08)', boxShadow: 'inset 0 1px rgba(255,255,255,0.06)' }}
       >
         {listening ? <Square size={13} fill="currentColor" /> : <Mic size={17} />}
