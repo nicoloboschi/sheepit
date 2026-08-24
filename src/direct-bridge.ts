@@ -13,7 +13,7 @@ import { promisify } from 'util';
 import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
 import { config } from './config.js';
-import type { BridgeMessage, Session } from './bridge.js';
+import type { BridgeMessage, Session } from './protocol.js';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';

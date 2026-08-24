@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, statSync, watchFile, unwatchFile } from 'fs';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
-import type { BridgeMessage } from './bridge.js';
+import type { BridgeMessage } from './protocol.js';
 import type { AIService } from './ai.js';
 import { stateDir } from './paths.js';
 
