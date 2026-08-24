@@ -77,7 +77,7 @@ const PR_STATE_COLORS: Record<string, string> = {
 };
 
 // ── Favourites persistence ───────────────────────────────────────────────────
-const FAV_KEY = 'vipershell:favourite-sessions';
+const FAV_KEY = 'sheepit:favourite-sessions';
 
 export function loadFavourites(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); }

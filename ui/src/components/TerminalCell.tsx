@@ -95,7 +95,7 @@ interface WebglLike { dispose(): void }
 // the git log. ('working' replaces the old 'diff'; 'branch'/'commits' are gone.)
 // 'split' = terminal on the left + the file browser on the right (resizable).
 export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log';
-const PANE_VIEW_KEY = 'vipershell:pane-views';
+const PANE_VIEW_KEY = 'sheepit:pane-views';
 function readPaneView(sid: string): PaneView | undefined {
   try {
     const raw = JSON.parse(localStorage.getItem(PANE_VIEW_KEY) || '{}')[sid];
@@ -112,7 +112,7 @@ function savePaneView(sid: string, view: PaneView): void {
 }
 
 // Split-mode divider position (terminal width %), persisted per session.
-const SPLIT_PCT_KEY = 'vipershell:pane-split-pct';
+const SPLIT_PCT_KEY = 'sheepit:pane-split-pct';
 function readSplitPct(sid: string): number | undefined {
   try {
     const v = JSON.parse(localStorage.getItem(SPLIT_PCT_KEY) || '{}')[sid];

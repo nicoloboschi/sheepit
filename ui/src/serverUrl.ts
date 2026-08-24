@@ -8,7 +8,7 @@
 
 import { isStandalone } from './platform';
 
-const LS_KEY = 'vipershell:server-url';
+const LS_KEY = 'sheepit:server-url';
 
 let _serverUrl = '';
 

@@ -58,7 +58,7 @@ interface PooledShell {
 }
 
 const POOL_SIZE = (() => {
-  const raw = process.env.SHEEPIT_SHELL_POOL_SIZE ?? process.env.VIPERSHELL_SHELL_POOL_SIZE;
+  const raw = process.env.SHEEPIT_SHELL_POOL_SIZE;
   if (raw === undefined) return 2;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : 2;

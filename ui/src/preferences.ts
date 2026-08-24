@@ -7,15 +7,13 @@ let pending: PreferenceValues = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let installed = false;
 
-/* The persisted preference namespace predates the sheepit rename and is
- * deliberately left as `vipershell:` / `vipershell-`. These keys are the
- * identity of every saved workspace, layout and font size in the server-side
- * profile; renaming the prefix would orphan all of them. It is an internal
- * storage namespace and never shown to the user. */
-const SERVER_URL_KEY = 'vipershell:server-url';
+/* Every stored preference is namespaced `sheepit:` (a handful of older ones
+ * use `sheepit-`). The server-side profile validates the same prefix, so the
+ * two must stay in step — see the key check in src/api.ts. */
+const SERVER_URL_KEY = 'sheepit:server-url';
 
 function isPreferenceKey(key: string): boolean {
-  return key !== SERVER_URL_KEY && (key.startsWith('vipershell:') || key.startsWith('vipershell-'));
+  return key !== SERVER_URL_KEY && (key.startsWith('sheepit:') || key.startsWith('sheepit-'));
 }
 
 function legacyValues(): PreferenceValues {

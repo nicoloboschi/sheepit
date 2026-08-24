@@ -13,10 +13,10 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   const workspaceFilter = useStore(s => s.workspaceFilter);
   const setWorkspaceFilter = useStore(s => s.setWorkspaceFilter);
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem('vipershell:sidebar-collapsed') === '1'; } catch { return false; }
+    try { return localStorage.getItem('sheepit:sidebar-collapsed') === '1'; } catch { return false; }
   });
   const [sidebarW, setSidebarW] = useState(() => {
-    try { return parseInt(localStorage.getItem('vipershell:sidebar-w') ?? '') || 256; } catch { return 256; }
+    try { return parseInt(localStorage.getItem('sheepit:sidebar-w') ?? '') || 256; } catch { return 256; }
   });
   const draggingRef = useRef(false);
 
@@ -36,7 +36,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
       handle.style.background = 'transparent';
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setSidebarW(w => { try { localStorage.setItem('vipershell:sidebar-w', String(w)); } catch { /* ignore */ } return w; });
+      setSidebarW(w => { try { localStorage.setItem('sheepit:sidebar-w', String(w)); } catch { /* ignore */ } return w; });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -45,7 +45,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   const toggleCollapse = useCallback(() => {
     setCollapsed(c => {
       const next = !c;
-      try { localStorage.setItem('vipershell:sidebar-collapsed', next ? '1' : '0'); } catch { /* ignore */ }
+      try { localStorage.setItem('sheepit:sidebar-collapsed', next ? '1' : '0'); } catch { /* ignore */ }
       return next;
     });
   }, []);
