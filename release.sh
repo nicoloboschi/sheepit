@@ -2,7 +2,12 @@
 #
 # Cut a release. Bumps the version, commits, tags, and pushes — the push of the
 # `v*` tag triggers .github/workflows/release.yml, which publishes to npm and
-# creates the GitHub Release.
+# creates the GitHub Release. Nothing is published from a laptop: the tag is
+# the trigger, and CI is the only thing holding the npm token.
+#
+# The package is `@nicoloboschi/sheepit`, scoped because the bare `sheepit`
+# name on npm belongs to an unrelated package from 2023. The BIN is still
+# `sheepit`, so the scope only ever shows up in an install line.
 #
 # Usage:
 #   ./release.sh            # patch bump (1.0.0 -> 1.0.1)
@@ -53,5 +58,6 @@ cat <<EOF
 
 ✓ Pushed $new_version.
   GitHub Actions will now test, publish to npm, and create the release.
-  Track it: https://github.com/nicoloboschi/sheepit/actions
+  Track it:  https://github.com/nicoloboschi/sheepit/actions
+  Package:   https://www.npmjs.com/package/@nicoloboschi/sheepit
 EOF

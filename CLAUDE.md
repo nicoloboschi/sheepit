@@ -2,7 +2,13 @@
 
 The project was called **vipershell** until the rebrand. Everything — code,
 paths, env vars, storage keys, the npm package and the GitHub repository — is
-sheepit now. The only file that still knows the old name is the one-shot
+sheepit now.
+
+The npm package is **`@nicoloboschi/sheepit`**, scoped because the bare
+`sheepit` name belongs to an unrelated package published in 2023. The `bin` is
+still `sheepit`, so the scope only appears in an install line — `npx
+@nicoloboschi/sheepit`, then `sheepit` forever after. Don't "fix" the scope
+away without checking the registry first. The only file that still knows the old name is the one-shot
 migration script; see [Legacy names](#legacy-names-dont-rename-just-document).
 
 ## Glossary (authoritative — use these terms)

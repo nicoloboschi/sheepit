@@ -19,7 +19,7 @@
 ## Quick Start
 
 ```bash
-npx sheepit
+npx @nicoloboschi/sheepit
 ```
 
 Open [http://localhost:4444](http://localhost:4444) in your browser.
@@ -36,15 +36,15 @@ persistent PTY daemon — no tmux, no extra setup.
 ### Options
 
 ```
-npx sheepit --port 8080        # custom port (default: 4444)
-npx sheepit --host 127.0.0.1   # bind to localhost only (default: 0.0.0.0)
-npx sheepit --log-level debug  # verbose logging
+npx @nicoloboschi/sheepit --port 8080        # custom port (default: 4444)
+npx @nicoloboschi/sheepit --host 127.0.0.1   # bind to localhost only (default: 0.0.0.0)
+npx @nicoloboschi/sheepit --log-level debug  # verbose logging
 ```
 
 ### Install globally
 
 ```bash
-npm install -g sheepit
+npm install -g @nicoloboschi/sheepit
 sheepit
 ```
 

@@ -1,11 +1,11 @@
 {
-  "name": "sheepit",
+  "name": "@nicoloboschi/sheepit",
   "version": "1.6.0",
-  "description": "Your machine, anywhere \u2014 a full-featured terminal in your browser. No tmux required.",
+  "description": "Your machine, anywhere — a full-featured terminal in your browser. No tmux required.",
   "type": "module",
   "main": "electron/main.cjs",
   "license": "MIT",
-  "author": "Nicol\u00f2 Boschi",
+  "author": "Nicolò Boschi",
   "homepage": "https://github.com/nicoloboschi/sheepit#readme",
   "repository": {
     "type": "git",
@@ -26,6 +26,9 @@
   ],
   "engines": {
     "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "bin": {
     "sheepit": "./dist/index.js"
