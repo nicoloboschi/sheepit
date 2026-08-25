@@ -35,6 +35,7 @@
   },
   "files": [
     "dist",
+    "!dist/__tests__",
     "ui/dist",
     "scripts/postinstall.sh",
     "plugin",

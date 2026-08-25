@@ -33,6 +33,16 @@ jobs:
       - name: Test
         run: npm test
 
+      # Build BEFORE publish, explicitly — do not leave it to `prepack`.
+      # npm reads and normalizes package.json before it runs prepack, so on a
+      # fresh checkout `dist/index.js` does not exist yet at that moment and
+      # npm drops the `bin` entry as invalid ("No bin file found at
+      # dist/index.js" -> "bin[sheepit] ... was invalid and removed"). The
+      # package then publishes cleanly and installs with no `sheepit` command
+      # at all, which is exactly how 1.7.0 shipped.
+      - name: Build
+        run: npm run build
+
       - name: Publish to npm
         run: npm publish --access public
         env:
