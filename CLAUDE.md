@@ -136,9 +136,19 @@ the gradient fill itself is the light surface there.
 
 ### The pasture (sidebar footer)
 
-`FlockGrass` draws the grass strip and `FlockSheep` puts one 🐑 per pen in it,
-walking. A sheep's behaviour mirrors its pen: bleating sheep hop and puff a
-"baa", grazing sheep keep their heads down, idle sheep plod. Rules:
+`FlockGrass` draws the grass strip and `FlockSheep` puts one 🐑 in it per
+**real sheep** — one per pane, in the state that pane is actually in, read from
+`useFlockSheep()`. It used to be one per *pen* with moods handed out from the
+aggregate counts, so no animal in the strip corresponded to anything you could
+go and look at. A sheep's behaviour is its pane's state: bleating sheep hop and
+puff a "baa", grazing sheep keep their heads down, unread sheep plod with an
+amber mark, idle sheep just plod.
+
+**A bleating sheep calls you by its pane's name.** The footer line above says
+how many are bleating; the name tag answers the other half — which one. Only
+one sheep says a name at a time (`MAX_CALLING`): the strip is ~250px and a tag
+is up to 118px of it. The tag breathes rather than blinking out — a label
+legible for one second in four is one you have to sit and wait for. Rules:
 
 - Both are pure CSS animation over a real emoji glyph — **no image requests**,
   nothing to load, and it stays correct on a LAN with no internet route.
@@ -146,7 +156,13 @@ walking. A sheep's behaviour mirrors its pen: bleating sheep hop and puff a
   A field that reshuffles itself every time a session goes busy is a
   distraction, not decoration.
 - The strip is `pointer-events: none` end to end. It must never eat a click
-  meant for the last pen card above it.
+  meant for the last pen card above it. That is also why a calling sheep's
+  name is drawn rather than left to a tooltip: there is nothing to hover.
+- The turn-around flip lives on `.flock-sheep-facing`, not on the sheep
+  wrapper. As a transform on the whole sheep it also mirrored the name tag,
+  and a sheep calling you in mirror writing is not calling you.
+- Sheep near either end carry `flock-sheep-at-start` / `-at-end`, which folds
+  both the name tag and the "baa" inward so neither is clipped by the sidebar.
 - Everything stops under `prefers-reduced-motion: reduce` — the flock stays,
   the movement goes.
 - The light theme swaps the sheep's knock-back for a drop-shadow outline;
@@ -155,6 +171,46 @@ walking. A sheep's behaviour mirrors its pen: bleating sheep hop and puff a
   and the mobile Pens sheet both use them, and the mobile header carries a
   `slim` strip as its bottom edge — the flock has to be visible on a phone
   without opening a sheet.
+
+### Fences and pens, on both sides
+
+`PenFence` paints the fence on a canvas — rails that sag between their posts,
+a grain hairline down each post, per-post jitter from the same deterministic
+hash `FlockGrass` uses, and a real gap in the top rail with two taller
+gateposts. CSS gradients can only give straight rails and evenly spaced ticks,
+which reads as a border with marks on it.
+
+It draws in two places, from one component:
+
+- around each **pen** in the sidebar (`.pen-body`), wrapping the pane grid
+  only — the pen's name, star and row menu sit *above* the fence. A name
+  inside the enclosure cost a row of pen the sheep needed.
+- around the **workspace** in the main area (`.workspace-pen`), because the
+  workspace is the pen you are standing in. Same wood, wider gate
+  (`gate={44}`; the sidebar's 17 reads as a nick at that width). Skipped on
+  mobile, where the grid is one full-screen pane and a fence would only cost
+  rows.
+
+Both draw **grass** on the same canvas: scattered faintly over the whole pen
+floor, then a dense saturated strip along the front edge. **Pane cards must
+stay opaque** (`--accent`, not an alpha over it) — the grass is behind them,
+and a translucent card puts the whole field behind every line of text. The
+bottom padding on `.pen-body` / `.workspace-pen` is deeper than the other
+three sides for the same reason: that is the clear ground the front strip
+grows in, and with an even inset the cards sat straight on top of it. The cards and panes
+paint on top, so what you see is the field showing through the gutters, the
+margins and the gap under the last card — which is what makes an enclosure
+read as ground rather than as a box with a border. The blades come from the
+same deterministic hash as the posts, so one never moves when a sheep goes
+busy, and none of it animates (unlike the sidebar's pasture strip). Keep the
+front strip's alpha high: `--grazing` and `--fence` are both olive, and a
+washed-out blade beside a rail just reads as more fence.
+
+The workspace's **interior** rails are the resize separators, and those are
+CSS on purpose: an interior rail that sagged would look wrong, straight and
+evenly spaced is what gradients are good at, and a canvas cannot know where
+the user has dragged a split to. Hover or drag still swaps the wood for the
+brand gradient so a handle keeps announcing itself as a handle.
 
 ### Icons
 
@@ -173,16 +229,61 @@ walking. A sheep's behaviour mirrors its pen: bleating sheep hop and puff a
 
 ### Pane chrome
 
-A pane's header and its footer bar are the two halves of one frame, so they
-share `--pane-chrome` / `--pane-chrome-active` rather than each inventing a
-gradient. The light-theme variants live on the tokens, which is why neither
-component branches on `theme` in JS any more.
+A pane has **one** chrome bar, at the top. It used to have two — a header and
+a footer under the terminal, ~34px and ~36px, each carrying a single line —
+and they were merged. Terminal content is tall and narrow, so vertical rows
+are the scarce resource: in a quad that merge handed ~72px of height back.
+`--pane-chrome` / `--pane-chrome-active` still carry the gradient, and the
+light-theme variants live on the tokens, so nothing branches on `theme` in JS.
 
-The footer bar carries **identity, not telemetry**: agent chip, branch, PR, and
-the cwd flush right. CPU / memory / URL-count readouts were deliberately
-removed. The process list (with kill) and the detected-link list are still
-real tools, so they keep one small `ListTree` handle that appears only when
-there is something behind it — don't reintroduce the inline readouts.
+The bar carries **identity, not telemetry**, in three ruled groups. The
+**sheep leads it** — status is what you scan a wall of panes for, and the
+agent's logo is not, since you already know what you started. Then the name
+with the cwd as its subtitle. Then, flush right: what the pane is connected to
+(agent mark, git handle, PR, links) │ what it is showing (the view switch) │
+what you can do to it (mic, zen, close). The agent mark is drawn as a *mark*,
+not a chip — no fill, no border, same weight as the git icon beside it — and
+mic, zen and close share one `.pane-bar-btn` style so the right end reads as
+one row of controls. The **branch name is deliberately not here** —
+it was the only arbitrary-length string on the bar, so it set the width of
+everything and squeezed the title, which matters more. The git icon still
+carries the dirty state in its colour and opens the popover with the branch,
+its ahead/behind counts and the rest; the sidebar's pen card keeps the branch
+too. CPU / memory / URL-count readouts were deliberately removed. The
+process list (with kill) and the detected-link list are still real tools, so
+they keep one small `ListTree` handle that appears only when there is
+something behind it — don't reintroduce the inline readouts.
+
+**It is two lines tall at every width** — not from wrapping, but because the
+name carries the path as its subtitle (`.pane-bar-title-block`). That stable
+height is what lets the view switch sit up on the main row with the actions
+rather than being pushed to a row of its own. `.pane-bar-actions` takes
+`margin-left: auto`, so the bar always ends exactly on the zen and close
+buttons however long the name or branch run.
+
+**Nothing in the bar may change size with selection.** It used to grow 30px →
+34px and the sheep 36px → 42px when a pane became active, which resized the
+terminal underneath — and xterm's fit does not reliably follow a few pixels, so
+the bottom row of output ended up clipped behind the pane's edge. Selection is
+carried by background, border and ring only. If you add a control here, give it
+the same height in both states.
+
+Renaming is **inline**: the title is a button that becomes an input in place,
+same size and position, committing on Enter or blur and cancelling on Escape.
+The 280px popover that used to hold that one field is gone.
+
+The class names say `pane-bar-*`, not `pane-footer-*`; there is no footer to
+name any more.
+
+### Zen mode
+
+Zen insets the pane by **24px**, not the 40px it used to. It exists to read
+one pane, so most of the window should be pane — but it still has to read as
+an overlay floating over the grid rather than a mode that replaced it. 40px
+was too much backdrop (~11% of a 1440px screen's width); 12px was too little
+to see it was an overlay at all. `.pane-zen` also trims the terminal's own
+padding — in a grid that inset keeps a pane's text off its neighbours, and
+alone on screen there is no neighbour to keep it off.
 
 ### Rules of thumb
 
