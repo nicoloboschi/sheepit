@@ -142,7 +142,8 @@
 
   /* Pane chrome — the header above a terminal and the status bar below it are
      the two halves of one frame, so they share a gradient rather than each
-     inventing their own. PaneHeader and .pane-footer-bar both read these. */
+     inventing their own. PaneHeader reads these; there is no longer a second
+     bar under the terminal to keep in step with it. */
   --pane-chrome:            linear-gradient(115deg, rgba(24, 28, 22, 0.72), rgba(17, 20, 17, 0.92));
   --pane-chrome-active:     linear-gradient(115deg, rgba(124, 168, 96, 0.22), rgba(78, 132, 108, 0.12) 62%, rgba(17, 20, 17, 0.96)), #10130f;
   /* Diff add/remove rows. Semantic green/red, but the surface has to flip with
@@ -348,9 +349,13 @@
    must not add height the list could have used. */
 .flock-pasture {
   position: relative;
-  height: 32px;
+  /* Tall enough for a calling sheep's name to sit above the animals without
+     being clipped. The band is pointer-events:none end to end, so the extra
+     height never costs the pen list a click. */
+  height: 46px;
   margin: 3px -13px 0;
   pointer-events: none;
+  overflow: visible;
 }
 .flock-grass {
   display: block;
@@ -363,6 +368,9 @@
 .flock-sheep {
   position: absolute; left: 0; right: 0; bottom: 3px;
   height: 20px;
+  /* A calling sheep's name sits above it and must not be clipped by the
+     strip; the pasture band reserves the room (see .flock-pasture). */
+  overflow: visible;
 }
 
 /* Compact pasture for the mobile header, where vertical space is the scarce
@@ -377,6 +385,10 @@
      around that lane, so two sheep can never drift into the same spot. */
   animation: sheep-walk var(--walk) ease-in-out var(--delay) infinite alternate;
   will-change: transform;
+}
+.flock-sheep-facing {
+  display: block;
+  animation: sheep-face var(--walk) ease-in-out var(--delay) infinite alternate;
 }
 .flock-sheep-body {
   display: block;
@@ -408,6 +420,77 @@
   animation: sheep-baa 3.4s ease-in-out infinite;
 }
 
+/* Finished, and nobody has read it. No noise for this one — the sheep plods
+   like an idle one and carries an amber mark, matching the pen card's amber
+   and the pane bar's. */
+.flock-sheep-unread {
+  position: absolute;
+  right: -1px;
+  top: -1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 70%, transparent);
+}
+.flock-sheep-unread .flock-sheep-body,
+.flock-sheep-unread + .flock-sheep-body { opacity: 0.7; }
+
+/* ── A sheep calling you by name ───────────────────────────────────────────
+   The strip is pointer-events:none by design, so there is no tooltip to hover
+   and the name has to be on screen or nowhere. It sits above the animal and
+   fades in with the "baa" it belongs to, then leaves — a label pinned there
+   permanently would be a status bar, and this is a field.
+
+   Only the first couple of bleating sheep get one (see MAX_CALLING): the
+   strip is ~250px and two of these is already most of it. */
+.flock-sheep-call {
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 118px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 8.5px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--bleating);
+  background: color-mix(in srgb, var(--bleating) 14%, var(--background));
+  border: 1px solid color-mix(in srgb, var(--bleating) 40%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  animation: sheep-call 2.6s ease-in-out infinite;
+}
+/* It breathes; it does not blink out. The first cut faded the name to zero
+   for most of the cycle, which looked right and was useless: the whole point
+   of the label is to answer WHICH pane wants you, and one that is legible for
+   a second in four is a label you have to sit and wait for. The "baa" is the
+   intermittent part — that is the sheep making noise. This is its name tag. */
+@keyframes sheep-call {
+  0%, 100% { opacity: 0.78; transform: translateX(-50%) translateY(0.5px); }
+  50%      { opacity: 1;    transform: translateX(-50%) translateY(-1px); }
+}
+/* A sheep near either end of the strip cannot have its name centred on it —
+   half the label would hang off the sidebar. Anchor to the edge instead, and
+   fold its "baa" inward too, which otherwise sits off the sheep's right and
+   gets clipped by the same edge. */
+.flock-sheep-at-start .flock-sheep-call { left: 0; animation-name: sheep-call-start; }
+.flock-sheep-at-end   .flock-sheep-call { left: auto; right: 0; animation-name: sheep-call-end; }
+.flock-sheep-at-end   .flock-sheep-baa  { left: auto; right: 100%; margin: 0 2px 0 0; }
+@keyframes sheep-call-start {
+  0%, 100% { opacity: 0.78; transform: translateY(0.5px); }
+  50%      { opacity: 1;    transform: translateY(-1px); }
+}
+@keyframes sheep-call-end {
+  0%, 100% { opacity: 0.78; transform: translateY(0.5px); }
+  50%      { opacity: 1;    transform: translateY(-1px); }
+}
+
 /* On the pale field a white sheep would all but vanish, so the light theme
    trades the knock-back for a soft outline instead. */
 :root[data-theme='light'] .flock-sheep-body {
@@ -419,12 +502,17 @@
   filter: drop-shadow(0 0 0.7px rgba(34, 41, 31, 0.7));
 }
 
+/* The walk moves the sheep along its lane. The turn-around is a separate
+   animation on .flock-sheep-facing, because a scaleX on the whole sheep also
+   mirrors its name tag, and a sheep calling you in mirror writing is not
+   calling you. */
 @keyframes sheep-walk {
-  from { transform: translateX(calc(var(--roam) * -0.5)) scaleX(1); }
-  49.9% { transform: translateX(calc(var(--roam) * 0.5)) scaleX(1); }
-  /* Flip at the turn so the sheep faces where it is going. */
-  50%  { transform: translateX(calc(var(--roam) * 0.5)) scaleX(-1); }
-  to   { transform: translateX(calc(var(--roam) * 0.5)) scaleX(-1); }
+  from { transform: translateX(calc(var(--roam) * -0.5)); }
+  to   { transform: translateX(calc(var(--roam) * 0.5)); }
+}
+@keyframes sheep-face {
+  from, 49.9% { transform: scaleX(1); }
+  50%, to     { transform: scaleX(-1); }
 }
 @keyframes sheep-bob {
   0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -450,9 +538,16 @@
    reduced-motion is for. Keep the flock, lose the movement. */
 @media (prefers-reduced-motion: reduce) {
   .flock-sheep-one,
+  .flock-sheep-facing,
   .flock-sheep-body,
-  .flock-sheep-baa { animation: none; }
+  .flock-sheep-baa,
+  .flock-sheep-call { animation: none; }
+  /* With the motion gone these have to stand still and visible, or the one
+     sheep that wants you would be the one thing you could not see. */
   .flock-sheep-baa { opacity: 0.9; }
+  .flock-sheep-call { opacity: 1; transform: translateX(-50%); }
+  .flock-sheep-at-start .flock-sheep-call,
+  .flock-sheep-at-end .flock-sheep-call { transform: none; }
 }
 .sidebar-resize-handle {
   transition: background 0.15s ease, box-shadow 0.15s ease;
@@ -546,12 +641,15 @@
 
 .session-item {
   position: relative;
-  display: flex; align-items: stretch; gap: 4px;
-  /* Inset the row so the card has breathing room on both sides. The extra
-     top padding leaves room for the workspace-grip-top strip to sit on the
-     top edge without overlapping the PaneGrid below. */
-  padding: 16px 17px 15px 18px;
-  margin: 0 7px 8px 7px;
+  display: flex; align-items: stretch;
+  /* A pen runs the full width of the sidebar. Everything that used to eat
+     into it has been moved off the horizontal axis: the fence moved inside
+     onto .pen-body with its own padding, and the row menu is now positioned
+     absolutely instead of sitting in the flex row taking 24px of enclosure
+     from every pen whether it is showing or not. What is left is the grip
+     strip's height on the top edge. */
+  padding: 11px 0 5px 0;
+  margin: 0 0 7px 0;
   cursor: pointer;
   /* Subtle card look for inactive rows — flat dark background + hairline
      border + rounded corners. Each workspace reads as its own card even
@@ -577,61 +675,61 @@
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.025);
   transform: translateY(-1px);
 }
-/* The fence around each pen — all four sides, because a pen is an enclosure.
-   Rails are the ::after's own rounded border; the pickets are four repeating
-   gradients, one per edge. Entirely drawn: no image, one pseudo-element per
-   pen rather than a sprite per picket. Kept faint on purpose — with twenty
-   pens open this has to read as a rhythm down the sidebar, not twenty fences
-   competing. pointer-events:none so it can never eat a click meant for the
-   pen. */
-.session-item::after {
-  content: '';
+/* ── The fence around a pen ────────────────────────────────────────────────
+   Drawn on a canvas by PenFence, not in CSS gradients. A stack of
+   linear-gradient slices can only give straight rails and evenly spaced
+   posts, which reads as "a border with ticks on it"; the canvas buys rails
+   that sag between their posts, a grain hairline down each post, and
+   per-post jitter from a deterministic hash. See PenFence.tsx.
+
+   It wraps the pane grid ONLY. The pen's name, its star and its row menu now
+   sit above the enclosure, because a name inside the fence was costing a
+   whole row of pen that the sheep needed — at a 256px sidebar there is no
+   row to spare. A pen fences animals, not text. */
+/* The row menu floats over the pen's top-right corner rather than standing
+   beside it in the flex row. It is invisible until the row is hovered, so
+   reserving a column for it cost every pen ~24px of width permanently to
+   show a 12px glyph occasionally. */
+.session-item > .session-action-btn {
   position: absolute;
-  inset: 2px;
+  top: 9px;
+  right: 5px;
+  z-index: 3;
+}
+/* …so the pen's name has to stop short of it. */
+.workspace-title-row { padding-right: 22px; }
+
+/* The selected pen's fence is warmer as well as brighter; PenFence reads
+   --fence at paint time and repaints when `active` flips. */
+.session-item.active .pen-body {
+  --fence: color-mix(in srgb, var(--warning) 42%, var(--primary));
+}
+.pen-body {
+  position: relative;
+  /* The rails sit 5.5px in and their posts stand 8px proud of them, so the
+     cards have to start ~14px from the edge or the animals would be standing
+     in the fence. The bottom is deeper than the rest on purpose: that is the
+     strip of clear ground the fence's front grass grows in, and with the old
+     11px the cards sat straight on top of it. */
+  padding: 10px 14px 19px 14px;
+  min-width: 0;
+}
+.pen-fence {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Never eat a click meant for a pane card. */
   pointer-events: none;
   opacity: 0.5;
-  /* Rails and pickets only — no border, no border-radius. An earlier version
-     drew the rails as a rounded 1px border, which is just a bordered card
-     with ticks on it: the eye reads "outline", not "fence". Straight rails
-     that stop short of the corners, with a taller post standing at each one,
-     read as an enclosure instead. */
-  background:
-    /* corner posts, one per corner, standing proud of the rails */
-    linear-gradient(var(--fence) 0 0) left    1px top    0    / 1.75px 9px no-repeat,
-    linear-gradient(var(--fence) 0 0) right   1px top    0    / 1.75px 9px no-repeat,
-    linear-gradient(var(--fence) 0 0) left    1px bottom 0    / 1.75px 9px no-repeat,
-    linear-gradient(var(--fence) 0 0) right   1px bottom 0    / 1.75px 9px no-repeat,
-    /* gateposts, flanking the opening the grip sits in */
-    linear-gradient(var(--fence) 0 0) calc(50% - 14px) 0 / 1.75px 8px no-repeat,
-    linear-gradient(var(--fence) 0 0) calc(50% + 14px) 0 / 1.75px 8px no-repeat,
-    /* rails: one line along each edge, inset from the corners so the posts
-       terminate them rather than the rails turning a corner. The top rail is
-       split into two runs with a gap in the middle — the gate, which is where
-       the drag grip stands. It used to be drawn straight through the grip. */
-    linear-gradient(var(--fence) 0 0) left  11px top 3.5px / calc(50% - 25px) 1px no-repeat,
-    linear-gradient(var(--fence) 0 0) right 11px top 3.5px / calc(50% - 25px) 1px no-repeat,
-    linear-gradient(var(--fence) 0 0) center  bottom 3.5px / calc(100% - 22px) 1px  no-repeat,
-    linear-gradient(var(--fence) 0 0) left    3.5px center  / 1px calc(100% - 22px) no-repeat,
-    linear-gradient(var(--fence) 0 0) right   3.5px center  / 1px calc(100% - 22px) no-repeat,
-    /* pickets */
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) left  11px top 0 / calc(50% - 25px) 6px no-repeat,
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) right 11px top 0 / calc(50% - 25px) 6px no-repeat,
-    repeating-linear-gradient(90deg, var(--fence) 0 1.25px, transparent 1.25px 10px) center bottom 0 / calc(100% - 22px) 6px no-repeat,
-    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) left   0 center / 6px calc(100% - 22px) no-repeat,
-    repeating-linear-gradient(0deg,  var(--fence) 0 1.25px, transparent 1.25px 10px) right  0 center / 6px calc(100% - 22px) no-repeat;
+  transition: opacity 0.12s;
 }
-/* The pen you are in gets its fence in the light. */
 /* Hovering a pen brightens its fence; taking hold of the grip brightens it
    further, so the thing you are about to drag is the thing that lit up. */
-.session-item:hover::after { opacity: 0.75; }
-.session-item:hover:has(.workspace-grip-top:hover)::after {
-  --fence: color-mix(in srgb, var(--primary) 55%, var(--warning));
-  opacity: 1;
-}
-.session-item.active::after {
-  --fence: color-mix(in srgb, var(--warning) 42%, var(--primary));
-  opacity: 0.95;
-}
+.session-item:hover .pen-fence { opacity: 0.78; }
+.session-item:hover:has(.workspace-grip-top:hover) .pen-fence { opacity: 1; }
+/* The pen you are in gets its fence in the light. */
+.session-item.active .pen-fence { opacity: 0.95; }
 
 .session-item.active {
   /* Selected row: surface and border carry the state without a menu-like rail. */
@@ -658,11 +756,6 @@
 @media (prefers-reduced-motion: reduce) {
   .session-item,
   .sidebar-resize-handle { transition: none; }
-  .pane-card-busy .pane-card-activity,
-  .pane-card-needs-attention .pane-card-activity { animation: none; }
-  /* The flock stays, the movement goes — so a bleating sheep still holds its
-     tail up, which is the half of the signal that does not depend on motion. */
-  .pane-card-needs-attention .pane-card-activity { transform: rotate(-20deg); }
 }
 
 .session-icon {
@@ -766,352 +859,382 @@
 }
 
 .pane-card {
-  position: relative;   /* anchor for the perched corner badge */
+  /* Anchor for the sheep standing in the bottom-right corner, and a container
+     so the info row can shed the timestamp when the card is genuinely too
+     narrow to hold five things. */
+  position: relative;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  /* Stack rows top-down with consistent breathing room. Do NOT center —
-     centering a 3-row block inside a short grid clips the bottom row. */
+  /* Stack rows top-down. Do NOT center — the info row pins itself to the
+     bottom with margin-top:auto so every card in a pen lines up. */
   justify-content: flex-start;
-  gap: 6px;
-  /* Left padding reserves a narrow strip for the corner badge's *interior*
-     half; the other half hangs off the card's top-left edge. */
-  padding: 9px 16px 9px 18px;
-  background: rgba(255, 255, 255, 0.03);
+  gap: 3px;
+  padding: 8px 10px 8px 11px;
+  /* OPAQUE, deliberately. The pen's fence canvas draws grass across the whole
+     floor and the cards sit on top of it; a translucent card let the entire
+     field through and put texture behind every line of text. A sheep stands
+     ON the grass, it is not made of it. Anything that restyles a card surface
+     has to stay opaque for the same reason. */
+  background: var(--accent);
   border: 1px solid rgba(255, 255, 255, 0.07);
-  /* The fleece in ::before draws this edge as bumps instead. */
-  border-top-color: transparent;
   border-radius: 7px;
   min-width: 0;
   min-height: 0;
-  /* overflow MUST be visible so the badge can hang off the top-left corner
-     like a bird perched on the border. Text ellipsis doesn't need it on
-     this element — each row clips its own content. */
+  /* The sheep's baa puffs and z's drift outside the SVG box, so nothing here
+     may clip. Each row clips its own text instead. */
   overflow: visible;
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .pane-card-active {
-  background: rgba(156, 188, 127, 0.10);
+  background: color-mix(in srgb, var(--primary) 13%, var(--accent));
   border-color: rgba(156, 188, 127, 0.40);
   box-shadow: none;
 }
-/* Unseen output gets a subtle amber badge border; the workspace itself also
-   carries a compact amber beacon so it remains discoverable while scrolled. */
 
-/* Corner badge — session kind icon perched on the top-left corner of the
-   card, half in / half out. The overhang is what makes it feel like a
-   little bird sitting on a fence rail rather than an icon floating
-   inside the card. */
-/* The card is the sheep, so it is shaped like one: a fleece along its back and
-   four legs under it. Both are drawn — repeating gradients on the two free
-   pseudo-elements, no image, and they cost nothing to load on a LAN with no
-   route out.
-
-   The fleece is a row of overlapping circles in the card's own border colour,
-   sitting just above the top edge so the silhouette reads as wool rather than
-   as a rectangle with a pattern on it. The legs are four stubs, set in from
-   the corners so the animal stands rather than straddles. */
-.pane-card::before {
-  content: '';
-  position: absolute;
-  left: 10px; right: 10px;
-  top: -6px;
-  height: 6px;
-  pointer-events: none;
-  /* Filled bumps, not a beaded strip: each circle is the card's own surface
-     with a hairline along its arc, and they sit low enough that their lower
-     halves merge into the body. With the card's straight top border removed
-     the silhouette itself becomes wool. */
-  background:
-    radial-gradient(circle 5.5px at 5.5px 6px,
-      var(--fleece-fill) 0 4.6px,
-      var(--fleece) 4.6px 5.4px,
-      transparent 5.5px)
-    0 0 / 9px 6px repeat-x;
-}
-.pane-card::after {
-  content: '';
-  position: absolute;
-  left: 16px; right: 16px;
-  bottom: -5px;
-  height: 5px;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--leg) 0 0) left    2%  bottom 0 / 2px 5px no-repeat,
-    linear-gradient(var(--leg) 0 0) left   22%  bottom 0 / 2px 5px no-repeat,
-    linear-gradient(var(--leg) 0 0) right  22%  bottom 0 / 2px 5px no-repeat,
-    linear-gradient(var(--leg) 0 0) right   2%  bottom 0 / 2px 5px no-repeat;
-}
-.pane-card {
-  --fleece: rgba(255, 255, 255, 0.14);
-  --fleece-fill: #171a15;
-  --leg: rgba(255, 255, 255, 0.13);
-}
-:root[data-theme='light'] .pane-card { --fleece-fill: #ffffff; }
-/* A sheep that is doing something shows it in its own wool, not only in the
-   chip at its head. */
-.pane-card-busy   { --fleece: rgba(156, 188, 127, 0.42); --leg: rgba(156, 188, 127, 0.34); }
-.pane-card-needs-attention { --fleece: rgba(142, 191, 162, 0.52); --leg: rgba(142, 191, 162, 0.42); }
-.pane-card-active {
-  --fleece: color-mix(in srgb, var(--primary) 55%, transparent);
-  --fleece-fill: #1d2419;
-  --leg: color-mix(in srgb, var(--primary) 46%, transparent);
-}
-
-.pane-card-badge {
-  position: absolute;
-  top: -9px;
-  left: -9px;
-  z-index: 2;    /* layer above sibling cards in tight grid layouts */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: #1b2018;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.45),
-    0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  transition: color 0.12s, background 0.12s, border-color 0.12s, transform 0.12s;
-}
-.pane-card-active .pane-card-badge {
-  color: var(--primary-foreground);
-  background: var(--primary-gradient);
-  border-color: color-mix(in srgb, var(--primary-end) 65%, transparent);
-  box-shadow:
-    0 2px 8px rgba(156, 188, 127, 0.45),
-    0 0 0 1px rgba(156, 188, 127, 0.25);
-}
-.pane-card-unseen .pane-card-badge {
-  border-color: rgba(217, 184, 74, 0.45);
-}
-
-/* Per-pane activity is intentionally local: split workspaces can contain a
-   mix of idle shells, work in progress, and turns waiting for the user.
-   Each state uses the same color for its dot and card surface: blue = working,
-   green = ready for input, hollow neutral = idle. */
-/* The tail, at the animal's rear, carrying its state.
- *
- * This used to be a 🐑 in a chip perched on the corner, which put a sheep on
- * a card that was already a sheep. The card is the animal: the kind badge is
- * its head, the fleece its back, and this is the tail — so the state lives
- * where you would look for a tail to flick.
- *
- * Being drawn rather than an emoji, it can finally take the state's colour
- * directly instead of standing on a coloured patch to imply it.
- */
-.pane-card-activity {
-  position: absolute;
-  right: -7px;
-  top: 16px;
-  width: 13px; height: 8px;
-  --tail: rgba(255, 255, 255, 0.18);
-  transform-origin: 0 50%;
-}
-.pane-card-activity::before {   /* the tail itself */
-  content: '';
-  position: absolute; left: 0; top: 3px;
-  width: 9px; height: 2.5px;
-  border-radius: 2px;
-  background: var(--tail);
-}
-.pane-card-activity::after {    /* the tuft on the end */
-  content: '';
-  position: absolute; right: 0; top: 0;
-  width: 8px; height: 8px;
-  border-radius: 999px;
-  background: var(--tail);
-}
-
-/* Idle: hanging still, faint, so quiet sheep recede. */
-.pane-card-idle .pane-card-activity { --tail: rgba(255, 255, 255, 0.16); }
-
-/* Idle, unread: finished, with something to show you. */
-.pane-card-unseen.pane-card-idle .pane-card-activity {
-  --tail: var(--warning);
-  filter: drop-shadow(0 0 4px rgba(217, 184, 74, 0.45));
-}
-
-/* Grazing: a slow contented swish. */
-.pane-card-busy .pane-card-activity {
-  --tail: var(--grazing);
-  animation: pane-tail-swish 2.6s ease-in-out infinite;
-}
-
-/* Bleating: tail up and flicking. Teal rather than meadow, and it moves — a
-   sheep that wants you must be findable without reading a word.
-   No "baa" here: at this size the only place for it was over the pen's name,
-   where it read as "ble-baa-ng". The pasture at the foot of the sidebar has
-   room for the sound, and keeps it. */
-.pane-card-needs-attention .pane-card-activity {
-  --tail: var(--bleating);
-  filter: drop-shadow(0 0 5px rgba(142, 191, 162, 0.55));
-  animation: pane-tail-flick 1.15s ease-in-out infinite;
-}
-
-/* Named apart from the pasture's keyframes on purpose: duplicate @keyframes
-   names do not scope, the last definition simply wins, and an earlier version
-   of this file redefined the pasture's sheep-graze out from under it. */
-@keyframes pane-tail-swish {
-  0%, 100% { transform: rotate(0deg); }
-  50%      { transform: rotate(-14deg); }
-}
-@keyframes pane-tail-flick {
-  0%, 100% { transform: rotate(-22deg); }
-  35%      { transform: rotate(4deg); }
-  60%      { transform: rotate(-16deg); }
-}
-/* Grazing (a command is running) is the meadow green; bleating (the pane wants
-   you) is the moss teal and pulses. Before the rebrand these were blue and
-   green — with a green brand they have to be told apart by hue *and* by the
-   pulse, or a busy pane and a waiting one look identical. */
+/* ── The live states keep their own box tints ──────────────────────────────
+   Now that bleating and unread move identically, the box colour is the ONLY
+   thing separating them, so all three signalling states carry one: meadow
+   for grazing, moss teal for bleating, amber for unread. */
 .pane-card-busy:not(.pane-card-active):not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg, rgba(156, 188, 127, 0.11), rgba(156, 188, 127, 0.03));
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--grazing) 13%, var(--accent)),
+    color-mix(in srgb, var(--grazing) 4%,  var(--accent)));
   border-color: rgba(156, 188, 127, 0.30);
   box-shadow: inset 0 1px rgba(199, 224, 168, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .pane-card-active.pane-card-busy:not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg, rgba(156, 188, 127, 0.22), rgba(156, 188, 127, 0.09));
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--grazing) 25%, var(--accent)),
+    color-mix(in srgb, var(--grazing) 11%, var(--accent)));
   border-color: rgba(156, 188, 127, 0.48);
   box-shadow: inset 0 1px rgba(199, 224, 168, 0.10);
 }
 .pane-card-needs-attention:not(.pane-card-active) {
-  background: linear-gradient(120deg, rgba(142, 191, 162, 0.16), rgba(142, 191, 162, 0.04));
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--bleating) 18%, var(--accent)),
+    color-mix(in srgb, var(--bleating) 5%,  var(--accent)));
   border-color: rgba(142, 191, 162, 0.40);
   box-shadow: inset 0 1px rgba(182, 214, 194, 0.08), 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .pane-card-active.pane-card-needs-attention {
-  background: linear-gradient(120deg, rgba(142, 191, 162, 0.22), rgba(142, 191, 162, 0.12));
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--bleating) 25%, var(--accent)),
+    color-mix(in srgb, var(--bleating) 14%, var(--accent)));
   border-color: rgba(142, 191, 162, 0.55);
   box-shadow: inset 0 1px rgba(182, 214, 194, 0.10);
 }
-/* Idle, but with output nobody has looked at yet.
-   The three live states are told apart by hue and motion — bleating pulses
-   teal, grazing holds meadow green, idle is a hollow ring. A finished pane
-   with unread output used to be *only* a faint amber tint on the corner
-   badge, which sat behind the vendor icon and read as plain idle at a
-   glance. It gets the dot instead: filled, so it reads as "something is
-   here", amber, so it can never be mistaken for either live state.
-   Scoped below the live states so a pane that is still working keeps
-   showing that it is working. */
 
-/* Tight rows get a smaller animal, not a smaller box. */
-.pane-card-tight .pane-card-activity { top: 12px; }
-
-/* Row 1: name (icon is now the corner badge) */
-.pane-card-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  line-height: 1.3;
+/* ── Unread: the whole card goes amber ─────────────────────────────────────
+   Bleating and unread deliberately share one animation — both mean "look at
+   me", so both rear up the same way — which means the animal alone can no
+   longer tell them apart. The card carries the difference instead, and a
+   tinted box is a stronger signal at sidebar scale than any 34px animal:
+   you see it without looking at it. Scoped below the two live states so a
+   pane that is still working keeps showing that it is working. */
+.pane-card-unseen:not(.pane-card-busy):not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--warning) 18%, var(--accent)),
+    color-mix(in srgb, var(--warning) 6%,  var(--accent)));
+  border-color: rgba(217, 184, 74, 0.42);
+}
+.pane-card-unseen.pane-card-active:not(.pane-card-busy):not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--warning) 26%, var(--accent)),
+    color-mix(in srgb, var(--warning) 13%, var(--accent)));
+  border-color: rgba(217, 184, 74, 0.58);
 }
 
+/* The agent mark, inline in the info row beside the PR. It used to be a chip
+   perched half-off the card's top-left corner, which cost a ~30px gutter on
+   every row of every card to show a 13px icon on one of them. */
+.pane-card-badge {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.9;
+  color: var(--muted-foreground);
+}
+.pane-card-tight .pane-card-badge { width: 13px; height: 13px; }
+
+/* ══ THE SHEEP ═════════════════════════════════════════════════════════════
+   Each pane is drawn as the animal it is named after, by SheepStatus.tsx.
+   The card used to *be* the sheep — a CSS fleece along its top border and
+   four gradient legs under it — which meant the animal could only ever be a
+   rectangle wearing bumps. It is now a real drawn animal standing in the
+   card's bottom-right corner, and the card is just a card again.
+
+   Three channels carry the state, because one is not enough at 34px with
+   twenty pens open:
+     1. colour   — --grazing / --bleating / --warning / muted
+     2. posture  — the body pivots on its hind feet, so leaning forward drops
+                   the nose and rearing back lifts the chest. The silhouettes
+                   are different SHAPES, not four tints of one.
+     3. a glyph  — grass, a baa puff, or z z z, each unique to one state.
+   ═════════════════════════════════════════════════════════════════════════ */
+.sheep {
+  /* Last item in the info row, not floating over the card. Floating it meant
+     the name and path rows each had to reserve a gutter they could not
+     afford — at quad width that gutter cut "vipershell" down to "…ell". */
+  flex: 0 0 auto;
+  margin-left: 5px;
+  margin-right: -2px;
+  width: var(--sheep-w, 42px);
+  height: calc(var(--sheep-w, 42px) * 38 / 44);
+  /* The emitted glyphs live in the top 8 units of the viewBox and must be
+     free to sit over the card's own padding. */
+  overflow: visible;
+  pointer-events: none;
+  --tint: var(--muted-foreground);
+  --wool: #e9ece4;
+  --wool-shade: #b9c2ae;
+  --skin: #3a4034;
+  --sheep-leg: #4a5142;
+}
+:root[data-theme='light'] .sheep {
+  --wool: #ffffff;
+  --wool-shade: #9aa78d;
+  --skin: #4d5544;
+  --sheep-leg: #5f6a54;
+}
+/* Quad packs four cards into ~100px each at the default sidebar width, so
+   the animal comes down with them — and the text gutter comes with it. */
+.pane-grid-quad .pane-card { --sheep-w: 32px; }
+.pane-grid-horizontal .pane-card,
+.pane-grid-three-flat .pane-card { --sheep-w: 36px; }
+
+.sheep .sheep-fleece circle {
+  fill: var(--wool);
+  stroke: var(--wool-shade);
+  stroke-width: 0.75;
+  paint-order: stroke;
+}
+.sheep .sheep-legs line { stroke: var(--sheep-leg); stroke-width: 1.7; stroke-linecap: round; }
+.sheep .sheep-tail { fill: var(--wool); stroke: var(--wool-shade); stroke-width: 0.65; }
+.sheep .sheep-skull { fill: var(--skin); }
+.sheep .sheep-ear { fill: var(--skin); opacity: 0.85; transform-box: fill-box; transform-origin: 80% 90%; }
+.sheep .sheep-ear-far { opacity: 0; }   /* only the alert sheep shows both ears */
+.sheep .sheep-eye { fill: var(--wool); }
+.sheep .sheep-muzzle { fill: var(--wool); opacity: 0.5; }
+.sheep .sheep-halo { fill: var(--tint); opacity: 0; filter: blur(3px); }
+.sheep .sheep-ground { fill: var(--tint); opacity: 0; }
+
+/* The head is nested inside the SVG translate that puts it on the shoulders,
+   so CSS can drive posture without clobbering that placement. The body pivots
+   on the hind feet; the tail on its root. */
+.sheep .sheep-head { transform-box: fill-box; transform-origin: 65% 25%; }
+.sheep .sheep-body { transform-box: fill-box; transform-origin: 78% 96%; }
+.sheep .sheep-legs { transform-box: fill-box; transform-origin: 50% 0; }
+.sheep .sheep-tail { transform-box: fill-box; transform-origin: 5% 20%; }
+
+/* Every emitted glyph starts hidden; exactly one state turns each one on. */
+.sheep .sheep-grass, .sheep .sheep-baa, .sheep .sheep-zzz { opacity: 0; }
+.sheep .sheep-grass path {
+  stroke: var(--grazing); stroke-width: 1.2; stroke-linecap: round; fill: none;
+  transform-box: fill-box; transform-origin: 50% 100%;
+}
+.sheep .sheep-baa { fill: var(--bleating); }
+.sheep .sheep-zzz path {
+  stroke: var(--muted-foreground); stroke-width: 1.35; fill: none;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+
+/* ── GRAZING — a command is running ────────────────────────────────────────
+   Head buried in the grass, chewing fast. The speed is the point: a grazing
+   sheep is the only state that means "right now, something is happening",
+   and a slow bob read as idling. */
+.sheep-grazing { --tint: var(--grazing); }
+.sheep-grazing .sheep-halo { opacity: 0.30; }
+.sheep-grazing .sheep-ground { opacity: 0.55; }
+.sheep-grazing .sheep-body { transform: rotate(5deg); }   /* shoulders down, rump up */
+.sheep-grazing .sheep-head { animation: sheep-graze-bob 0.62s ease-in-out infinite; }
+.sheep-grazing .sheep-tail { animation: sheep-tail-swish 0.5s ease-in-out infinite; }
+.sheep-grazing .sheep-grass { opacity: 0.95; }
+.sheep-grazing .sheep-grass path { animation: sheep-grass-sway 0.9s ease-in-out infinite; }
+.sheep-grazing .sheep-grass path:nth-child(2) { animation-delay: -0.3s; }
+.sheep-grazing .sheep-grass path:nth-child(3) { animation-delay: -0.6s; }
+@keyframes sheep-graze-bob {
+  0%, 100% { transform: rotate(48deg) translate(-0.5px, 3px); }
+  50%      { transform: rotate(58deg) translate(-1.2px, 4.4px); }
+}
+@keyframes sheep-grass-sway {
+  0%, 100% { transform: rotate(0); }
+  50%      { transform: rotate(-16deg); }
+}
+@keyframes sheep-tail-swish {
+  0%, 100% { transform: rotate(-9deg); }
+  50%      { transform: rotate(9deg); }
+}
+
+/* ── BLEATING and UNREAD share one animation ───────────────────────────────
+   Both rear back onto their hind feet with the head thrown up. What tells
+   them apart is not the animal: bleating puffs a baa, and unread tints its
+   whole card amber (.pane-card-unseen below). Two states that both mean
+   "look at me" should move the same way; the card carries the difference. */
+.sheep-bleating { --tint: var(--bleating); }
+.sheep-unread   { --tint: var(--warning); }
+.sheep-bleating .sheep-halo,
+.sheep-unread .sheep-halo { opacity: 0.42; animation: sheep-halo-pulse 1.05s ease-in-out infinite; }
+.sheep-bleating .sheep-body,
+.sheep-unread .sheep-body { animation: sheep-rear 1.05s ease-in-out infinite; }
+.sheep-bleating .sheep-head,
+.sheep-unread .sheep-head { animation: sheep-head-lift 1.05s ease-in-out infinite; }
+.sheep-bleating .sheep-tail,
+.sheep-unread .sheep-tail { animation: sheep-tail-swish 0.55s ease-in-out infinite; }
+.sheep-bleating .sheep-ear-far,
+.sheep-unread .sheep-ear-far { opacity: 0.85; }
+/* the baa is bleating's alone */
+.sheep-bleating .sheep-baa { animation: sheep-baa-puff 1.05s ease-out infinite; }
+@keyframes sheep-rear {
+  0%, 100% { transform: rotate(-7deg) translateY(0); }
+  35%      { transform: rotate(-14deg) translateY(-1.6px); }
+}
+@keyframes sheep-head-lift {
+  0%, 100% { transform: rotate(-30deg) translate(1px, -2.6px); }
+  35%      { transform: rotate(-52deg) translate(2px, -5px); }
+}
+@keyframes sheep-baa-puff {
+  0%   { opacity: 0; transform: translate(0, 0) scale(0.5); }
+  22%  { opacity: 0.95; }
+  100% { opacity: 0; transform: translate(-3px, -7px) scale(1.4); }
+}
+@keyframes sheep-halo-pulse {
+  0%, 100% { opacity: 0.42; }
+  50%      { opacity: 0.16; }
+}
+
+/* ── IDLE, SEEN — asleep on its feet, or rather off them ───────────────────
+   Legs tuck away entirely and the body settles onto the ground. It is the
+   only one of the four with no legs showing, which is what makes it
+   readable at 34px without reading colour at all. */
+.sheep-idle { --tint: var(--muted-foreground); opacity: 0.8; }
+.sheep-idle .sheep-legs { transform: scaleY(0.22); }
+.sheep-idle .sheep-body { transform: translateY(3px); }
+.sheep-idle .sheep-head { transform: rotate(26deg) translate(-0.5px, 1.5px); }
+.sheep-idle .sheep-eye { opacity: 0; }                 /* shut */
+.sheep-idle .sheep-tail { opacity: 0.75; }
+.sheep-idle .sheep-fleece circle { fill: color-mix(in srgb, var(--wool) 60%, var(--accent)); }
+.sheep-idle .sheep-zzz { opacity: 1; }
+.sheep-idle .sheep-zzz path { animation: sheep-zzz-drift 3s ease-out infinite; }
+.sheep-idle .sheep-zzz path:nth-child(2) { animation-delay: 1s; }
+.sheep-idle .sheep-zzz path:nth-child(3) { animation-delay: 2s; }
+@keyframes sheep-zzz-drift {
+  0%   { opacity: 0; transform: translate(2px, 4px) scale(0.55); }
+  25%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-4px, -6px) scale(1.15); }
+}
+
+/* The flock stays, the movement goes. The glyphs are static shapes rather
+   than pure motion precisely so the four states are still told apart here. */
+@media (prefers-reduced-motion: reduce) {
+  .sheep * { animation: none !important; }
+}
+
+/* ══ THE PANE CARD ═════════════════════════════════════════════════════════
+   Three rows at every width, in every layout:
+     1. the name      — up to three lines, then ellipsis
+     2. the path      — one line, losing characters off the FRONT
+     3. the info row  — agent mark, PR, dirty dot, time, and the sheep
+
+   Two things used to spend width for nothing and have been taken back:
+     · the agent logo had a ~30px left gutter reserved on EVERY row to hold a
+       13px mark on ONE. It now rides in the info row next to the PR — the
+       two are the same kind of fact ("what is driving this, and where did
+       the work go") — which gives the name the card's whole width.
+     · the timestamp owned the top-right corner, so the name could never run
+       full width. It moved into the info row, which was half empty.
+   Between them that is ~45px back on the name line; in a quad card at the
+   default 256px sidebar, roughly half of its usable text column. */
 .pane-card-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
   opacity: 0.92;
-  flex: 1;
   min-width: 0;
-  /* Two lines before it gives up. Names are how you tell one pen from
+  line-height: 1.28;
+  letter-spacing: -0.1px;
+  /* Three lines before it gives up. Names are how you tell one pen from
      another, and "release sheepit 0.2…" tells you less than the whole. */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  letter-spacing: -0.1px;
 }
 .pane-card-active .pane-card-name { opacity: 1; }
 
-.pane-card-time {
-  font-size: 10px;
-  color: var(--muted-foreground);
-  opacity: 0.6;
-  flex-shrink: 0;
-  font-family: "JetBrains Mono", monospace;
-  font-variant-numeric: tabular-nums;
-}
-.pane-card-active .pane-card-time { opacity: 0.85; }
-
-/* Row 2: current working directory (last path component) + relative time.
-   Dedicated row because the cwd is the ground-truth "what is this pane
-   working on" signal. Time lives here (instead of row 1) so the name row
-   can use the full card width — critical in quad layouts. */
-.pane-card-cwd-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
+/* One line, and it loses characters off the FRONT, not the back: the tail of
+   a path is the half that tells you which worktree you are looking at.
+   `direction: rtl` puts the ellipsis at the start; the <bdi> inside keeps the
+   text itself left-to-right, so you get "…/sheepit/ui", never "~/dev/sh".
+   The full path is in the row's title attribute. */
+.pane-card-cwd {
   font-size: 11px;
   font-family: "JetBrains Mono", monospace;
   color: var(--foreground);
-  opacity: 0.75;
-  min-width: 0;
+  opacity: 0.7;
   line-height: 1.3;
-}
-.pane-card-active .pane-card-cwd-row { opacity: 0.95; }
-.pane-card-cwd-text {
-  /* Never truncated: a path you cannot read is worse than a card one line
-     taller, and half a path is indistinguishable from a sibling worktree's. */
-  white-space: normal;
-  overflow-wrap: anywhere;
   min-width: 0;
-  flex: 1;
-}
-/* Time inside the cwd row hugs the right edge. Opacity ties it visually
-   to the cwd (secondary info) without competing with the name. */
-.pane-card-cwd-row .pane-card-time {
-  margin-left: auto;
-  opacity: 0.55;
-}
-
-/* Row 3: git branch + PR state */
-.pane-card-git {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  font-family: "JetBrains Mono", monospace;
-  opacity: 0.82;
-  min-width: 0;
-  line-height: 1.3;
-}
-.pane-card-git > span {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
 }
+.pane-card-active .pane-card-cwd { opacity: 0.92; }
+
+/* The info row is the heaviest of the three, because it is doing the most
+   work. margin-top:auto pins it to the card's bottom edge, so every card in
+   a pen lines its info up on the same baseline however long the names above
+   happen to be — which is what keeps a quad looking like a grid. */
+.pane-card-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 2px;
+  min-height: calc(var(--sheep-w, 42px) * 38 / 44);
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  min-width: 0;
+}
+.pane-card-pr { font-weight: 600; flex-shrink: 0; }
 .pane-card-dirty-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--warning);
   flex-shrink: 0;
 }
+.pane-card-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.pane-card-active .pane-card-time { opacity: 0.9; }
+/* Below this the info row cannot hold five things at once, so it sheds its
+   cheapest field rather than breaking the three-row rule. The row keeps its
+   height either way, so the card is still three rows. */
+@container (max-width: 128px) {
+  .pane-card-time { display: none; }
+}
 
 /* Tight mode — cards in horizontal/three/quad layouts get less horizontal
-   space. Shrink badge, font sizes, and padding proportionally, but keep
-   all 3 rows so every card looks consistent. The badge overhangs a bit
-   less in tight mode so it doesn't poke too far into neighbouring cards. */
+   space. Everything shrinks proportionally, but all three rows stay: a card
+   that drops a row in a quad stops matching its neighbours, and matching is
+   what makes a pen scannable. */
 .pane-card-tight {
-  padding: 6px 7px 6px 14px;
-  gap: 4px;
+  padding: 7px 9px 7px 10px;
+  gap: 3px;
 }
-.pane-card-tight .pane-card-badge {
-  top: -7px;
-  left: -7px;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-}
-.pane-card-tight .pane-card-row { gap: 5px; }
-.pane-card-tight .pane-card-name { font-size: 11px; }
-.pane-card-tight .pane-card-time { font-size: 9px; }
-.pane-card-tight .pane-card-cwd-row { font-size: 10px; gap: 5px; }
-.pane-card-tight .pane-card-git { font-size: 10px; gap: 5px; }
+.pane-card-tight .pane-card-name { font-size: 11.5px; }
+.pane-card-tight .pane-card-cwd { font-size: 10px; }
+.pane-card-tight .pane-card-info { font-size: 10px; gap: 5px; min-height: 15px; }
+.pane-card-tight .pane-card-time { font-size: 9.5px; }
 
 /* ── Pane drag-and-drop (move panes between workspaces) ───────────────────── */
 .pane-card-draggable { cursor: grab; }
@@ -1183,74 +1306,213 @@
    look (rounded square chip with a subtle dark surface and hairline border),
    but rendered inline at a larger size so the pane's identity reads at a
    glance from across the screen. */
+/* The agent's mark, sitting with the git info. It used to lead the bar as a
+   raised 24px chip with its own fill, border and drop shadow — appropriate
+   when it was the first thing you saw, wrong now that the sheep has that job.
+   It is a mark, not a control, so it is drawn at the same weight as the git
+   icon beside it: no box, nothing to click.
+
+   Losing the fill also fixes it in the light theme, where the hardcoded
+   #1b2018 plate was a dark square on a pale bar. */
 .pane-header-kind-badge {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: #1b2018;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--muted-foreground);
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.45),
-    0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+  transition: opacity 0.12s;
 }
-.pane-header-kind-badge-active {
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
-  box-shadow:
-    0 2px 8px rgba(156, 188, 127, 0.45),
-    0 0 0 1px rgba(156, 188, 127, 0.25);
-}
+.pane-header-kind-badge svg,
+.pane-header-kind-badge img { width: 14px; height: auto; }
+.pane-header-active .pane-header-kind-badge { opacity: 1; }
 
-.pane-footer-bar {
+/* ── The pane bar is two lines tall, always ────────────────────────────────
+   Not because it ran out of room — because the name has the path as its
+   subtitle. The path used to be its own field on the far right, competing
+   with the actions for the same edge; it belongs to the name ("which
+   sheepit is this one"), so it sits under it. That gives the bar a stable
+   two-line height, which is what lets the view switch come back up onto the
+   main row instead of being exiled to a second one.
+
+   Crucially the height does NOT change when the pane is selected. It used to
+   grow 30px → 34px on activation, which resized the terminal underneath and
+   left the bottom row of output clipped behind the pane's edge, because
+   xterm's fit does not always follow a 4px change. Selection is carried by
+   the background, the border and the ring — none of which move anything. */
+.pane-bar-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
-  min-height: 30px;
-  margin-top: 6px;
-  padding: 5px 11px 6px 12px;
-  border-top: 1px solid rgba(140, 148, 132, 0.16);
-  border-radius: 0 0 6px 6px;
-  background: var(--pane-chrome);
-  color: var(--muted-foreground);
-  font-size: 10px;
-  position: relative;
-  z-index: 1;
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
-  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  padding: 5px 8px 5px 8px;
+  font-size: 11px;
 }
-.pane-footer-bar-active {
-  border-top-color: rgba(156, 188, 127, 0.65);
-  background: var(--pane-chrome-active);
-  color: var(--foreground);
-  box-shadow: inset 0 -1px rgba(199, 217, 186, 0.10);
-}
-/* The cwd is the pane's "where am I" anchor, so it hangs off the right edge
-   of the bar rather than trailing the stats — same as in the design. */
-.pane-footer-identity {
+
+/* Name over path. It shrinks only as a last resort and never below a floor:
+   a bar showing a branch and no name tells you nothing about which pane you
+   are looking at. flex-shrink is 1 here against the branch chip's 999, so the
+   branch gives up its characters first. */
+.pane-bar-title-block {
   display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 72px;
+  flex: 0 1 auto;
+  flex-shrink: 1;
+  gap: 1px;
 }
+.pane-bar-title,
+.pane-bar-title-input {
+  display: block;
+  max-width: 260px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font: 600 12px/1.25 inherit;
+  letter-spacing: -0.1px;
+  color: var(--muted-foreground);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: -3px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.pane-header-active .pane-bar-title,
+.pane-header-active .pane-bar-title-input { color: var(--foreground); }
+.pane-bar-title:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border);
+}
+/* Renaming happens in place: the field is the label, same size and position,
+   so the text does not jump when you click it. */
+.pane-bar-title-input {
+  cursor: text;
+  outline: none;
+  background: var(--input);
+  border-color: var(--ring);
+  width: 260px;
+}
+
+/* ── One button style for the whole bar ────────────────────────────────────
+   The mic used to be a 28px pill with its own border and fill, while zen and
+   close were 22px bare glyphs — three controls sitting side by side in three
+   sizes. They are all this now, and the view-switch pill matches their height
+   so the right end of the bar reads as one row of controls. */
+.pane-bar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.pane-bar-btn:hover {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+.pane-bar-btn-danger:hover {
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+  border-color: color-mix(in srgb, var(--destructive) 40%, var(--border));
+}
+/* Mic, while it is listening. */
+.pane-bar-btn-on,
+.pane-bar-btn-on:hover {
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 16%, transparent);
+  border-color: color-mix(in srgb, var(--destructive) 45%, var(--border));
+}
+
+/* ── Everything else rides the right edge ──────────────────────────────────
+   margin-left:auto is what makes the bar END on the close button: the group
+   is pushed as far right as it will go and nothing after it can extend past,
+   however long the name or the branch happen to be. */
+.pane-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+/* The agent mark is the first of the right-hand group, so it takes the auto
+   margin: all the free space collects here and the mark, the git chip and the
+   controls travel to the right edge together. */
+.pane-header .pane-header-kind-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.pane-bar-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 1px;
+}
+
+/* The bar's queries measure the PANE, so the pane has to be the container.
+   This declaration was dropped in an earlier rewrite of this block, and the
+   container queries below silently matched nothing — the symptom was zen and
+   close being pushed off a narrow pane while the voice button and view
+   switch stayed. */
+.pane-header { container-type: inline-size; }
+
+/* ── What goes when a pane is genuinely too narrow ─────────────────────────
+   Text fields give ground by shrinking (the branch chip first, then the
+   title), but the controls cannot shrink — they are fixed-size buttons — so
+   below these widths they leave instead, cheapest first. Zen and close never
+   do: a pane you cannot close is the one failure mode worth designing
+   against, and it is the one the first two attempts at this bar shipped.
+
+   Keyed off the pane, not the viewport: a quad pane on a big screen is as
+   narrow as a single pane on a phone. */
+@container (max-width: 420px) { .pane-bar-voice { display: none; } }
+@container (max-width: 360px) {
+  .pane-bar-views,
+  /* both rules: with the switch gone there is nothing left to rule apart */
+  .pane-bar-divider { display: none; }
+}
+/* Last resort — below this the name gives up its floor too, but it is still
+   the widest thing left on the bar. */
+@container (max-width: 300px) { .pane-bar-title-block { min-width: 0; } }
+
+/* The cwd, as the name's subtitle. */
+.pane-bar-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+/* Kept outside .pane-bar-actions and first to give ground. It used to carry
+   the branch NAME, which made it the only arbitrary-length thing on the bar;
+   inside a flex-shrink:0 group that name was immovable and it crushed the
+   title to nothing. The name is gone from here now (see StatChips.tsx), so
+   the chip is near fixed-width — but the shrink priority stays, because git
+   info is still the field the title should be allowed to win against. */
 .stat-chips {
   display: flex; align-items: center; gap: 6px;
-  min-width: 0; flex-shrink: 1; overflow: hidden;
+  min-width: 0; flex: 0 999 auto; overflow: hidden;
+  font-size: 10px;
+  white-space: nowrap;
 }
 /* The one handle left from the old cpu/mem/urls cluster: it opens the process
    list and the detected-link list, and only renders when one of them has
    something in it. */
-.pane-footer-more {
+.pane-bar-more {
   display: flex; align-items: center; justify-content: center;
   width: 18px; height: 16px; flex-shrink: 0;
   border: none; border-radius: 4px;
@@ -1259,32 +1521,29 @@
   opacity: 0.65;
   transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
-.pane-footer-more:hover {
+.pane-bar-more:hover {
   opacity: 1; color: var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
 }
-.pane-footer-path {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.pane-bar-path {
+  min-width: 0; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--muted-foreground); font-family: "JetBrains Mono", monospace; font-size: 10px;
+  opacity: 0.85;
   background: none; border: none; padding: 0; cursor: pointer; text-align: left;
 }
-.pane-footer-path:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
-.pane-footer-path-popover {
-  position: absolute; left: 10px; bottom: calc(100% + 6px); z-index: 30;
+.pane-bar-path:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+/* Drops DOWN now, not up: the bar it hangs off is at the top of the pane. */
+.pane-bar-path-popover {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 30;
   max-width: min(680px, calc(100vw - 32px)); padding: 7px 10px;
   color: var(--foreground); background: var(--popover); border: 1px solid rgba(156, 188, 127, 0.35);
   box-shadow: 0 8px 24px rgba(0,0,0,0.38); font: 10px "JetBrains Mono", monospace;
   white-space: normal; overflow-wrap: anywhere;
 }
-
-:root[data-theme='light'] .pane-footer-bar {
-  border-top-color: color-mix(in srgb, var(--primary) 28%, var(--border));
-  background: linear-gradient(180deg, #f8fbf2, #eff4e8);
-  box-shadow: 0 -5px 12px rgba(17, 20, 17, 0.08), inset 0 1px rgba(255,255,255,0.85);
-}
-:root[data-theme='light'] .pane-footer-path { color: var(--muted-foreground); }
-:root[data-theme='light'] .pane-footer-path:hover { color: var(--primary); }
-:root[data-theme='light'] .pane-footer-path-popover {
+:root[data-theme='light'] .pane-bar-path { color: var(--muted-foreground); }
+:root[data-theme='light'] .pane-bar-path:hover { color: var(--primary); }
+:root[data-theme='light'] .pane-bar-path-popover {
   color: var(--foreground); background: var(--popover); border-color: var(--border);
   box-shadow: 0 8px 24px rgba(17, 20, 17,0.16);
 }
@@ -1483,6 +1742,9 @@
 .workspace-title-row {
   display: flex; align-items: center; gap: 2px;
   min-width: 0; margin-bottom: 3px;
+  /* Sits above the fence now, so it lines up with the gatepost rather than
+     with the sidebar's edge. */
+  padding-left: 6px;
 }
 .workspace-title {
   /* Takes the slack so the favourite star stays at the right edge. The pane
@@ -1544,6 +1806,11 @@
   to   { opacity: 1; transform: scale(1); }
 }
 .terminal-pane { position: absolute; inset: 0; padding: 12px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111411; }
+/* Zen trims the terminal's own inset too. In a grid the 12px keeps a pane's
+   text off its neighbours; alone on the screen there is no neighbour to keep
+   it off, and every row of it is a row of output. */
+.pane-zen .terminal-pane { padding: 8px 12px; }
+.pane-zen .terminal-pane > .xterm { padding: 4px 0; }
 .terminal-pane > .xterm {
   /* Keep the first and last terminal rows off the pane edges. The outer
      container padding alone is consumed by FitAddon's measured viewport. */
@@ -1581,7 +1848,41 @@
 /* touch-action: none lets JS handlers (and xterm's own) fully control touch on the canvas overlay. */
 .terminal-pane .xterm-screen  { touch-action: none; }
 
-/* ── Terminal grid resize handles ──────────────────────────────────────────── */
+/* The pane's own sheep, in its header. The sidebar's is 32px because a pen
+   card has nothing to spare; here it is big enough that the head, the ear and
+   the posture all read, which is what the animal was drawn for.
+
+   ONE size, selected or not. It used to grow to 42px on the active pane,
+   which changed the bar's height and so resized the terminal under it — and
+   xterm's fit does not always follow, which is how the bottom row of output
+   ended up clipped behind the pane's edge. Nothing in this bar may change
+   size with selection. */
+.pane-header .sheep { width: 38px; height: 33px; flex-shrink: 0; margin: 0 1px 0 -2px; }
+
+/* ── The workspace is the pen you are standing in ──────────────────────────
+   The same canvas fence the sidebar draws around its rows, drawn around the
+   terminal grid — same painter, same wood, same gate, just far wider (see
+   PenFence.tsx, and TerminalGrid.tsx for the seed). The padding is what
+   keeps the panes clear of the rails and their posts. */
+.workspace-pen { padding: 15px 17px 21px 17px; }  /* deeper below: grass */
+.workspace-fence {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+/* ── Terminal grid resize handles = the pen's interior rails ────────────────
+   The splits between panes are the fence *inside* the pen, so they read as
+   rail-and-picket rather than as a coloured bar. Straight lines evenly
+   spaced is the one thing CSS gradients are genuinely good at, and it is
+   also the right look here: an interior rail that sagged would be wrong, and
+   a canvas could not know where the user has dragged the split to anyway.
+
+   The drag affordance survives — hovering or dragging swaps the wood for the
+   brand gradient, so the handle still announces itself as a handle. */
 .terminal-resize-handle {
   flex-shrink: 0;
   background: transparent;
@@ -1592,30 +1893,39 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--primary-gradient);
-  transition: box-shadow 0.15s, filter 0.15s;
+  opacity: 0.55;
+  transition: opacity 0.15s, filter 0.15s;
 }
 .terminal-resize-handle:hover::before,
 .terminal-resize-handle[data-separator="enabled"]:active::before,
 .terminal-resize-handle[data-resize-handle-active]::before {
-  filter: brightness(1.25);
+  opacity: 1;
+  background: var(--primary-gradient) !important;
+  filter: brightness(1.15);
   box-shadow: 0 0 8px var(--primary);
 }
 .terminal-resize-handle-horizontal {
-  width: 8px;
+  width: 12px;
   cursor: col-resize;
 }
+/* A vertical rail with pickets crossing it. The ::before fills the handle —
+   an earlier version inset it by 4px each side, which left a 2px-wide box and
+   clipped every picket down to nothing. */
 .terminal-resize-handle-horizontal::before {
-  left: 3px;
-  right: 3px;
+  background:
+    repeating-linear-gradient(0deg, var(--fence) 0 1.6px, transparent 1.6px 26px)
+      50% 9px / 11px 100% no-repeat,
+    linear-gradient(var(--fence) 0 0) 50% 0 / 1.1px 100% no-repeat;
 }
 .terminal-resize-handle-vertical {
-  height: 8px;
+  height: 12px;
   cursor: row-resize;
 }
 .terminal-resize-handle-vertical::before {
-  top: 3px;
-  bottom: 3px;
+  background:
+    repeating-linear-gradient(90deg, var(--fence) 0 1.6px, transparent 1.6px 26px)
+      9px 50% / 100% 11px no-repeat,
+    linear-gradient(var(--fence) 0 0) 0 50% / 100% 1.1px no-repeat;
 }
 
 /* ── Split pane header ──────────────────────────────────────────────────────── */

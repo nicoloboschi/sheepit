@@ -29,6 +29,8 @@ function compactRelativeTime(ts: number | null | undefined): string {
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
 }
+import SheepStatus, { type SheepState } from './SheepStatus';
+import PenFence from './PenFence';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
 import OpenCodeIcon from './OpenCodeIcon';
@@ -41,37 +43,6 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from './ui/dropdown-menu';
 
-/** Truncate branch names smartly, preserving prefix and last hyphenated segment(s).
- *  "fix/retain-deadlock-prevention" → "fix/…deadlock-prevention"
- *  "feature/long-name-here"        → "feature/…name-here"
- */
-function truncateBranch(branch: string, maxLen = 22): string {
-  if (branch.length <= maxLen) return branch;
-  const slashIdx = branch.indexOf('/');
-  if (slashIdx > 0 && slashIdx < branch.length - 1) {
-    const prefix = branch.slice(0, slashIdx + 1); // e.g. "fix/"
-    const suffix = branch.slice(slashIdx + 1);     // e.g. "retain-deadlock-prevention"
-    const budget = maxLen - prefix.length - 1;      // chars available after "fix/…"
-    if (budget > 6) {
-      // Walk hyphen-separated segments from the end until we fill the budget
-      const parts = suffix.split('-');
-      let tail = '';
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const candidate = i < parts.length - 1 ? parts[i] + '-' + tail : parts[i]!;
-        if (candidate.length <= budget) {
-          tail = candidate;
-        } else {
-          break;
-        }
-      }
-      if (tail && tail !== suffix) {
-        return prefix + '\u2026' + tail;
-      }
-    }
-  }
-  // Fallback: keep the end
-  return '\u2026' + branch.slice(-(maxLen - 1));
-}
 
 const PR_STATE_COLORS: Record<string, string> = {
   OPEN: 'var(--primary)', MERGED: '#B79CCA', CLOSED: 'var(--destructive)',
@@ -193,6 +164,13 @@ function PaneCard({
   const hasCwd = !!cwd;
   const hasPr  = !!session?.prNum;
   const prColor = session?.prNum ? (PR_STATE_COLORS[session.prState ?? ''] ?? 'var(--muted-foreground)') : '';
+  // Precedence, per CLAUDE.md: the two live states win over the two idle
+  // ones, and bleating wins over grazing, so a pane is never counted twice.
+  const sheepState: SheepState =
+    needsAttention ? 'bleating'
+      : busy ? 'grazing'
+      : unseen ? 'unread'
+      : 'idle';
 
   // ── dnd-kit useSortable ────────────────────────────────────────────────
   // PaneCards are sortable items inside a SortableContext rendered by their
@@ -254,51 +232,46 @@ function PaneCard({
           .join(' · ')
       }
     >
-      {/* Session-kind "chip" tucked into the top-left corner. Replaces the
-          inline row-1 icon and lets every row start at the same X so the
-          card reads as a clean aligned column. */}
-      <span className="pane-card-badge" aria-hidden>
-        <PaneIcon kind={kind} size={tight ? 11 : 13} />
-      </span>
-      <div className="pane-card-row">
-        <span className="pane-card-name">{name}</span>
-        <span
-          className="pane-card-activity"
-          aria-label={
-            needsAttention ? 'Sheep is bleating — it wants your input'
-              : busy ? 'Sheep is grazing — a command is running'
-              : unseen ? 'Pane is idle, with output you have not read'
-              : 'Pane is idle'
-          }
-          title={
-            needsAttention ? 'Bleating — waiting for your input'
-              : busy ? 'Grazing — a command is running'
-              : unseen ? 'Idle — finished, and you have not read it yet'
-              : 'Idle'
-          }
-        />
-      </div>
-      {(hasCwd || time) && (
-        <div className="pane-card-cwd-row" title={session?.path}>
-          <span className="pane-card-cwd-text">{hasCwd ? cwd : ''}</span>
-          {time && <span className="pane-card-time">{time}</span>}
+      {/* Three rows, at every width, in every layout:
+            1. the name  — up to three lines, then ellipsis
+            2. the path  — one line, losing characters off the FRONT
+            3. the info row — agent mark, PR, dirty dot, time, and the sheep
+          The sheep is the last item IN the info row rather than floating
+          over the card's corner: floating it meant every row above had to
+          reserve a gutter for it, and at quad width that gutter ate the path
+          down to "…ell". In the row it costs nothing above it, and the name
+          and path each get the card's full width.
+
+          The info row is pushed to the bottom by margin-top:auto, so every
+          card in a pen lines its info up on the same baseline however long
+          the names above happen to be. */}
+      <span className="pane-card-name" title={name}>{name}</span>
+      {hasCwd && (
+        <div className="pane-card-cwd" title={session?.path}>
+          {/* <bdi> keeps the path itself left-to-right while the box stays
+              RTL, which is what puts the ellipsis at the START: you get
+              "…/sheepit/ui", never "~/dev/sh". The tail of a path is the
+              half that tells you which worktree you are looking at. */}
+          <bdi>{cwd}</bdi>
         </div>
       )}
-      {/* Branch dropped: it repeated what the path already says for a
-          worktree-per-branch layout, and cost a whole row to do it. The PR
-          number stays — that is the thing you cannot infer from anywhere else
-          on the card. The dirty dot rides along with it. */}
-      {hasPr && (
-        <div className="pane-card-git">
+      <div className="pane-card-info">
+        <span className="pane-card-badge" aria-hidden>
+          <PaneIcon kind={kind} size={tight ? 12 : 13} />
+        </span>
+        {hasPr && (
           <span
-            style={{ color: prColor, flexShrink: 0, fontWeight: 600 }}
+            className="pane-card-pr"
+            style={{ color: prColor }}
             title={`PR #${session!.prNum} ${session!.prState?.toLowerCase() ?? ''}`}
           >
             #{session!.prNum}
           </span>
-          {session!.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
-        </div>
-      )}
+        )}
+        {session?.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
+        {time && <span className="pane-card-time">{time}</span>}
+        <SheepStatus state={sheepState} />
+      </div>
     </div>
   );
 }
@@ -467,25 +440,16 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
   const cwd = cwdBasename(session?.path);
   return (
     <div className="pane-card pane-card-overlay" title={session.name}>
-      <span className="pane-card-badge" aria-hidden>
-        <PaneIcon kind={kind} size={13} />
-      </span>
-      <div className="pane-card-row">
-        <span className="pane-card-name">{session.name}</span>
+      <span className="pane-card-name">{session.name}</span>
+      {cwd && <div className="pane-card-cwd"><bdi>{cwd}</bdi></div>}
+      <div className="pane-card-info">
+        <span className="pane-card-badge" aria-hidden>
+          <PaneIcon kind={kind} size={13} />
+        </span>
+        {session.prNum && <span className="pane-card-pr">#{session.prNum}</span>}
+        {session.gitDirty && <span className="pane-card-dirty-dot" />}
+        <SheepStatus state="idle" />
       </div>
-      {cwd && (
-        <div className="pane-card-cwd-row">
-          <span className="pane-card-cwd-text">{cwd}</span>
-        </div>
-      )}
-      {session.gitBranch && (
-        <div className="pane-card-git">
-          <span style={{ minWidth: 0, color: session.gitDirty ? 'var(--warning)' : 'var(--muted-foreground)' }}>
-            {truncateBranch(session.gitBranch, 22)}
-            {session.gitDirty && <span className="pane-card-dirty-dot" />}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
@@ -599,6 +563,14 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
     }
   }, [renaming]);
 
+  // The fence's jitter is seeded from the workspace id, so a pen keeps the
+  // same fence across re-renders, reorders and reloads.
+  const fenceSeed = (() => {
+    let h = 0;
+    for (let i = 0; i < workspace.id.length; i++) h = (h * 31 + workspace.id.charCodeAt(i)) | 0;
+    return Math.abs(h) % 997;
+  })();
+
   const cellIds = workspace.cells;
   const cellCount = cellIds.length;
   const isFull = cellCount >= 4;
@@ -679,7 +651,9 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
             )}
           </div>
         )}
-        <PaneGrid
+        <div className="pen-body">
+          <PenFence seed={fenceSeed} active={isActive} />
+          <PaneGrid
           gridId={workspace.id}
           layout={workspace.layout}
           cellIds={cellIds}
@@ -691,7 +665,8 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
             onConnect(workspace.id);
             useStore.getState().setActivePane(workspace.id, cellIdx);
           }}
-        />
+          />
+        </div>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
