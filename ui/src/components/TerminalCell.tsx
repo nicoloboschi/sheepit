@@ -7,8 +7,6 @@ import { useDroppable } from '@dnd-kit/core';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
-import VoiceInputButton from './VoiceInputButton';
-import StatChips from './StatChips';
 import GitDiffPane from './GitDiffPane';
 import FilesPane from './FilesPane';
 import { TERMINAL_THEMES } from '../theme';
@@ -225,7 +223,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
   const theme = useStore(s => s.theme);
-  const session = useStore(s => s.sessionMap[sessionId]);
   const isMultiPane = useStore(s => {
     const ws = s.workspaces[gridId];
     return !!ws && ws.layout !== 'single' && ws.cells.length > 1;
@@ -327,7 +324,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   const pendingResetRef = useRef(false);
   const mountedRef = useRef(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [showFullPath, setShowFullPath] = useState(false);
   /** File-drop state — TerminalCell only handles native file drops via the
    *  HTML5 drag-and-drop API now. Pane drops go through dnd-kit (see
    *  `useDroppable` below) which is a separate event stream and doesn't
@@ -1264,11 +1260,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       )}
       <div
         ref={setPaneDropRef}
-        className={isZen ? '' : 'flex-1 min-h-0 min-w-0'}
+        className={isZen ? 'pane-zen' : 'flex-1 min-h-0 min-w-0'}
         style={{
           position: isZen ? 'fixed' : 'relative',
           ...(isZen ? {
-            inset: '40px',
+            // Zen is for reading one pane, so most of the window should be
+            // pane — but it still has to read as an overlay floating over the
+            // grid, not as a mode that replaced it. 40px was too much
+            // backdrop (~11% of a 1440px screen's width); 12px was too little
+            // to see it was an overlay at all. This is the middle.
+            inset: '24px',
             zIndex: 1000,
             borderRadius: 4,
             padding: 2,
@@ -1518,32 +1519,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         }} />
       )}
       </div>{/* /pane body */}
-      <div
-        className={`pane-footer-bar${isActive ? ' pane-footer-bar-active' : ''}`}
-        onClick={e => e.stopPropagation()}
-      >
-        {isActive && <VoiceInputButton sessionId={sessionId} />}
-        <StatChips sessionId={sessionId} send={sharedWs.send} />
-        <div className="pane-footer-identity">
-          {session?.path && (
-            <>
-              <button
-                type="button"
-                className="pane-footer-path"
-                title="Show full absolute path"
-                onClick={() => setShowFullPath(value => !value)}
-              >
-                {session.path.replace(/^\/Users\/[^/]+/, '~')}
-              </button>
-              {showFullPath && (
-                <div className="pane-footer-path-popover" onClick={e => e.stopPropagation()}>
-                  {session.path}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
+      {/* The pane's footer bar is gone: its identity — git chip, process /
+          link handle, voice button, cwd — moved into PaneHeader. Two chrome
+          bars cost ~70px of vertical space per pane to carry one line each,
+          and vertical rows are what terminal content is short of. */}
       </div>{/* /inner wrapper */}
       </div>{/* /outer wrapper */}
     </>

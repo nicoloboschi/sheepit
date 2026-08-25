@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, ChevronDown, X, Maximize2, Minimize2, FolderOpen, Columns2 } from 'lucide-react';
+import { SquareTerminal, X, Maximize2, Minimize2, FolderOpen, Columns2 } from 'lucide-react';
 import useStore from '../store';
+import SheepStatus, { type SheepState } from './SheepStatus';
+import StatChips from './StatChips';
+import VoiceInputButton from './VoiceInputButton';
+import * as sharedWs from '../sharedWs';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
 import OpenCodeIcon from './OpenCodeIcon';
@@ -8,7 +12,6 @@ import AntigravityIcon from './AntigravityIcon';
 import GitHubCopilotIcon from './GitHubCopilotIcon';
 import GrokIcon from './GrokIcon';
 import CursorIcon from './CursorIcon';
-import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 /** Append U+FE0E (text presentation selector) so browsers don't color-swap symbols as emoji. */
 const forceTextPresentation = (s: string) =>
@@ -33,17 +36,23 @@ interface PaneHeaderProps {
   onViewChange?: (view: 'terminal' | 'split' | 'working' | 'files' | 'log') => void;
 }
 
-/** Shared style for small icon buttons in the header row. */
-const iconBtnStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  width: 18, height: 18, borderRadius: 4,
-  background: 'none', border: 'none', cursor: 'pointer',
-  color: 'var(--muted-foreground)', flexShrink: 0,
-  transition: 'color 0.15s',
-};
 
 export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive, isGridRoot, onClose, view, onViewChange }: PaneHeaderProps) {
   const session     = useStore(s => s.sessionMap[sessionId]);
+  // The pane's own sheep, in the same four states and the same precedence as
+  // the sidebar's — bleating over grazing, live over idle. There is room for
+  // a bigger animal here than in a pen card, which is the point: the head
+  // actually reads, and the status is where you are already looking.
+  const busy           = useStore(s => !!s.sessionBusy[sessionId]);
+  const needsAttention = useStore(s => !!s.sessionNeedsAttention[sessionId]);
+  const unseen         = useStore(s => !!s.sessionHasUnseen[sessionId]);
+  const sheepState: SheepState =
+    needsAttention ? 'bleating'
+      : busy ? 'grazing'
+      : unseen ? 'unread'
+      : 'idle';
+  // Moved up from the old footer bar along with the path itself.
+  const [showFullPath, setShowFullPath] = useState(false);
   const showConfirm = useStore(s => s.showConfirm);
   const isZen       = useStore(s => s.zenSessionId === sessionId);
   const toggleZen   = useStore(s => s.toggleZen);
@@ -102,15 +111,75 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
       }}
     >
-      {/* Row 1: identity + actions */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: isActive ? '7px 10px 6px 8px' : '6px 10px 5px 8px',
-        minHeight: isActive ? 34 : 30, minWidth: 0,
-        fontSize: isActive ? 12 : 11,
-        transition: 'padding 0.15s ease, min-height 0.15s ease, font-size 0.15s ease',
-      }}>
-        {/* Session kind icon */}
+      {/* The pane bar. Two lines tall, always: the identity block on the
+          left stacks the name over its path, and everything else is centred
+          against it on the right. Same height active or not — see the note
+          on .pane-bar-row in style.css for why that matters. */}
+      <div className="pane-bar-row">
+        {/* The sheep leads the bar. It is the pane's status, and status is
+            what you scan a wall of panes for — the agent's logo is not, since
+            you already know what you started. The two swapped places. */}
+        <SheepStatus state={sheepState} />
+
+        {/* ── Identity: the name, with the path as its subtitle ──────────
+            The path used to be a separate field on the far right of the bar,
+            competing with the actions for the same edge. It belongs to the
+            name — "which sheepit is this one" — so it sits under it as a
+            subtitle, and the two together make the bar two lines tall
+            without anything having to wrap. */}
+        <div className="pane-bar-title-block">
+          {editing ? (
+            /* Inline, not a popover. Renaming a pane is a one-field edit; a
+               280px dialog to hold one input was three clicks of ceremony
+               for a thing you can type over in place. */
+            <input
+              ref={inputRef}
+              className="pane-bar-title-input"
+              value={draftName}
+              onChange={e => setDraftName(e.target.value)}
+              onBlur={commitRename}
+              onClick={e => e.stopPropagation()}
+              onKeyDown={e => {
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+              }}
+            />
+          ) : (
+            <button
+              className="pane-bar-title"
+              title="Click to rename"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDraftName(session.name ?? '');
+                setEditing(true);
+              }}
+            >
+              {forceTextPresentation(session.name ?? '')}
+            </button>
+          )}
+          {session.path && (
+            <div className="pane-bar-identity">
+              <button
+                type="button"
+                className="pane-bar-path"
+                title="Show full absolute path"
+                onClick={(e) => { e.stopPropagation(); setShowFullPath(v => !v); }}
+              >
+                {session.path.replace(/^\/Users\/[^/]+/, '~')}
+              </button>
+              {showFullPath && (
+                <div className="pane-bar-path-popover" onClick={e => e.stopPropagation()}>
+                  {session.path}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* The agent's mark sits with the git info rather than leading the
+            bar — what is driving this pane and what it is pushing to are the
+            same kind of fact, and neither is what you scan for. */}
         <span className={`pane-header-kind-badge${isActive ? ' pane-header-kind-badge-active' : ''}`}>
           {session.isClaudeCode ? <ClaudeIcon size={15} />
             : session.isCodex    ? <OpenAIIcon size={15} />
@@ -122,75 +191,21 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             : <SquareTerminal size={15} />}
         </span>
 
-        {/* Session name popover — rename */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 3,
-                background: 'none', border: 'none', cursor: 'pointer',
-                padding: '1px 4px', borderRadius: 3,
-                color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
-                fontSize: isActive ? 12 : 11,
-                fontFamily: 'inherit', flexShrink: 0,
-                fontWeight: isActive ? 600 : 400,
-                transition: 'font-size 0.15s ease',
-              }}
-              className="hover:bg-white/5"
-              title="Session info"
-            >
-              <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {forceTextPresentation(session.name ?? '')}
-              </span>
-              <ChevronDown size={9} style={{ opacity: 0.4, flexShrink: 0 }} />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent side="bottom" align="start">
-            <div style={{ width: 280, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 9, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, opacity: 0.6 }}>
-                  Session name
-                </div>
-                {editing ? (
-                  <input
-                    ref={inputRef}
-                    value={draftName}
-                    onChange={e => setDraftName(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                      if (e.key === 'Escape') setEditing(false);
-                    }}
-                    style={{
-                      fontSize: 12, color: 'var(--foreground)', background: 'var(--input)',
-                      border: '1px solid var(--ring)', borderRadius: 4, padding: '3px 8px',
-                      outline: 'none', fontFamily: 'inherit', width: '100%',
-                    }}
-                  />
-                ) : (
-                  <button
-                    onClick={() => { setDraftName(session.name ?? ''); setEditing(true); }}
-                    className="hover:bg-white/5"
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      fontSize: 12, color: 'var(--foreground)', background: 'none',
-                      border: '1px solid transparent', borderRadius: 4, padding: '3px 8px',
-                      cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                    title="Click to rename"
-                  >
-                    {forceTextPresentation(session.name ?? '')}
-                  </button>
-                )}
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
+        {/* Branch / PR sits OUTSIDE the action cluster, because it is the one
+            thing here made of arbitrary-length text. Inside a flex-shrink:0
+            group a long branch name is unshrinkable, and it crushed the title
+            block — the most important field on the bar — down to nothing. */}
+        <StatChips sessionId={sessionId} send={sharedWs.send} />
 
-        <div style={{ flex: 1 }} />
-
-        {/* Per-pane view switch — terminal / git / files, scoped to this pane. */}
+        {/* Three groups, ruled apart: what this pane is connected to (agent
+            mark, git, links), what it is showing (the view switch), and what
+            you can do to it (mic, zen, close). */}
+        <div className="pane-bar-actions">
+        {/* Per-pane view switch — terminal / git / files, scoped to this pane.
+            Shed on a very narrow pane; see the container queries in style.css.
+            Its leading divider goes with it, or a pane without a view switch
+            would show two rules in a row. */}
+        {onViewChange && <div className="pane-bar-divider" />}
         {onViewChange && (
           // Top-level switch: Terminal vs. the unified Git view. The Git view's
           // own Working / Files / Git Log sub-switcher lives inside it.
@@ -198,8 +213,9 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           // on top of the terminal, and a solid brand fill up here shouts over
           // the content it is framing.
           <div
+            className="pane-bar-views"
             style={{
-              display: 'flex', alignItems: 'center', flexShrink: 0,
+              display: 'flex', alignItems: 'center', flexShrink: 0, height: 22,
               background: 'rgba(255,255,255,0.05)',
               border: '1px solid var(--border)', borderRadius: 7, overflow: 'hidden',
             }}
@@ -225,7 +241,7 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
                 }}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 26, height: 20,
+                  width: 26, height: 22,
                   background: active ? 'color-mix(in srgb, var(--primary) 22%, transparent)' : 'none',
                   border: 'none',
                   borderRight: id !== 'git' ? '1px solid var(--border)' : 'none',
@@ -238,18 +254,20 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             ))}
           </div>
         )}
+        {/* Divider separating the view-switch pill from the button cluster. */}
+        <div className="pane-bar-divider" />
 
-        {/* Divider separating the view-switch pill from the action icons. */}
-        <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0, margin: '0 1px' }} />
+        {isActive && (
+          <span className="pane-bar-voice">
+            <VoiceInputButton sessionId={sessionId} />
+          </span>
+        )}
 
         {/* Zen toggle — enters/exits distraction-free fullscreen */}
         <button
           onClick={(e) => { e.stopPropagation(); toggleZen(sessionId); }}
           title={isZen ? 'Exit zen mode' : 'Zen mode (fullscreen)'}
-          className="hover:bg-white/5"
-          style={iconBtnStyle}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--primary)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-foreground)'; }}
+          className="pane-bar-btn"
         >
           {isZen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
         </button>
@@ -259,13 +277,11 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         <button
           onClick={handleClose}
           title={isZen ? 'Exit zen mode' : 'Close pane'}
-          className="hover:bg-white/5"
-          style={iconBtnStyle}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--destructive)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-foreground)'; }}
+          className="pane-bar-btn pane-bar-btn-danger"
         >
           <X size={12} />
         </button>
+        </div>{/* /.pane-bar-actions */}
       </div>
 
     </div>

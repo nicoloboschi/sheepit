@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Loader2 } from 'lucide-react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import TerminalCell from './TerminalCell';
+import PenFence from './PenFence';
 import useStore, { layoutCapacity } from '../store';
 import * as sharedWs from '../sharedWs';
 import { preferences } from '../preferences';
@@ -166,6 +167,14 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
   useEffect(() => {
     onLayoutReady?.({ layout, changeLayout });
   }, [layout, changeLayout, onLayoutReady]);
+
+  // Seeded from the workspace id so the fence does not reshuffle its posts
+  // every time a pane goes busy or the grid re-renders.
+  const fenceSeed = (() => {
+    let h = 0;
+    for (let i = 0; i < workspaceId.length; i++) h = (h * 31 + workspaceId.charCodeAt(i)) | 0;
+    return Math.abs(h) % 997;
+  })();
 
   const onGroupLayoutChanged = useCallback((groupId: string) => (next: Record<string, number>) => {
     setSizes(prev => ({ ...prev, [groupId]: next }));
@@ -397,8 +406,17 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
     }
   };
 
+  // The workspace is the pen you are standing in, so it gets the same fence
+  // the sidebar draws around its rows — the same painter, the same wood, the
+  // same gate, just far wider. Its interior rails are the resize separators,
+  // which are drawn in CSS instead: they are straight by nature, and a canvas
+  // cannot know where the user has dragged them to.
+  //
+  // Skipped on mobile, where the grid is one full-screen pane behind a tab
+  // bar and a fence would only cost rows.
   return (
     <div
+      className="workspace-pen"
       style={{
         flex: 1,
         minHeight: 0,
@@ -406,10 +424,11 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        padding: layout === 'single' ? 0 : 8,
+        position: 'relative',
         background: 'var(--background)',
       }}
     >
+      {!isMobile && <PenFence seed={fenceSeed} active gate={44} className="workspace-fence" />}
       {renderLayout()}
     </div>
   );

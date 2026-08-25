@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GitBranch, GitCommitHorizontal, GitPullRequest, ArrowUp, ArrowDown, Github, GitFork, Loader2, CircleCheck, CircleX, Clock, ListTree } from 'lucide-react';
+import { GitBranch, GitCommitHorizontal, GitPullRequest, Github, GitFork, Loader2, CircleCheck, CircleX, Clock, ListTree } from 'lucide-react';
 import { useStats } from '../hooks/useStats';
 import { useGit, useGithubPR } from '../hooks/useGit';
 import useStore from '../store';
@@ -527,13 +527,14 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
           className="hover:bg-white/5"
           title="Git info"
         >
-          <GitBranch size={10} style={{ color: branchColor, flexShrink: 0 }} />
-          <span style={{ fontSize: 10, color: branchColor, fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block' }}>
-            {git.branch}
-          </span>
-          {git.dirty && <span style={{ fontSize: 8, color: '#D9B84A', fontWeight: 700 }}>{'\u25CF'}</span>}
-          {git.ahead  > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#9CBC7F' }}><ArrowUp size={8} strokeWidth={2.5} />{git.ahead}</span>}
-          {git.behind > 0 && <span style={{ display: 'flex', alignItems: 'center', fontSize: 9, color: '#E0907B' }}><ArrowDown size={8} strokeWidth={2.5} />{git.behind}</span>}
+          {/* The branch NAME is gone from the bar, and with it ahead/behind.
+              It was the only arbitrary-length string up here, so it set the
+              chip's width — and a long one squeezed the pane's title, which
+              matters more. The full branch, its counts and everything else
+              are one click away in the popover this icon opens, and the icon
+              still carries the dirty signal in its colour. The pen card in
+              the sidebar keeps the branch too. */}
+          <GitBranch size={11} style={{ color: branchColor, flexShrink: 0 }} />
           {topPr && topPr.num > 0 && (() => {
             const prState = github?.prState;
             const prColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
@@ -603,7 +604,7 @@ export default function StatChips({ sessionId, send }: StatChipsProps): React.Re
       <GitChip sessionId={sessionId} send={send} />
       <Popover>
         <PopoverTrigger asChild>
-          <button className="pane-footer-more" title={`This sheep: ${label}`}>
+          <button className="pane-bar-more" title={`This sheep: ${label}`}>
             <ListTree size={12} />
           </button>
         </PopoverTrigger>
