@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="ui/public/icon-192.png" alt="" width="88" height="88">
+  <img src="https://raw.githubusercontent.com/nicoloboschi/sheepit/main/ui/public/icon-192.png" alt="" width="88" height="88">
 </p>
 
 <h1 align="center">sheepit</h1>
@@ -9,12 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=kdWoWgU27VA">
-    <img src="https://img.youtube.com/vi/kdWoWgU27VA/maxresdefault.jpg" alt="Watch the sheepit demo" width="100%">
-  </a>
+  <img src="https://raw.githubusercontent.com/nicoloboschi/sheepit/main/docs/hero.webp" alt="sheepit: a sidebar of pens, each holding a flock of terminal sessions, beside a 2x2 grid of live shells" width="100%">
 </p>
 
-<p align="center"><a href="https://www.youtube.com/watch?v=kdWoWgU27VA">▶ Watch the demo on YouTube</a></p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=kdWoWgU27VA">▶ Watch the demo on YouTube</a>
+  <br>
+  <sub>Recorded before the rename, so it still says <em>vipershell</em> — same tool.</sub>
+</p>
 
 ## Quick Start
 
