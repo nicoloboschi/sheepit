@@ -79,6 +79,32 @@ const AI_DEFAULTS: AIConfig = {
   autoNamingIntervalSecs: 30,
 };
 
+/** What a session is called after `/clear` wiped its context.
+ *
+ *  `/clear` shears the session: everything it knew is gone. Leaving the old
+ *  AI-generated name on it is actively misleading — the pen card would still
+ *  advertise work the agent can no longer remember doing. */
+export const CLEARED_SESSION_NAME = 'freshly shorn';
+
+/** May the namer (re)name this session?
+ *
+ *  Yes when the name is still a default one nobody chose, and yes when this
+ *  service assigned the current name itself — but never when a human named it,
+ *  which is the whole point of the ownership check.
+ *
+ *  Pulled out of the sweep because the `/clear` reset depends on it in a way
+ *  that is easy to get wrong: CLEARED_SESSION_NAME is not a default, so a
+ *  cleared session is only renameable again because noteSessionCleared() also
+ *  claims ownership of it. */
+export function isRenameable(name: string, path: string | undefined, ownedName: string | undefined): boolean {
+  const basename = path?.split('/').filter(Boolean).pop() ?? 'shell';
+  const isDefaultName = name === basename
+    || (name.startsWith(`${basename}-`) && /^\d+$/.test(name.slice(basename.length + 1)))
+    || /^\d+$/.test(name)
+    || /^(shell|zsh|bash|fish|sh)$/.test(name);
+  return isDefaultName || ownedName === name;
+}
+
 export class AIService {
   private bridge: DirectBridge | null = null;
   private namingTimer: NodeJS.Timeout | null = null;
@@ -216,14 +242,7 @@ export class AIService {
       // manually renamed it to something that isn't on our books, leave it
       // alone. `direct-bridge.createSession` names duplicates "<basename>-2",
       // "<basename>-3", so those count as default too.
-      const basename = session.path?.split('/').filter(Boolean).pop() ?? 'shell';
-      const isDefaultName = session.name === basename
-        || (session.name.startsWith(`${basename}-`)
-            && /^\d+$/.test(session.name.slice(basename.length + 1)))
-        || /^\d+$/.test(session.name)
-        || /^(shell|zsh|bash|fish|sh)$/.test(session.name);
-      const weOwnCurrentName = this.aiAssignedName.get(session.id) === session.name;
-      if (!isDefaultName && !weOwnCurrentName) continue;
+      if (!isRenameable(session.name, session.path, this.aiAssignedName.get(session.id))) continue;
 
       this.inFlight.add(session.id);
       try {
@@ -233,6 +252,19 @@ export class AIService {
         this.lastNamed.set(session.id, Date.now());
       }
     }
+  }
+
+  /** `/clear` happened: forget everything we knew about naming this session.
+   *
+   *  Ownership matters more than it looks. The sweep only renames a session
+   *  whose name is a default OR one this service already assigned — so simply
+   *  renaming to CLEARED_SESSION_NAME would freeze it there forever, since
+   *  "freshly shorn" is neither. Claiming it here is what lets the next real
+   *  turn rename it again. */
+  noteSessionCleared(sessionId: string): void {
+    this.aiAssignedName.set(sessionId, CLEARED_SESSION_NAME);
+    // The pre-clear exchange must not be what the next name is derived from.
+    this.lastContentHash.delete(sessionId);
   }
 
   private async _nameSession(sessionId: string, provider: AIProvider): Promise<void> {

@@ -1,7 +1,7 @@
 {
   "name": "sheepit",
   "description": "Reports coding-agent state (busy / waiting / idle) and the last exchange to the sheepit session that owns this terminal, so panes light up the moment a turn ends and sessions are named from what was actually asked. Works with Claude Code and Codex.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": {
     "name": "Nicolò Boschi"
   }

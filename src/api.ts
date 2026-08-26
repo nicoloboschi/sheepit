@@ -10,6 +10,7 @@ import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
+import { CLEARED_SESSION_NAME } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -412,6 +413,32 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // installIntoClaude/installIntoCodex already log what they did, and the
       // response carries the verified after-state, so nothing to add here.
       res.json(await reinstallAgentPlugin());
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /**
+   * `/clear` wiped this agent's context, so the session's name is now a lie.
+   *
+   * Fired by a SessionStart hook matched on `clear`, which is why nothing here
+   * parses a payload: the matcher already decided, so the hook is a two-line
+   * shell POST rather than a node process.
+   *
+   * Three things have to happen together, and missing any one leaves the name
+   * wrong: rename it, drop the stored exchange (or the namer re-derives the
+   * name it just lost), and hand the AI namer ownership of the new name (or the
+   * sweep will refuse to touch a session it does not own, and "freshly shorn"
+   * becomes permanent).
+   */
+  router.post('/sessions/:id/cleared', async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!bridge.hasSession(id)) return res.status(404).json({ error: 'no such session' });
+      bridge.clearAgentTurn(id);
+      ai.noteSessionCleared(id);
+      await bridge.renameSession(id, CLEARED_SESSION_NAME);
+      res.json({ ok: true, name: CLEARED_SESSION_NAME });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

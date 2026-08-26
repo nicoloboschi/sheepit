@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# "This agent is working" — the one report that runs on every tool call.
+# A one-line POST to sheepit, for hook events whose body is fixed.
 #
 # The other four events (UserPromptSubmit / Stop / Notification / SessionEnd)
 # go through report-state.mjs, which parses the hook payload and reads the
@@ -14,7 +14,12 @@
 # no-ops an unchanged state — a stamp file here would have saved the ~2ms
 # request while leaving the interpreter spawn, which is 98% of the cost.
 #
-# Usage: busy-ping.sh <source> <event>
+# Usage: post.sh <endpoint-suffix> <json-body>
+#   post.sh agent-state '{"state":"busy","source":"claude","event":"PreToolUse"}'
+#   post.sh cleared      '{}'
+#
+# Both callers today are events where the hook matcher has already decided what
+# happened, so there is nothing to parse and no reason to pay for a runtime.
 #
 # Rule inherited from report-state.mjs and just as important here: never break
 # the agent, and never print anything. Every path exits 0.
@@ -37,8 +42,8 @@ fi
 # request. A server that is down, restarting or slow costs the turn nothing.
 curl -s -m 2 -o /dev/null -X POST \
   -H 'Content-Type: application/json' \
-  -d "{\"state\":\"busy\",\"source\":\"${1:-agent}\",\"event\":\"${2:-tool}\"}" \
-  "${URL%/}/api/sessions/${SHEEPIT_SESSION_ID}/agent-state" \
+  -d "${2:-\{\}}" \
+  "${URL%/}/api/sessions/${SHEEPIT_SESSION_ID}/${1:-agent-state}" \
   >/dev/null 2>&1 &
 
 exit 0

@@ -964,6 +964,18 @@ export class DirectBridge {
     return true;
   }
 
+  /** Is this a session we know about? */
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  /** Drop the stored exchange. Used when `/clear` wipes the agent's context:
+   *  the prompt and reply that are still sitting here describe work the agent
+   *  no longer remembers, and naming from them would resurrect the old name. */
+  clearAgentTurn(sessionId: string): void {
+    this.agentTurns.delete(sessionId);
+  }
+
   /** Last reported exchange, for naming. Undefined when the agent never
    *  reported one — a plain shell, or an agent without the plugin. */
   getAgentTurn(sessionId: string): AgentTurn | undefined {

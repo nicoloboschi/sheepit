@@ -1,6 +1,18 @@
 {
   "description": "Report agent state to sheepit. The four turn-level events go through report-state.mjs; the per-tool-call \"still working\" ping is a shell script, because a node spawn per tool call is not affordable.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/post.sh\" cleared '{}'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -17,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/busy-ping.sh\" claude PreToolUse",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/post.sh\" agent-state '{\"state\":\"busy\",\"source\":\"claude\",\"event\":\"PreToolUse\"}'",
             "timeout": 5
           }
         ]
@@ -28,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/busy-ping.sh\" claude PostToolUse",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/post.sh\" agent-state '{\"state\":\"busy\",\"source\":\"claude\",\"event\":\"PostToolUse\"}'",
             "timeout": 5
           }
         ]
