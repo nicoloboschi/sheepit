@@ -842,19 +842,28 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     return () => clearTimeout(id);
   }, [zoom]);
 
-  // Apply font-family changes — same shape as zoom, because a different family
-  // means different character metrics, so the grid has to be re-measured and
-  // the new cols/rows pushed to the PTY. The delay lets xterm remeasure with
-  // the font actually applied; without it the fit runs on the old cell size.
+  // Apply font-family changes. The explicit refresh is the whole trick, and it
+  // is why this cannot just copy the zoom effect: xterm's CharSizeService only
+  // fires onCharSizeChange when the measured cell *dimensions* change, and two
+  // monospace faces at the same px size usually measure identically. So a
+  // family swap alone leaves no dirty rows — the atlas is rebuilt underneath
+  // and the screen goes on showing the glyphs it already painted, which reads
+  // as the setting doing nothing at all. Changing fontSize always moves the
+  // metrics, which is why zoom gets away without this. The theme effect above
+  // repaints for the same reason.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     if (term.options.fontFamily === fontFamily) return;
     term.options.fontFamily = fontFamily;
+    // Refit first — where the metrics *do* move, the row count changes, and
+    // repainting before that would paint rows the grid is about to discard.
     const id = setTimeout(() => {
       safeFit();
       const t = termRef.current;
-      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      if (!t) return;
+      t.refresh(0, t.rows - 1);
+      sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
     }, 20);
     return () => clearTimeout(id);
   }, [fontFamily]);
