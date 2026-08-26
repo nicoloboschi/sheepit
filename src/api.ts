@@ -10,7 +10,7 @@ import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
-import { CLEARED_SESSION_NAME } from './ai.js';
+import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -424,21 +424,46 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    * Fired by a SessionStart hook matched on `clear`, which is why nothing here
    * parses a payload: the matcher already decided, so the hook is a two-line
    * shell POST rather than a node process.
-   *
-   * Three things have to happen together, and missing any one leaves the name
-   * wrong: rename it, drop the stored exchange (or the namer re-derives the
-   * name it just lost), and hand the AI namer ownership of the new name (or the
-   * sweep will refuse to touch a session it does not own, and "freshly shorn"
-   * becomes permanent).
    */
   router.post('/sessions/:id/cleared', async (req, res) => {
     try {
       const { id } = req.params;
+      const session = (await bridge.listSessions()).find(s => s.id === id);
+      if (!session) return res.status(404).json({ error: 'no such session' });
+
+      bridge.clearAgentTurn(id);
+      bridge.markSessionFresh(id);
+
+      // Never rename over a name a human chose — `/clear` wipes the agent's
+      // context, not the user's intent for what this pane is called.
+      const renamed = isRenameable(session.name, session.path, ai.assignedName(id));
+      if (renamed) {
+        ai.noteSessionCleared(id);
+        await bridge.renameSession(id, CLEARED_SESSION_NAME);
+      }
+      res.json({ ok: true, renamed, name: renamed ? CLEARED_SESSION_NAME : session.name });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /**
+   * A genuinely new agent session started in this pane.
+   *
+   * Same emptiness as after a `/clear`, but the name is left alone: a new
+   * session's pane is still called after its directory, which is accurate and
+   * more useful than announcing that it is empty. All this buys is the `fresh`
+   * flag — which stops the namer christening the session after whatever
+   * another plugin injected at startup, and lets the card show that the pane
+   * is waiting for you rather than done with something.
+   */
+  router.post('/sessions/:id/fresh', (req, res) => {
+    try {
+      const { id } = req.params;
       if (!bridge.hasSession(id)) return res.status(404).json({ error: 'no such session' });
       bridge.clearAgentTurn(id);
-      ai.noteSessionCleared(id);
-      await bridge.renameSession(id, CLEARED_SESSION_NAME);
-      res.json({ ok: true, name: CLEARED_SESSION_NAME });
+      bridge.markSessionFresh(id);
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

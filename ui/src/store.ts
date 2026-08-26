@@ -28,6 +28,8 @@ export interface Session {
   prUrl?: string;
   /** Background-only session; kept alive by the backend but not shown as a workspace. */
   isHeadless?: boolean;
+  /** No work in it yet: newly started, or just `/clear`ed. */
+  fresh?: boolean;
 }
 
 export interface ConfirmState {
@@ -604,7 +606,8 @@ const useStore = create<StoreState>((set, get) => ({
           && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
           && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
           && p.prNum === s.prNum && p.prState === s.prState
-          && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless;
+          && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless
+          && p.fresh === s.fresh;
       });
     if (workspacesUnchanged && sessionsUnchanged && nextCurrentId === prev.currentSessionId) return;
 

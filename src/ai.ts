@@ -265,6 +265,15 @@ export class AIService {
       if (now - lastTime < minInterval) continue;
       if (this.inFlight.has(session.id)) continue;
 
+      // A fresh session has had nothing asked of it yet, so there is nothing
+      // honest to name it after. This is not a nicety: another plugin's
+      // SessionStart hook injects context, the agent answers it, and Stop
+      // carries that answer to us as a turn — so a session cleared seconds ago
+      // would be christened after whatever that plugin happened to talk about.
+      // It stays as it is until a human asks it something, which is what
+      // clears the flag (see clearSessionFresh).
+      if ((session as { fresh?: boolean }).fresh) continue;
+
       // Eligibility: we touch a session's name only if it's still a default
       // shell-ish name, OR it currently matches a name we previously assigned
       // (so we can refresh it as the user's work evolves). If the user has
@@ -290,6 +299,11 @@ export class AIService {
    *  renaming to CLEARED_SESSION_NAME would freeze it there forever, since
    *  "freshly shorn" is neither. Claiming it here is what lets the next real
    *  turn rename it again. */
+  /** The name this service last assigned to a session, if any. */
+  assignedName(sessionId: string): string | undefined {
+    return this.aiAssignedName.get(sessionId);
+  }
+
   noteSessionCleared(sessionId: string): void {
     this.aiAssignedName.set(sessionId, CLEARED_SESSION_NAME);
     // The pre-clear exchange must not be what the next name is derived from.

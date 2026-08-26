@@ -11,6 +11,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/post.sh\" fresh '{}'",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

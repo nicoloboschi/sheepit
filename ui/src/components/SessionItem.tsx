@@ -213,6 +213,8 @@ function PaneCard({
         'pane-card',
         active && 'pane-card-active',
         unseen && 'pane-card-unseen',
+        // Nothing has been asked of this agent yet — see .pane-card-fresh.
+        session?.fresh && 'pane-card-fresh',
         busy ? 'pane-card-busy' : 'pane-card-idle',
         needsAttention && 'pane-card-needs-attention',
         tight && 'pane-card-tight',

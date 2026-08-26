@@ -920,6 +920,11 @@ export class DirectBridge {
       return true;
     }
 
+    // A prompt means a human asked for something, which is the only thing that
+    // ends freshness. Context injected by another plugin's SessionStart hook
+    // reaches us as a *response* with no prompt, so it cannot fake this.
+    if (turn?.prompt) this.freshSessions.delete(sessionId);
+
     // Merge rather than replace: the prompt arrives when the turn starts and
     // the response when it ends, so each report carries only half the pair.
     if (turn?.prompt || turn?.response) {
@@ -964,6 +969,29 @@ export class DirectBridge {
     return true;
   }
 
+  /** Sessions with no work in them yet: freshly started, or just `/clear`ed.
+   *
+   *  Kept separate from the busy/idle/waiting axis because it is a different
+   *  question. Those describe what the agent is doing; this describes whether
+   *  there is anything in the session at all. A cleared agent is idle AND
+   *  empty, and the difference matters — the pane is ready for you rather than
+   *  finished with something. */
+  private freshSessions = new Set<string>();
+
+  /** The agent has no context: new, or just cleared. */
+  markSessionFresh(sessionId: string): void {
+    this.freshSessions.add(sessionId);
+  }
+
+  /** Something real has been asked of it. */
+  clearSessionFresh(sessionId: string): void {
+    this.freshSessions.delete(sessionId);
+  }
+
+  isSessionFresh(sessionId: string): boolean {
+    return this.freshSessions.has(sessionId);
+  }
+
   /** Is this a session we know about? */
   hasSession(sessionId: string): boolean {
     return this.sessions.has(sessionId);
@@ -974,6 +1002,7 @@ export class DirectBridge {
    *  no longer remembers, and naming from them would resurrect the old name. */
   clearAgentTurn(sessionId: string): void {
     this.agentTurns.delete(sessionId);
+    this.freshSessions.delete(sessionId);
   }
 
   /** Last reported exchange, for naming. Undefined when the agent never
@@ -1369,7 +1398,8 @@ export class DirectBridge {
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
         last_activity: Math.floor(sess.createdAt / 1000),
-        busy: this.isSessionBusy(sess.id), isClaudeCode: procs?.isClaudeCode ?? false,
+        busy: this.isSessionBusy(sess.id), fresh: this.isSessionFresh(sess.id),
+        isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, ...git,
