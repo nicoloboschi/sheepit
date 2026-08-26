@@ -6,6 +6,7 @@ BACKEND_PORT=4445
 BACKEND_HOST=localhost
 UI_ONLY=0
 KEEP_DAEMON=0
+FRESH_DAEMON=0
 
 usage() {
   cat <<'USAGE'
@@ -14,9 +15,14 @@ Usage: ./dev.sh [options]
   --ui-only              Start only the Vite dev server, no backend. Use when a
                          backend is already running — another worktree, another
                          machine, or one you started by hand.
-  --keep-daemon          Reuse the running PTY daemon instead of replacing it.
-                         Keeps existing sessions alive, at the cost of running
-                         whatever pty-daemon.ts code that daemon started with.
+  --keep-daemon          Always reuse the running PTY daemon, even when its
+                         code is out of date. Never closes sessions.
+  --fresh-daemon         Always replace the running PTY daemon. Closes every
+                         open session.
+
+By default the daemon is replaced only when it is running code older than
+pty-daemon.ts on disk — so an ordinary restart keeps your sessions, and a
+daemon change still takes effect.
   --ui-port <port>       Vite dev server port (default: 4444)
   --backend-port <port>  Backend API/WebSocket port (default: 4445)
   --backend-host <host>  Host Vite proxies /api and /ws to (default: localhost)
@@ -66,6 +72,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --ui-only)      UI_ONLY=1; shift ;;
     --keep-daemon)  KEEP_DAEMON=1; shift ;;
+    --fresh-daemon) FRESH_DAEMON=1; shift ;;
     --ui-port)      need_value "$1" "${2-}"; need_port "$1" "$2"; UI_PORT="$2"; shift 2 ;;
     --backend-port) need_value "$1" "${2-}"; need_port "$1" "$2"; BACKEND_PORT="$2"; shift 2 ;;
     --backend-host) need_value "$1" "${2-}"; BACKEND_HOST="$2"; shift 2 ;;
@@ -82,23 +89,65 @@ fi
 # ── PTY daemon ───────────────────────────────────────────────────────────────
 #
 # The daemon deliberately outlives dev.sh: it ignores SIGHUP/SIGTERM/SIGINT so
-# Ctrl+C here does not take every shell down with it. The cost is that a change
-# to pty-daemon.ts is silently ignored — the server restarts, reconnects to the
-# daemon already listening, and you keep running whatever code that process
-# started with, however many days ago.
+# Ctrl+C here does not take every shell down with it. That is what makes your
+# sessions survive a restart, and it is worth keeping.
 #
-# Dev wants the opposite default: always run the code on disk. --keep-daemon
-# opts back into reuse when keeping sessions matters more.
+# The cost is that a change to pty-daemon.ts is otherwise silently ignored —
+# the server restarts, reconnects to the daemon already listening, and keeps
+# running whatever code that process started with, however many days ago.
 #
-# Kill first, then remove the files. Unlinking the socket while the daemon is
-# still alive orphans it — it ignores every signal, has no idle timeout, and
-# its only clean exit is a socket message it can no longer receive, so it sits
-# there holding its PTYs forever while the next daemon binds a fresh socket.
+# So: replace the daemon only when it is actually running stale code. An
+# ordinary restart keeps every session; editing or pulling daemon code costs
+# you the sessions once, at the point where the alternative is running code
+# that is not the code on disk. --keep-daemon and --fresh-daemon force it.
 DAEMON_DIR="$HOME/.config/sheepit"
 DAEMON_SOCK="$DAEMON_DIR/pty-daemon.sock"
 DAEMON_PID_FILE="$DAEMON_DIR/pty-daemon.pid"
+# Only the daemon's own code matters here. Server sources are hot-reloaded by
+# tsx watch and must not trigger a session-closing daemon restart.
+DAEMON_SOURCES="src/pty-daemon.ts src/paths.ts"
 
+mtime_epoch() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+}
+
+# Start time of a running process, as a unix timestamp, derived from ps elapsed
+# time ([[DD-]HH:]MM:SS) so it works the same on macOS and Linux.
+proc_start_epoch() {
+  elapsed=$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')
+  [ -n "$elapsed" ] || return 1
+  days=0; hours=0
+  case "$elapsed" in
+    *-*) days=${elapsed%%-*}; elapsed=${elapsed#*-} ;;
+  esac
+  case "$elapsed" in
+    *:*:*) hours=${elapsed%%:*}; elapsed=${elapsed#*:} ;;
+  esac
+  mins=${elapsed%%:*}
+  secs=${elapsed#*:}
+  # 10# so a zero-padded field is never read as octal.
+  echo $(( $(date +%s) - (10#$days * 86400 + 10#$hours * 3600 + 10#$mins * 60 + 10#$secs) ))
+}
+
+# True when daemon code on disk is newer than the running daemon. Anything we
+# cannot determine counts as "not stale" — the safe answer is the one that
+# keeps your sessions.
+daemon_is_stale() {
+  started=$(proc_start_epoch "$1") || return 1
+  newest=0
+  for f in $DAEMON_SOURCES; do
+    [ -f "$f" ] || continue
+    m=$(mtime_epoch "$f") || continue
+    [ -n "$m" ] || continue
+    [ "$m" -gt "$newest" ] && newest="$m"
+  done
+  [ "$newest" -gt 0 ] || return 1
+  [ "$newest" -gt "$started" ]
+}
+
+# $1: 1 to replace unconditionally, 0 to replace only when stale.
 reset_daemon() {
+  force=$1
   [ -e "$DAEMON_SOCK" ] || [ -f "$DAEMON_PID_FILE" ] || return 0
 
   daemon_pid=""
@@ -110,13 +159,21 @@ reset_daemon() {
   if [ -z "$daemon_pid" ] && [ -e "$DAEMON_SOCK" ] && command -v lsof >/dev/null 2>&1; then
     daemon_pid=$(lsof -t "$DAEMON_SOCK" 2>/dev/null | head -1)
   fi
-
   case "$daemon_pid" in
     ''|*[!0-9]*) daemon_pid="" ;;
   esac
 
   if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
-    echo "  Replacing PTY daemon (pid $daemon_pid) — open sessions will be closed."
+    if [ "$force" -eq 0 ] && ! daemon_is_stale "$daemon_pid"; then
+      echo "  PTY daemon (pid $daemon_pid) is current — reusing it, sessions kept."
+      return 0
+    fi
+    if [ "$force" -eq 0 ]; then
+      echo "  Replacing PTY daemon (pid $daemon_pid): daemon code on disk is newer."
+    else
+      echo "  Replacing PTY daemon (pid $daemon_pid) (--fresh-daemon)."
+    fi
+    echo "  Open sessions will be closed."
     # SIGKILL because the daemon ignores the catchable signals by design.
     kill -9 "$daemon_pid" 2>/dev/null || true
     i=0
@@ -126,11 +183,15 @@ reset_daemon() {
     done
   fi
 
+  # Only reached when the daemon is gone (or was already), so this never
+  # unlinks a socket out from under a live daemon — doing that orphans it
+  # permanently: it ignores every signal, has no idle timeout, and its only
+  # clean exit is a socket message it could no longer receive.
   rm -f "$DAEMON_SOCK" "$DAEMON_PID_FILE"
 }
 
 if [ "$UI_ONLY" -eq 0 ] && [ "$KEEP_DAEMON" -eq 0 ]; then
-  reset_daemon
+  reset_daemon "$FRESH_DAEMON"
 fi
 
 # Install UI deps if needed
