@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7 } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -310,5 +310,32 @@ describe('parseOsc7 (cwd, moved out of the PTY proxy)', () => {
 
   it('finds the sequence when it is embedded in a larger coalesced chunk', () => {
     expect(parseOsc7(`before\r\n${osc7('/Users/x/proj')}$ `)).toBe('/Users/x/proj')
+  })
+})
+
+describe('shEscape (moved out of the PTY proxy with the pool)', () => {
+  it('quotes a plain path', () => {
+    expect(shEscape('/Users/x/dev')).toBe("'/Users/x/dev'")
+  })
+
+  it('survives a path with spaces', () => {
+    expect(shEscape('/Users/x/my dir')).toBe("'/Users/x/my dir'")
+  })
+
+  it('closes and reopens the quote around an embedded single quote', () => {
+    expect(shEscape("/Users/x/it's")).toBe(`'/Users/x/it'\\''s'`)
+  })
+
+  it('neutralises a path that would otherwise break out into a command', () => {
+    const escaped = shEscape("/tmp/'; rm -rf /; echo '")
+    expect(escaped.startsWith("'")).toBe(true)
+    expect(escaped.endsWith("'")).toBe(true)
+    // every embedded quote is escaped, so the payload stays a literal path
+    expect(escaped.includes("; rm -rf /;")).toBe(true)
+    expect(escaped.split("'\\''").length).toBe(3)
+  })
+
+  it('leaves $ and backticks inert inside single quotes', () => {
+    expect(shEscape('/tmp/$HOME/`id`')).toBe("'/tmp/$HOME/`id`'")
   })
 })
