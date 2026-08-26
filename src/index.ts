@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { DirectBridge } from './direct-bridge.js';
 import { AIService } from './ai.js';
-import { createApp, logger } from './server.js';
+import { createApp, logBuffer, logger } from './server.js';
 import { pruneStalePreferences, dropSessionPreferences } from './api.js';
 import { config } from './config.js';
 import { ensureAgentPluginInstalled } from './plugin-install.js';
@@ -30,6 +30,7 @@ program
   .action(async (opts) => {
     const port = parseInt(opts.port, 10);
     const host = opts.host;
+    logBuffer.setLevel(opts.logLevel);
 
     // Fold the old second state root in before anything reads from it.
     migrateLegacyStateDir(msg => logger.info(msg));
