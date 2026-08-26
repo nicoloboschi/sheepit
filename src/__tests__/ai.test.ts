@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNamerInvocation, isRenameable, CLEARED_SESSION_NAME } from '../ai.js';
+import { buildNamerInvocation, isRenameable, stripNameDecoration, CLEARED_SESSION_NAME } from '../ai.js';
 
 describe('AI naming CLI isolation', () => {
   it('runs Claude Code in safe mode without slash commands', () => {
@@ -47,5 +47,30 @@ describe('rename eligibility', () => {
     // eligible because noteSessionCleared() claims ownership at the same time.
     expect(isRenameable(CLEARED_SESSION_NAME, path, undefined)).toBe(false);
     expect(isRenameable(CLEARED_SESSION_NAME, path, CLEARED_SESSION_NAME)).toBe(true);
+  });
+});
+
+describe('name decoration', () => {
+  it('peels what a model wraps a short answer in', () => {
+    expect(stripNameDecoration('`pytest`')).toBe('pytest');
+    expect(stripNameDecoration('"merge the PR"')).toBe('merge the PR');
+    expect(stripNameDecoration('**release 1.7**')).toBe('release 1.7');
+    expect(stripNameDecoration('`"**nested**"`')).toBe('nested');
+    expect(stripNameDecoration('  spaced out  ')).toBe('spaced out');
+  });
+
+  it('leaves an ordinary name alone', () => {
+    expect(stripNameDecoration('streaming chunks')).toBe('streaming chunks');
+    // Not decoration: a lone backtick or quote inside the name stays put.
+    expect(stripNameDecoration("don't touch")).toBe("don't touch");
+  });
+
+  it('unfreezes a session whose stored name carries decoration', () => {
+    // `pytest` failed the "looks like ours" shape test because of the
+    // backticks, so the namer stopped recognising its own output and refused
+    // to rename it ever again. Stripping before the shape test is what lets
+    // ownership be reclaimed.
+    const path = '/Users/x/dev/hindsight-wt6';
+    expect(isRenameable('`pytest`', path, '`pytest`')).toBe(true);
   });
 });

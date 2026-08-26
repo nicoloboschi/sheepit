@@ -96,6 +96,32 @@ export const CLEARED_SESSION_NAME = 'freshly shorn';
  *  that is easy to get wrong: CLEARED_SESSION_NAME is not a default, so a
  *  cleared session is only renameable again because noteSessionCleared() also
  *  claims ownership of it. */
+/** Strip the decoration a model wraps a short answer in.
+ *
+ *  Asked for a name, a model will sometimes answer with a markdown code span
+ *  or a quoted string. Storing that verbatim produced a live session actually
+ *  called `` `pytest` `` — and worse, the backticks then failed
+ *  _looksLikeOurOutput(), so the namer no longer recognised the name as its
+ *  own and refused to ever rename it again. A name that locks the namer out of
+ *  fixing it is the worst possible failure here. */
+export function stripNameDecoration(raw: string): string {
+  let name = raw.trim();
+  // Peel repeatedly: `"**name**"` happens.
+  for (let i = 0; i < 4; i++) {
+    const before = name;
+    name = name
+      .replace(/^`+([\s\S]*?)`+$/, '$1')
+      .replace(/^\*\*([\s\S]*?)\*\*$/, '$1')
+      .replace(/^\*([\s\S]*?)\*$/, '$1')
+      .replace(/^_([\s\S]*?)_$/, '$1')
+      .replace(/^"([\s\S]*?)"$/, '$1')
+      .replace(/^'([\s\S]*?)'$/, '$1')
+      .trim();
+    if (name === before) break;
+  }
+  return name;
+}
+
 export function isRenameable(name: string, path: string | undefined, ownedName: string | undefined): boolean {
   const basename = path?.split('/').filter(Boolean).pop() ?? 'shell';
   const isDefaultName = name === basename
@@ -189,7 +215,10 @@ export class AIService {
   }
 
   /** True if `name` looks like something our naming prompt would produce. */
-  private _looksLikeOurOutput(name: string): boolean {
+  private _looksLikeOurOutput(rawName: string): boolean {
+    // Compare the stripped form: a name we previously saved with decoration
+    // still came from us, and refusing to claim it would leave it frozen.
+    const name = stripNameDecoration(rawName);
     if (!name || name.length > 60) return false;
     // Lowercase, letters/digits/spaces/hyphens, at most 6 tokens
     if (!/^[a-z][a-z0-9 \-]*$/.test(name)) return false;
@@ -388,6 +417,7 @@ Session name:`;
 
       logger.debug(`AI naming ${sessionId}: got "${name}" in ${Date.now() - t0}ms`);
 
+      name = stripNameDecoration(name);
       if (!name || name.length > 80 || name.includes('\n')) return;
       // Reject the explicit "idle" fallback and common LLM refusals
       const lower = name.toLowerCase().trim();

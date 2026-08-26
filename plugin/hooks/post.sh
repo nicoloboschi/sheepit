@@ -24,12 +24,6 @@
 # Rule inherited from report-state.mjs and just as important here: never break
 # the agent, and never print anything. Every path exits 0.
 
-# No session id means either a pane that predates sheepit seeding it, or an
-# agent running outside sheepit entirely. Resolving it needs a process-tree
-# walk and an HTTP round trip, which is exactly the cost this script exists to
-# avoid — those panes keep the slower reporter on the other four events.
-[ -n "${SHEEPIT_SESSION_ID:-}" ] || exit 0
-
 URL="${SHEEPIT_URL:-}"
 if [ -z "$URL" ]; then
   # server.json is one small object; sed beats spawning a JSON parser.
@@ -38,12 +32,46 @@ if [ -z "$URL" ]; then
 fi
 [ -n "$URL" ] || exit 0
 
+SID="${SHEEPIT_SESSION_ID:-}"
+
+# A pane created before sheepit seeded SHEEPIT_SESSION_ID has no id in its
+# environment, and restarting the agent does not add one — the variable belongs
+# to the pane's shell, not to the agent inside it. An earlier version simply
+# gave up here, which meant every hook in this script silently did nothing on
+# any pane older than the variable. That is not a graceful degradation, it is
+# the feature being off with no way to tell.
+#
+# So fall back to what report-state.mjs does: walk our ancestry and ask the
+# server which session owns one of those pids. It costs a dozen `ps` calls and
+# a round trip, so the answer is cached per agent process — paid once for the
+# life of the agent, not once per tool call.
+if [ -z "$SID" ]; then
+  CACHE="${TMPDIR:-/tmp}/sheepit-sid-$PPID"
+  if [ -r "$CACHE" ]; then
+    SID=$(cat "$CACHE" 2>/dev/null)
+  else
+    pid=$PPID; pids=""; i=0
+    while [ "$i" -lt 12 ] && [ "${pid:-0}" -gt 1 ]; do
+      pids="${pids}${pids:+,}$pid"
+      pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+      [ -n "$pid" ] || break
+      i=$((i + 1))
+    done
+    [ -n "$pids" ] || exit 0
+    SID=$(curl -s -m 2 -X POST -H 'Content-Type: application/json' \
+            -d "{\"pids\":[$pids]}" "${URL%/}/api/sessions/resolve" 2>/dev/null \
+          | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ -n "$SID" ] && printf '%s' "$SID" > "$CACHE" 2>/dev/null
+  fi
+fi
+[ -n "$SID" ] || exit 0
+
 # Backgrounded and detached: the agent waits for this script, not for the
 # request. A server that is down, restarting or slow costs the turn nothing.
 curl -s -m 2 -o /dev/null -X POST \
   -H 'Content-Type: application/json' \
   -d "${2:-\{\}}" \
-  "${URL%/}/api/sessions/${SHEEPIT_SESSION_ID}/${1:-agent-state}" \
+  "${URL%/}/api/sessions/${SID}/${1:-agent-state}" \
   >/dev/null 2>&1 &
 
 exit 0
