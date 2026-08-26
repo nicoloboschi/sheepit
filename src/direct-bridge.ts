@@ -247,6 +247,22 @@ export function kittyNotificationAck(id: string): string {
  * the payload, or the two-byte ST terminator can arrive in a later read. Keep
  * only an incomplete OSC 99 frame (or a prefix of its introducer) for the next
  * read; all unrelated terminal output continues through the normal path. */
+/** OSC 7 — the shell reporting its working directory as a file:// URL. */
+const OSC7_RE = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+
+/** Last cwd announced in this chunk, or null. Lives here rather than in the
+ *  PTY proxy: cwd is a feature read off the byte stream, and the proxy should
+ *  only be moving bytes. */
+export function parseOsc7(data: string): string | null {
+  let last: string | null = null;
+  for (const m of data.matchAll(OSC7_RE)) {
+    if (m[1]) {
+      try { last = decodeURIComponent(m[1]); } catch { last = m[1]; }
+    }
+  }
+  return last;
+}
+
 export function drainOsc99Frames(data: string, pending = ''): { frames: string[]; pending: string } {
   const input = pending + data;
   const frames: string[] = [];
@@ -820,6 +836,12 @@ export class DirectBridge {
           const progress = parseOscProgress(data);
           if (progress !== null) this.oscBusy.set(id, progress);
 
+          const cwd = parseOsc7(data);
+          if (cwd && sess.path !== cwd) {
+            sess.path = cwd;
+            this.persist();
+          }
+
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -831,6 +853,9 @@ export class DirectBridge {
         this.persist();
         logger.debug(`Session exited: ${id}`);
       },
+      // Older proxies still push cwd_changed; newer ones leave it to the
+      // parseOsc7 above. Both land on the same value, so tolerating it costs
+      // nothing and keeps a running proxy working across this change.
       (id, cwd) => {
         const sess = this.sessions.get(id);
         if (sess && sess.path !== cwd) {
