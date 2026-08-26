@@ -892,24 +892,17 @@
   box-shadow: none;
 }
 
-/* ── The live states keep their own box tints ──────────────────────────────
-   Now that bleating and unread move identically, the box colour is the ONLY
-   thing separating them, so all three signalling states carry one: meadow
-   for grazing, moss teal for bleating, amber for unread. */
-.pane-card-busy:not(.pane-card-active):not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg,
-    color-mix(in srgb, var(--grazing) 13%, var(--accent)),
-    color-mix(in srgb, var(--grazing) 4%,  var(--accent)));
-  border-color: rgba(156, 188, 127, 0.30);
-  box-shadow: inset 0 1px rgba(199, 224, 168, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
-}
-.pane-card-active.pane-card-busy:not(.pane-card-needs-attention) {
-  background: linear-gradient(120deg,
-    color-mix(in srgb, var(--grazing) 25%, var(--accent)),
-    color-mix(in srgb, var(--grazing) 11%, var(--accent)));
-  border-color: rgba(156, 188, 127, 0.48);
-  box-shadow: inset 0 1px rgba(199, 224, 168, 0.10);
-}
+/* ── A tinted box means YOU have something to do ───────────────────────────
+   Grazing deliberately does NOT tint the card. It is the most common state by
+   far, so tinting it made most of the sidebar glow and left a tint meaning
+   nothing in particular — and it collided with the active row, which is green
+   too. It also did not need the help: the grazing sheep has a silhouette and a
+   glyph no other state uses.
+
+   So the two halves say different things. The BOX is about you: teal when a
+   sheep is bleating for input, amber when a pane finished and you have not
+   read it. The SHEEP is about the pane: what it is doing right now. A busy
+   pane is quiet furniture until it wants something. */
 .pane-card-needs-attention:not(.pane-card-active) {
   background: linear-gradient(120deg,
     color-mix(in srgb, var(--bleating) 18%, var(--accent)),
