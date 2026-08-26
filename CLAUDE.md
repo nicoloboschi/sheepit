@@ -307,6 +307,39 @@ alone on screen there is no neighbour to keep it off.
   file-type colours in `FilesPane` keep their language colours. Those are other
   people's brands, not ours.
 
+## The PTY proxy — keep it empty
+
+`src/pty-daemon.ts` holds every session's PTY master fd. That single fact sets
+the rule: **a session lives exactly as long as that process.** Not because of
+the `kill()` loop in its `exit` handler — SIGKILL it so no handler can run and
+the shells still die, because closing the master hangs up the slave. Whoever
+holds the fd owns the lifetime.
+
+So every reason to redeploy that file is a reason someone loses their shells,
+mid-build, mid-agent-run. It ignores SIGHUP/SIGTERM/SIGINT precisely so a
+Ctrl+C in dev.sh cannot take the flock down with it.
+
+It is therefore **a byte-mover and nothing else**: spawn, write, resize, kill,
+subscribe, rekey, list. It does not parse escape sequences, track cwd, warm
+pools, name sessions, or know what an agent is. Those all live in the server,
+which restarts freely and reads whatever it needs off the same byte stream.
+
+This is not hypothetical tidiness. A daemon here once served **nine-day-old
+code** across many restarts, because the features that kept changing had been
+written into it. OSC 7 cwd detection and the warm-shell pool were the last two;
+both moved to `direct-bridge.ts`, and the proxy went 483 → 376 lines.
+
+- **`PROTOCOL_VERSION`** in `pty-daemon.ts` and **`PROXY_PROTOCOL`** in
+  `direct-bridge.ts` must match. The server warns at startup when they don't,
+  because the proxy it just reached may predate the build. Bump it only when
+  the message shape genuinely changes — needing to bump it means sessions die.
+- **`rekey` is identity, not policy.** The server pre-spawns shells under
+  `pool-N` ids and renames one when it becomes a session. Routing ids is the
+  proxy's job; deciding when to rename is not.
+- If you are about to add something here, add it to the server instead. If it
+  truly cannot go there, you are about to cost every user every session — say
+  so in the PR.
+
 ## Legacy names — don't rename, just document
 
 Nothing in the shipped product carries the old name any more. `src/paths.ts`

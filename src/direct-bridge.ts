@@ -31,6 +31,24 @@ const CONFIG_DIR = configDir();
 const RING_DIR = ringBuffersDir();
 const RING_SIZE = 256 * 1024;
 
+/** Protocol the PTY proxy must speak. See PROTOCOL_VERSION in pty-daemon.ts. */
+const PROXY_PROTOCOL = 1;
+
+/** Warm shells kept ready so a new session skips the shell + rc-file startup
+ *  cost. The pool lives here rather than in the proxy: which shells to keep
+ *  ready is policy, and policy that changes is exactly what used to force a
+ *  proxy restart — and every proxy restart closes every session. */
+const POOL_SIZE = (() => {
+  const raw = process.env.SHEEPIT_SHELL_POOL_SIZE;
+  if (raw === undefined) return 2;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 2;
+})();
+const POOL_SHELL = process.env.SHELL || 'bash';
+const POOL_COLS = 120;
+const POOL_ROWS = 40;
+const POOL_PREFIX = 'pool-';
+
 /** Coalescing window for `current_input` broadcasts (see publishCurrentInput).
  *  Short enough that the sidebar still feels live, long enough that a fast
  *  typist produces ~20 broadcasts/second instead of one per character. */
@@ -340,6 +358,11 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
  *  The URL carries the port because the server is configurable (config.ts) and
  *  a dev instance runs on a different one than production — a hook that
  *  assumed 4444 would report into the wrong server, or none. */
+/** Escape a path for use inside a single-quoted shell context. */
+export function shEscape(p: string): string {
+  return `'${p.replace(/'/g, "'\\''")}'`;
+}
+
 export function agentEnv(sessionId: string, port: number): Record<string, string> {
   return {
     SHEEPIT_SESSION_ID: sessionId,
@@ -751,6 +774,12 @@ export class DirectBridge {
   /** Ring version last used to build a preview / written to disk, per session.
    *  Both periodic sweeps use these to skip sessions that produced no output. */
   private previewVersions = new Map<string, number>();
+  /** Warm shells spawned in the proxy under POOL_PREFIX ids, waiting to be
+   *  claimed. Subscribed but absent from `sessions`, so their rc-file chatter
+   *  is dropped on arrival and an exit before claim is still noticed. */
+  private poolIds: string[] = [];
+  private nextPoolId = 1;
+  private poolFilling = false;
   private lastBusy = new Map<string, boolean>();
   /** Busy state the app reported itself via OSC 9;4 progress, when it does. */
   private oscBusy = new Map<string, boolean>();
@@ -847,6 +876,13 @@ export class DirectBridge {
         }
       },
       (id) => {
+        if (id.startsWith(POOL_PREFIX)) {
+          const i = this.poolIds.indexOf(id);
+          if (i >= 0) this.poolIds.splice(i, 1);
+          logger.debug(`Pool shell exited before claim: ${id}`);
+          void this.topUpPool();
+          return;
+        }
         this.sessions.delete(id);
         this.pendingOsc99.delete(id);
         this.pendingOscNotifications.delete(id);
@@ -866,7 +902,24 @@ export class DirectBridge {
     );
 
     await this.daemon.connect();
+
+    // A proxy outlives this process by design, so the one we just reached may
+    // predate the protocol we speak. Say so rather than failing obscurely
+    // later: replacing it is a deliberate act, because it closes every session.
+    try {
+      const pong = await this.daemon.request({ type: 'ping' });
+      const spoken = pong.protocol ?? 0;
+      if (spoken !== PROXY_PROTOCOL) {
+        logger.warn(
+          `PTY proxy speaks protocol ${spoken}, this server speaks ${PROXY_PROTOCOL}. ` +
+          `It predates this build; restart it (closing all sessions) to update.`,
+        );
+      }
+    } catch { /* an unreachable proxy surfaces on the next request */ }
+
+    await this.adoptPool();
     await this.restoreSessions();
+    void this.topUpPool();
 
     // Cadences are a freshness/cost trade. The two git sweeps shell out per repo
     // — `git status` across every session's repo, and `gh pr view` (a network
@@ -1131,6 +1184,65 @@ export class DirectBridge {
     }
   }
 
+  // ── Shell pool ───────────────────────────────────────────────────────────
+
+  /** Take a warm shell, or null when the pool is empty. */
+  private claimPoolShell(): string | null {
+    return this.poolIds.shift() ?? null;
+  }
+
+  /** Bring the pool back up to POOL_SIZE. Safe to call concurrently; the
+   *  guard keeps overlapping calls from over-spawning. */
+  private async topUpPool(): Promise<void> {
+    if (this.poolFilling || POOL_SIZE === 0) return;
+    this.poolFilling = true;
+    try {
+      while (this.poolIds.length < POOL_SIZE) {
+        const id = `${POOL_PREFIX}${this.nextPoolId++}`;
+        try {
+          await this.daemon.request({
+            type: 'create', id, shell: POOL_SHELL,
+            cwd: os.homedir(), cols: POOL_COLS, rows: POOL_ROWS,
+          });
+          // Subscribe now so an exit before claim is seen. The output goes
+          // nowhere: the output handler looks the id up in `sessions`, and a
+          // pool id is not there until it has been claimed.
+          await this.daemon.request({ type: 'subscribe', id });
+          this.poolIds.push(id);
+        } catch (e) {
+          logger.debug(`Pool shell spawn failed: ${e}`);
+          return;
+        }
+      }
+    } finally {
+      this.poolFilling = false;
+    }
+  }
+
+  /** Re-adopt pool shells left by a previous server. They outlive us — that is
+   *  the point of the proxy — so finding them again beats leaking them and
+   *  spawning a second set. */
+  private async adoptPool(): Promise<void> {
+    let listed: { id: string }[] = [];
+    try {
+      const resp = await this.daemon.request({ type: 'list' });
+      listed = resp.sessions ?? [];
+    } catch { return; }
+
+    for (const info of listed) {
+      if (!info.id.startsWith(POOL_PREFIX)) continue;
+      const n = parseInt(info.id.slice(POOL_PREFIX.length), 10);
+      if (Number.isFinite(n) && n >= this.nextPoolId) this.nextPoolId = n + 1;
+      if (this.poolIds.length >= POOL_SIZE) {
+        this.daemon.sendFire({ type: 'kill', id: info.id });
+        continue;
+      }
+      this.poolIds.push(info.id);
+      try { await this.daemon.request({ type: 'subscribe', id: info.id }); } catch { /* gone */ }
+    }
+    if (this.poolIds.length > 0) logger.info(`Adopted ${this.poolIds.length} pool shell(s)`);
+  }
+
   // ── Session lifecycle ────────────────────────────────────────────────────
 
   async createSession(path?: string, initialCols?: number, initialRows?: number, isHeadless = false): Promise<string> {
@@ -1147,25 +1259,64 @@ export class DirectBridge {
     const cols = initialCols ?? 120;
     const rows = initialRows ?? 40;
 
-    // `fromPool: true` lets the daemon claim a pre-warmed shell instead of
-    // spawning fresh — saves the ~50-100ms shell startup + rc-file cost.
-    // Daemon falls back to a fresh spawn transparently on pool miss, so the
-    // client doesn't need to care which path was taken.
-    const resp = await this.daemon.request({
-      type: 'create', id, cwd: sessionPath, cols, rows, fromPool: true,
-      env: agentEnv(id, this.listenPort),
-    });
+    const env = agentEnv(id, this.listenPort);
+
+    // A warm shell has already paid the ~50-100ms shell + rc-file startup, so
+    // claiming one and renaming it beats spawning fresh. The proxy only does
+    // the rename; choosing to is this side's call, and a pool shell that died
+    // between spawn and claim just falls through to a fresh spawn.
+    let pid = 0;
+    let pooled: string | null = this.claimPoolShell();
+    if (pooled) {
+      try {
+        const resp = await this.daemon.request({ type: 'rekey', id: pooled, to: id });
+        pid = resp.pid ?? 0;
+        if (cols !== POOL_COLS || rows !== POOL_ROWS) {
+          this.daemon.sendFire({ type: 'resize', id, cols, rows });
+        }
+      } catch (e) {
+        logger.debug(`Pool claim failed for ${pooled}, spawning fresh: ${e}`);
+        pooled = null;
+      }
+    }
+
+    if (!pooled) {
+      const resp = await this.daemon.request({
+        type: 'create', id, cwd: sessionPath, cols, rows, env,
+      });
+      pid = resp.pid ?? 0;
+    }
 
     const sess: DirectSession = {
-      id, name, path: sessionPath, pid: resp.pid ?? 0, ring,
+      id, name, path: sessionPath, pid, ring,
       cols, rows, createdAt: Date.now(),
       isHeadless,
     };
     this.sessions.set(id, sess);
+    // Registered above and subscribed here before the cd is written, so the
+    // ring captures the session from its first byte.
     await this.daemon.request({ type: 'subscribe', id });
 
+    if (pooled) {
+      // The shell was spawned before this id existed, so `env` never reached
+      // it. Export the variables in the same write that repoints it, so an
+      // agent started in this pane — and the hooks it runs — can tell which
+      // sheepit session it belongs to. `clear` hides the line.
+      const exports = Object.entries(env)
+        .map(([k, v]) => `export ${k}=${shEscape(String(v))}; `)
+        .join('');
+      // `&& clear` fails loudly if the target is gone, which beats silently
+      // landing in $HOME.
+      this.daemon.sendFire({
+        type: 'write', id,
+        data: `${exports}cd ${shEscape(sessionPath)} && clear\r`,
+      });
+    }
+
+    void this.topUpPool();
+
     this.persist();
-    logger.info(`Created session: ${id} (${name}) at ${sessionPath} size=${cols}x${rows}`);
+    logger.info(`Created session: ${id} (${name}) at ${sessionPath} size=${cols}x${rows} ${pooled ? 'via pool' : 'fresh'}`);
     return id;
   }
 
@@ -1621,10 +1772,13 @@ export class DirectBridge {
       ring.loadFrom(join(RING_DIR, `${id}.buf`));
 
       if (daemonMap.has(id)) {
-        // Session still alive in daemon — just reconnect, use daemon's current cwd
+        // Still alive in the proxy — reconnect. The path comes from our own
+        // record, which parseOsc7 keeps current: the proxy only ever knew the
+        // directory a shell was *spawned* in, and for a pooled shell that is
+        // the pool's $HOME rather than the session's own directory.
         const ds = daemonMap.get(id)!;
         const sess: DirectSession = {
-          id, name: info.name, path: ds.cwd || info.path, pid: ds.pid,
+          id, name: info.name, path: info.path, pid: ds.pid,
           ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
           isHeadless: info.isHeadless,
         };

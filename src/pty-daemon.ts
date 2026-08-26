@@ -40,7 +40,6 @@ interface DaemonSession {
   id: string;
   pty: IPty;
   pid: number;
-  cwd: string;
   /** Output waiting to be coalesced into one message (see OUTPUT_FLUSH_MS). */
   pending: string[];
   pendingBytes: number;
@@ -58,34 +57,23 @@ interface DaemonSession {
  * immediately, so keystroke echo is unaffected, and only sustained output is
  * batched.
  */
+/**
+ * Protocol version. Bump it when the message shape changes, so a server can
+ * tell that the proxy it just connected to predates what it speaks.
+ *
+ * Keeping this at 1 forever is the goal, not an accident: features belong in
+ * the server, which restarts freely. Everything this process does is move
+ * bytes and route ids, because a session lives exactly as long as the process
+ * holding its PTY master fd — so every reason to redeploy this file is a
+ * reason someone loses their shells. Read escape sequences, name sessions,
+ * warm pools, track state: all of that is the server's job, off the same byte
+ * stream. If you are about to add a feature here, add it there instead.
+ */
+const PROTOCOL_VERSION = 1;
+
 const OUTPUT_FLUSH_MS = 8;
 const OUTPUT_MAX_BYTES = 64 * 1024;
 
-/** Pool-warmed shell. Spawned in $HOME with rc files already sourced, waiting
- *  to be claimed. On claim the daemon re-keys it to the client-requested id
- *  and writes `cd <target> && clear` so the client sees a fresh prompt in
- *  the target directory without paying the spawn + rc-file cost. */
-interface PooledShell {
-  pty: IPty;
-  pid: number;
-  cols: number;
-  rows: number;
-  /** Captured from onData until the shell is claimed, then discarded so the
-   *  client never sees the initial rc-file/prompt output. */
-  preClaimBuf: string;
-}
-
-const POOL_SIZE = (() => {
-  const raw = process.env.SHEEPIT_SHELL_POOL_SIZE;
-  if (raw === undefined) return 2;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 2;
-})();
-const POOL_SHELL = process.env.SHELL || 'bash';
-const POOL_DEFAULT_COLS = 120;
-const POOL_DEFAULT_ROWS = 40;
-
-const shellPool: PooledShell[] = [];
 
 /** Parse OSC 7 (file://host/path) from terminal output */
 
@@ -95,8 +83,10 @@ const subscribers = new Map<string, Set<net.Socket>>(); // sessionId → sockets
 // ── Message types ────────────────────────────────────────────────────────────
 
 interface DaemonRequest {
-  type: 'create' | 'kill' | 'write' | 'resize' | 'list' | 'subscribe' | 'unsubscribe' | 'ping' | 'shutdown';
+  type: 'create' | 'rekey' | 'kill' | 'write' | 'resize' | 'list' | 'subscribe' | 'unsubscribe' | 'ping' | 'shutdown';
   id?: string;
+  /** rekey: the id to move a session to. */
+  to?: string;
   reqId?: string;
   shell?: string;
   cwd?: string;
@@ -108,16 +98,16 @@ interface DaemonRequest {
    *  the pool instead of spawning fresh. On hit, the pool shell is re-keyed
    *  to `req.id`, resized to `req.cols`/`req.rows`, and told to `cd <cwd>`.
    *  On miss (or when pooling is disabled), falls back to a fresh spawn. */
-  fromPool?: boolean;
 }
 
 interface DaemonResponse {
-  type: 'ok' | 'error' | 'output' | 'exit' | 'list' | 'pong' | 'cwd_changed';
+  type: 'ok' | 'error' | 'output' | 'exit' | 'list' | 'pong';
   reqId?: string;
+  protocol?: number;
   id?: string;
   pid?: number;
   data?: string;
-  sessions?: { id: string; pid: number; cwd?: string }[];
+  sessions?: { id: string; pid: number }[];
   error?: string;
 }
 
@@ -173,65 +163,6 @@ function attachSessionHandlers(sess: DaemonSession): void {
   });
 }
 
-/** Escape a path for use inside single-quoted shell context. */
-function shEscape(p: string): string {
-  return `'${p.replace(/'/g, "'\\''")}'`;
-}
-
-/** Pop a pool shell if one is ready. Triggers a background top-up. */
-function claimFromPool(): PooledShell | null {
-  const shell = shellPool.shift() ?? null;
-  if (shell) setImmediate(topUpPool);
-  return shell;
-}
-
-/** Spawn a single shell into the pool, sitting in $HOME with a settled
- *  prompt. Output is captured into `preClaimBuf` (which is discarded at
- *  claim time) so the client never sees the pool shell's boot chatter. */
-function spawnPoolShell(): void {
-  try {
-    const p = pty.spawn(POOL_SHELL, ['-l'], {
-      name: 'xterm-256color',
-      cols: POOL_DEFAULT_COLS,
-      rows: POOL_DEFAULT_ROWS,
-      cwd: homedir(),
-      env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
-    });
-    const slot: PooledShell = {
-      pty: p, pid: p.pid,
-      cols: POOL_DEFAULT_COLS, rows: POOL_DEFAULT_ROWS,
-      preClaimBuf: '',
-    };
-    // Temporary onData capture — discarded on claim. Cap buffer so a runaway
-    // MOTD can't eat memory.
-    const dataDisposable = p.onData((data) => {
-      if (slot.preClaimBuf.length < 64 * 1024) slot.preClaimBuf += data;
-    });
-    const exitDisposable = p.onExit(() => {
-      const idx = shellPool.indexOf(slot);
-      if (idx >= 0) shellPool.splice(idx, 1);
-      dataDisposable.dispose();
-      exitDisposable.dispose();
-      daemonLog(`pool shell ${slot.pid} exited before claim`);
-      setImmediate(topUpPool);
-    });
-    (slot as PooledShell & { _dispose: () => void })._dispose = () => {
-      dataDisposable.dispose();
-      exitDisposable.dispose();
-    };
-    shellPool.push(slot);
-    daemonLog(`pool shell spawned pid=${p.pid} pool=${shellPool.length}/${POOL_SIZE}`);
-  } catch (e) {
-    daemonLog(`pool shell spawn FAILED: ${e}`);
-  }
-}
-
-/** Keep the pool at POOL_SIZE. Called at start, after claims, and after
- *  a pool shell exits unexpectedly. */
-function topUpPool(): void {
-  while (shellPool.length < POOL_SIZE) spawnPoolShell();
-}
-
 function handleCreate(req: DaemonRequest, socket: net.Socket): void {
   const id = req.id!;
   if (sessions.has(id)) {
@@ -241,51 +172,10 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
 
   const cols = req.cols || 120;
   const rows = req.rows || 40;
+  // Used to spawn, then forgotten: where a shell has since cd'd to is the
+  // server's business, read off the byte stream.
   const targetCwd = req.cwd || homedir();
 
-  // ── Pool path ──────────────────────────────────────────────────────────
-  if (req.fromPool && POOL_SIZE > 0) {
-    const claimed = claimFromPool();
-    if (claimed) {
-      // Drop the temporary capture handlers so attachSessionHandlers becomes
-      // the sole listener on this PTY.
-      const slot = claimed as PooledShell & { _dispose?: () => void };
-      if (slot._dispose) slot._dispose();
-
-      // Resize to match the client's requested geometry.
-      if (cols !== claimed.cols || rows !== claimed.rows) {
-        try { claimed.pty.resize(cols, rows); } catch {}
-      }
-
-      const sess: DaemonSession = {
-        id, pty: claimed.pty, pid: claimed.pid, cwd: targetCwd,
-        pending: [], pendingBytes: 0, flushTimer: null, lastFlushAt: 0,
-      };
-      sessions.set(id, sess);
-      attachSessionHandlers(sess);
-
-      // A pooled shell was spawned before this session id existed, so req.env
-      // never reached it. Export the variables here instead: the same write
-      // that repoints the shell also seeds its environment, so an agent
-      // launched in this pane — and the hooks it runs — can tell which
-      // sheepit session they belong to. `clear` below hides this line.
-      const exports = Object.entries(req.env ?? {})
-        .map(([k, v]) => `export ${k}=${shEscape(String(v))}; `)
-        .join('');
-
-      // cd into the target, then clear the screen so the client sees a fresh
-      // prompt in the right directory. `&& clear` fails loudly if the target
-      // doesn't exist — better than silently landing in $HOME.
-      claimed.pty.write(`${exports}cd ${shEscape(targetCwd)} && clear\r`);
-
-      daemonLog(`create ${id} via pool pid=${claimed.pid} cwd=${targetCwd} size=${cols}x${rows}`);
-      sendMsg(socket, { type: 'ok', reqId: req.reqId, id, pid: claimed.pid });
-      return;
-    }
-    // Pool miss — fall through to fresh spawn.
-  }
-
-  // ── Fresh spawn path (original behavior) ───────────────────────────────
   const shell = req.shell || process.env.SHELL || 'bash';
   daemonLog(`create ${id} shell=${shell} cols=${cols} rows=${rows} cwd=${targetCwd}`);
   const p = pty.spawn(shell, ['-l'], {
@@ -297,7 +187,7 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
   });
 
   const sess: DaemonSession = {
-    id, pty: p, pid: p.pid, cwd: targetCwd,
+    id, pty: p, pid: p.pid,
     pending: [], pendingBytes: 0, flushTimer: null, lastFlushAt: 0,
   };
   sessions.set(id, sess);
@@ -309,8 +199,35 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
 function handleRequest(req: DaemonRequest, socket: net.Socket): void {
   switch (req.type) {
     case 'ping':
-      sendMsg(socket, { type: 'pong', reqId: req.reqId });
+      sendMsg(socket, { type: 'pong', reqId: req.reqId, protocol: PROTOCOL_VERSION });
       break;
+
+    // Identity, not policy: the server pre-spawns shells under placeholder ids
+    // and renames one when it becomes a session. Routing is this process's job,
+    // so the rename lives here; deciding when to do it does not.
+    case 'rekey': {
+      const from = req.id!;
+      const to = req.to!;
+      const sess = sessions.get(from);
+      if (!sess || sessions.has(to)) {
+        sendMsg(socket, { type: 'error', reqId: req.reqId, error: `cannot rekey ${from} -> ${to}` });
+        break;
+      }
+      sessions.delete(from);
+      sess.id = to;
+      sessions.set(to, sess);
+      // Move subscribers with it, so whoever was listening stays listening.
+      const subs = subscribers.get(from);
+      if (subs) {
+        subscribers.delete(from);
+        const existing = subscribers.get(to);
+        if (existing) for (const sk of subs) existing.add(sk);
+        else subscribers.set(to, subs);
+      }
+      daemonLog(`rekey ${from} -> ${to}`);
+      sendMsg(socket, { type: 'ok', reqId: req.reqId, id: to, pid: sess.pid });
+      break;
+    }
 
     case 'create':
       handleCreate(req, socket);
@@ -362,7 +279,7 @@ function handleRequest(req: DaemonRequest, socket: net.Socket): void {
     }
 
     case 'list': {
-      const list = [...sessions.entries()].map(([id, s]) => ({ id, pid: s.pid, cwd: s.cwd }));
+      const list = [...sessions.entries()].map(([id, s]) => ({ id, pid: s.pid }));
       sendMsg(socket, { type: 'list', reqId: req.reqId, sessions: list });
       break;
     }
@@ -422,11 +339,7 @@ const server = net.createServer((socket) => {
 server.listen(SOCKET_PATH, () => {
   // Write PID file so the main server can check if we're running
   writeFileSync(PID_FILE, String(process.pid));
-  daemonLog(`daemon started pid=${process.pid} socket=${SOCKET_PATH} poolSize=${POOL_SIZE}`);
-  // Warm the shell pool asynchronously — non-blocking so the daemon is
-  // immediately ready to handle create requests even while shells are
-  // still spinning up in the background.
-  if (POOL_SIZE > 0) setImmediate(topUpPool);
+  daemonLog(`daemon started pid=${process.pid} socket=${SOCKET_PATH} protocol=${PROTOCOL_VERSION}`);
 });
 
 // Clean up on exit
@@ -436,10 +349,6 @@ process.on('exit', () => {
   try { unlinkSync(PID_FILE); } catch {}
   for (const [, sess] of sessions) {
     try { sess.pty.kill(); } catch {}
-  }
-  // Drain the warm pool too — these are daemon-owned shells with no client.
-  for (const slot of shellPool) {
-    try { slot.pty.kill(); } catch {}
   }
 });
 
