@@ -28,6 +28,13 @@ ordinary restart keeps your sessions and a daemon change still takes effect.
   --backend-host <host>  Host Vite proxies /api and /ws to (default: localhost)
   -h, --help             Show this help
 
+Whatever is still listening on those ports — a dev.sh whose terminal was
+closed, a backend a crash left behind — is killed before we bind them, along
+with the tsx/vite/npm supervisor that would restart it. The PTY daemon and the
+session shells it owns are never killed: if one of them holds a port, dev.sh
+says so and stops instead. Under --ui-only the backend port is left alone; the
+backend there is deliberately someone else's.
+
 The ports are passed to Vite as SHEEPIT_UI_PORT / SHEEPIT_BACKEND_PORT /
 SHEEPIT_BACKEND_HOST, which ui/vite.config.js reads — so a bare `npx vite`
 honours them too.
@@ -301,15 +308,23 @@ free_port() {
   for pid in $pids; do
     if in_list "$pid" "$SELF_PIDS"; then continue; fi
     if in_list "$pid" "$PROTECTED_PIDS"; then
-      echo "✗ Port $port ($label) is held by a sheepit session (pid $pid):" >&2
+      what="a shell the PTY daemon owns"
+      if [ "$pid" = "$(cat "$DAEMON_PID_FILE" 2>/dev/null || true)" ]; then
+        what="the PTY daemon itself"
+      fi
+      echo "✗ Port $port ($label) is held by $what (pid $pid):" >&2
       echo "    $(pcmd "$pid")" >&2
-      echo "  Refusing to kill it — that would close open shells. Use --${label}-port to pick another port." >&2
+      echo "  Refusing to kill it — that closes open sessions. Pick another port with --${label}-port." >&2
       exit 1
     fi
     chain=$(kill_chain "$pid")
     echo "  Port $port ($label) held by pid $pid — killing $(echo "$chain" | wc -w | tr -d ' ') process(es):"
+    # Read every command line first: killing the supervisor can take the
+    # listener with it, and `ps` on a pid that has already gone prints nothing.
     for victim in $chain; do
       echo "    $victim  $(pcmd "$victim")"
+    done
+    for victim in $chain; do
       kill "$victim" 2>/dev/null || true
     done
   done
