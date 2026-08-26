@@ -88,15 +88,6 @@ const POOL_DEFAULT_ROWS = 40;
 const shellPool: PooledShell[] = [];
 
 /** Parse OSC 7 (file://host/path) from terminal output */
-const OSC7_RE = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
-
-function parseOsc7(data: string): string | null {
-  let last: string | null = null;
-  for (const m of data.matchAll(OSC7_RE)) {
-    if (m[1]) last = decodeURIComponent(m[1]);
-  }
-  return last;
-}
 
 const sessions = new Map<string, DaemonSession>();
 const subscribers = new Map<string, Set<net.Socket>>(); // sessionId → sockets listening for output
@@ -158,16 +149,9 @@ function attachSessionHandlers(sess: DaemonSession): void {
   };
 
   sess.pty.onData((data) => {
-    // Detect cwd changes via OSC 7 — still per raw chunk, unbatched.
-    const newCwd = parseOsc7(data);
-    if (newCwd && newCwd !== sess.cwd) {
-      sess.cwd = newCwd;
-      const subs = subscribers.get(sess.id);
-      if (subs) {
-        for (const s of subs) sendMsg(s, { type: 'cwd_changed', id: sess.id, data: newCwd });
-      }
-    }
-
+    // Nothing is inspected here: cwd (OSC 7) and every other escape sequence
+    // are the server's business, read off the same byte stream. This proxy
+    // only moves bytes, which is what keeps it from needing to be redeployed.
     sess.pending.push(data);
     sess.pendingBytes += data.length;
     // Bound memory when a command floods the pane faster than we flush.

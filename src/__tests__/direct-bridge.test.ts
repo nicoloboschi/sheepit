@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7 } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -274,5 +274,41 @@ describe('drainOsc99Frames', () => {
     expect(first.frames).toEqual([])
     const second = drainOsc99Frames('tests pass\x1b\\', first.pending)
     expect(parseOscNotifications(second.frames[0]!).map(note => note.text)).toEqual(['All tests pass'])
+  })
+})
+
+describe('parseOsc7 (cwd, moved out of the PTY proxy)', () => {
+  const osc7 = (path: string, term = '\x07') => `\x1b]7;file://host${path}${term}`
+
+  it('reads the path out of a BEL-terminated sequence', () => {
+    expect(parseOsc7(osc7('/Users/x/dev'))).toBe('/Users/x/dev')
+  })
+
+  it('reads an ST-terminated sequence too', () => {
+    expect(parseOsc7(osc7('/tmp/p', '\x1b\\'))).toBe('/tmp/p')
+  })
+
+  it('percent-decodes, so a path with spaces survives', () => {
+    expect(parseOsc7(osc7('/Users/x/my%20dir'))).toBe('/Users/x/my dir')
+  })
+
+  it('keeps the raw path when the escaping is malformed', () => {
+    expect(parseOsc7(osc7('/Users/x/100%'))).toBe('/Users/x/100%')
+  })
+
+  it('takes the last cwd when a chunk carries several', () => {
+    expect(parseOsc7(osc7('/first') + 'output' + osc7('/second'))).toBe('/second')
+  })
+
+  it('returns null for ordinary output', () => {
+    expect(parseOsc7('just some text\n')).toBeNull()
+  })
+
+  it('ignores an empty path rather than reporting cwd as ""', () => {
+    expect(parseOsc7(osc7(''))).toBeNull()
+  })
+
+  it('finds the sequence when it is embedded in a larger coalesced chunk', () => {
+    expect(parseOsc7(`before\r\n${osc7('/Users/x/proj')}$ `)).toBe('/Users/x/proj')
   })
 })
