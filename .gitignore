@@ -13,3 +13,6 @@ bench/
 branding-preview.html
 Screenshot *.png
 release/
+
+# Vite scratch, written while it resolves its config.
+ui/vite.config.*.timestamp-*
