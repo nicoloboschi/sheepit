@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { notify } from './utils';
-import { applyTheme, readTheme, type AppTheme } from './theme';
+import { applyTheme, readTheme, readTerminalFont, DEFAULT_TERMINAL_FONT, TERMINAL_FONT_KEY, type AppTheme } from './theme';
 import { preferences } from './preferences';
 
 // ── Core types ──────────────────────────────────────────────────────────────
@@ -150,6 +150,11 @@ export interface StoreState {
   zenSessionId: string | null;
   /** Global terminal font size — applies to every pane in every workspace. */
   fontSize: number;
+  /** Global terminal font stack — applies to every pane in every workspace.
+   *  A CSS font-family value, not a single family: everything but the bundled
+   *  JetBrains Mono depends on the viewing device having the font installed,
+   *  so each stack ends in `monospace`. */
+  terminalFontFamily: string;
   /** Global UI and terminal palette. Shared profile persistence is handled by
    * the storage compatibility layer installed before React mounts. */
   theme: AppTheme;
@@ -243,6 +248,7 @@ export interface StoreState {
 
   // ── Global terminal font size (applies to every pane) ────────────────────
   setFontSize: (size: number) => void;
+  setTerminalFontFamily: (family: string) => void;
   adjustFontSize: (delta: number) => void;
   resetFontSize: () => void;
   setTheme: (theme: AppTheme) => void;
@@ -476,6 +482,7 @@ const useStore = create<StoreState>((set, get) => ({
   workspaceOrder: _initialWorkspaces.order,
   zenSessionId: null,
   fontSize: loadFontSize(),
+  terminalFontFamily: readTerminalFont(),
   theme: readTheme(),
   workspaceZooms: loadWorkspaceZooms(),
   wsStatus: 'connecting',
@@ -1200,6 +1207,13 @@ const useStore = create<StoreState>((set, get) => ({
   resetFontSize() {
     saveFontSize(DEFAULT_FONT_SIZE());
     set({ fontSize: DEFAULT_FONT_SIZE() });
+  },
+
+  setTerminalFontFamily(family: string) {
+    // An empty box means "back to the default", not "no font at all".
+    const next = family.trim() || DEFAULT_TERMINAL_FONT;
+    try { preferences.setItem(TERMINAL_FONT_KEY, next); } catch { /* quota */ }
+    set({ terminalFontFamily: next });
   },
 
   setTheme(theme: AppTheme) {

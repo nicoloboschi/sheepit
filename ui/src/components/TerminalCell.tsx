@@ -222,6 +222,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
+  const fontFamily = useStore(s => s.terminalFontFamily);
   const theme = useStore(s => s.theme);
   const isMultiPane = useStore(s => {
     const ws = s.workspaces[gridId];
@@ -367,7 +368,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       useStore.getState().fontSize;
     const term = new Terminal({
       cursorBlink: !isMobile,
-      fontFamily: '"JetBrains Mono", monospace',
+      fontFamily: useStore.getState().terminalFontFamily,
       fontSize: initialFontSize,
       lineHeight: 1.2,
       scrollback: isMobile ? 1000 : 5000,
@@ -840,6 +841,23 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     }, 20);
     return () => clearTimeout(id);
   }, [zoom]);
+
+  // Apply font-family changes — same shape as zoom, because a different family
+  // means different character metrics, so the grid has to be re-measured and
+  // the new cols/rows pushed to the PTY. The delay lets xterm remeasure with
+  // the font actually applied; without it the fit runs on the old cell size.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    if (term.options.fontFamily === fontFamily) return;
+    term.options.fontFamily = fontFamily;
+    const id = setTimeout(() => {
+      safeFit();
+      const t = termRef.current;
+      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+    }, 20);
+    return () => clearTimeout(id);
+  }, [fontFamily]);
 
   // ResizeObserver on container for panel resize (debounced)
   useEffect(() => {
