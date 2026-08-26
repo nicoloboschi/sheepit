@@ -16,12 +16,13 @@ export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps
   // Shared with the live panes, so history honours the light theme too — it
   // used to carry its own copy of the dark palette.
   const theme = useStore(s => s.theme);
+  const fontFamily = useStore(s => s.terminalFontFamily);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono", monospace',
+      fontFamily,
       fontSize: 13,
       lineHeight: 1.2,
       scrollback: 50000,
@@ -53,7 +54,7 @@ export default function HistoryDialog({ sessionId, onClose }: HistoryDialogProps
       ro.disconnect();
       term.dispose();
     };
-  }, [sessionId, theme]);
+  }, [sessionId, theme, fontFamily]);
 
   return (
     <ConfigDialog open onClose={onClose}>
