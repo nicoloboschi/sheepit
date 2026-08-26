@@ -20,9 +20,9 @@ Usage: ./dev.sh [options]
   --fresh-daemon         Always replace the running PTY daemon. Closes every
                          open session.
 
-By default the daemon is replaced only when it is running code older than
-pty-daemon.ts on disk — so an ordinary restart keeps your sessions, and a
-daemon change still takes effect.
+By default the daemon is replaced only when the code it is running differs
+from the daemon sources on disk — compared by hash, not by timestamp — so an
+ordinary restart keeps your sessions and a daemon change still takes effect.
   --ui-port <port>       Vite dev server port (default: 4444)
   --backend-port <port>  Backend API/WebSocket port (default: 4445)
   --backend-host <host>  Host Vite proxies /api and /ws to (default: localhost)
@@ -103,46 +103,44 @@ fi
 DAEMON_DIR="$HOME/.config/sheepit"
 DAEMON_SOCK="$DAEMON_DIR/pty-daemon.sock"
 DAEMON_PID_FILE="$DAEMON_DIR/pty-daemon.pid"
-# Only the daemon's own code matters here. Server sources are hot-reloaded by
-# tsx watch and must not trigger a session-closing daemon restart.
+# Written by the proxy at startup: a hash of the code it is actually running.
+DAEMON_FINGERPRINT_FILE="$DAEMON_DIR/pty-daemon.fingerprint"
+# Only the proxy's own code counts. Server sources are hot-reloaded by tsx
+# watch and must not trigger a session-closing restart.
 DAEMON_SOURCES="src/pty-daemon.ts src/paths.ts"
 
-mtime_epoch() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+sha16() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi
 }
 
-# Start time of a running process, as a unix timestamp, derived from ps elapsed
-# time ([[DD-]HH:]MM:SS) so it works the same on macOS and Linux.
-proc_start_epoch() {
-  elapsed=$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')
-  [ -n "$elapsed" ] || return 1
-  days=0; hours=0
-  case "$elapsed" in
-    *-*) days=${elapsed%%-*}; elapsed=${elapsed#*-} ;;
-  esac
-  case "$elapsed" in
-    *:*:*) hours=${elapsed%%:*}; elapsed=${elapsed#*:} ;;
-  esac
-  mins=${elapsed%%:*}
-  secs=${elapsed#*:}
-  # 10# so a zero-padded field is never read as octal.
-  echo $(( $(date +%s) - (10#$days * 86400 + 10#$hours * 3600 + 10#$mins * 60 + 10#$secs) ))
+# Hash of the daemon sources on disk, in the same order and form the proxy
+# hashes itself.
+source_fingerprint() {
+  # shellcheck disable=SC2086
+  cat $DAEMON_SOURCES 2>/dev/null | sha16 | cut -c1-16
 }
 
-# True when daemon code on disk is newer than the running daemon. Anything we
-# cannot determine counts as "not stale" — the safe answer is the one that
-# keeps your sessions.
+# True when the running proxy is not running the code on disk. This is an
+# exact comparison on purpose: the previous version inferred it from file
+# mtimes against process start time, and a pull, a touch, a second worktree or
+# a clock skew all lie about that -- while guessing wrong closes every session.
 daemon_is_stale() {
-  started=$(proc_start_epoch "$1") || return 1
-  newest=0
-  for f in $DAEMON_SOURCES; do
-    [ -f "$f" ] || continue
-    m=$(mtime_epoch "$f") || continue
-    [ -n "$m" ] || continue
-    [ "$m" -gt "$newest" ] && newest="$m"
-  done
-  [ "$newest" -gt 0 ] || return 1
-  [ "$newest" -gt "$started" ]
+  running=$(cat "$DAEMON_FINGERPRINT_FILE" 2>/dev/null || true)
+  disk=$(source_fingerprint)
+
+  # No fingerprint at all means a proxy from before it recorded one, which is
+  # by definition older than what is on disk.
+  if [ -z "$running" ]; then
+    echo "  PTY daemon predates code fingerprinting."
+    return 0
+  fi
+  # Anything we cannot compute counts as current: the safe answer is the one
+  # that keeps your sessions.
+  if [ -z "$disk" ]; then
+    echo "  Cannot hash daemon sources from $(pwd) — assuming the daemon is current."
+    return 1
+  fi
+  [ "$running" != "$disk" ]
 }
 
 # $1: 1 to replace unconditionally, 0 to replace only when stale.
@@ -165,11 +163,11 @@ reset_daemon() {
 
   if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
     if [ "$force" -eq 0 ] && ! daemon_is_stale "$daemon_pid"; then
-      echo "  PTY daemon (pid $daemon_pid) is current — reusing it, sessions kept."
+      echo "  PTY daemon (pid $daemon_pid) is current [${running:-?}] — reusing it, sessions kept."
       return 0
     fi
     if [ "$force" -eq 0 ]; then
-      echo "  Replacing PTY daemon (pid $daemon_pid): daemon code on disk is newer."
+      echo "  Replacing PTY daemon (pid $daemon_pid): running [${running:-none}] but disk is [${disk:-?}]."
     else
       echo "  Replacing PTY daemon (pid $daemon_pid) (--fresh-daemon)."
     fi
@@ -187,7 +185,7 @@ reset_daemon() {
   # unlinks a socket out from under a live daemon — doing that orphans it
   # permanently: it ignores every signal, has no idle timeout, and its only
   # clean exit is a socket message it could no longer receive.
-  rm -f "$DAEMON_SOCK" "$DAEMON_PID_FILE"
+  rm -f "$DAEMON_SOCK" "$DAEMON_PID_FILE" "$DAEMON_FINGERPRINT_FILE"
 }
 
 if [ "$UI_ONLY" -eq 0 ] && [ "$KEEP_DAEMON" -eq 0 ]; then
