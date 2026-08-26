@@ -41,7 +41,25 @@ interface DaemonSession {
   pty: IPty;
   pid: number;
   cwd: string;
+  /** Output waiting to be coalesced into one message (see OUTPUT_FLUSH_MS). */
+  pending: string[];
+  pendingBytes: number;
+  flushTimer: NodeJS.Timeout | null;
+  lastFlushAt: number;
 }
+
+/**
+ * A PTY hands back output in very small pieces — a `cat` of a large file
+ * arrives as hundreds of ~40-byte chunks per second, and each one became its
+ * own daemon socket write and its own WebSocket frame. Batching them for a few
+ * milliseconds turns that into a handful of larger messages.
+ *
+ * The flush is leading-edge: the first chunk after a quiet moment goes out
+ * immediately, so keystroke echo is unaffected, and only sustained output is
+ * batched.
+ */
+const OUTPUT_FLUSH_MS = 8;
+const OUTPUT_MAX_BYTES = 64 * 1024;
 
 /** Pool-warmed shell. Spawned in $HOME with rc files already sourced, waiting
  *  to be claimed. On claim the daemon re-keys it to the client-requested id
@@ -124,8 +142,23 @@ function sendMsg(socket: net.Socket, msg: DaemonResponse): void {
  *  (not a captured variable), so re-keying a pooled shell works transparently:
  *  after the re-key, future output goes to subscribers of the new id. */
 function attachSessionHandlers(sess: DaemonSession): void {
+  // Reads sess.id at flush time, like the direct send it replaces, so a
+  // re-keyed pool shell still routes to the right subscribers.
+  const flush = (): void => {
+    if (sess.flushTimer) { clearTimeout(sess.flushTimer); sess.flushTimer = null; }
+    if (sess.pending.length === 0) return;
+    const data = sess.pending.length === 1 ? sess.pending[0] : sess.pending.join('');
+    sess.pending = [];
+    sess.pendingBytes = 0;
+    sess.lastFlushAt = Date.now();
+    const subs = subscribers.get(sess.id);
+    if (subs) {
+      for (const s of subs) sendMsg(s, { type: 'output', id: sess.id, data });
+    }
+  };
+
   sess.pty.onData((data) => {
-    // Detect cwd changes via OSC 7
+    // Detect cwd changes via OSC 7 — still per raw chunk, unbatched.
     const newCwd = parseOsc7(data);
     if (newCwd && newCwd !== sess.cwd) {
       sess.cwd = newCwd;
@@ -135,13 +168,18 @@ function attachSessionHandlers(sess: DaemonSession): void {
       }
     }
 
-    const subs = subscribers.get(sess.id);
-    if (subs) {
-      for (const s of subs) sendMsg(s, { type: 'output', id: sess.id, data });
-    }
+    sess.pending.push(data);
+    sess.pendingBytes += data.length;
+    // Bound memory when a command floods the pane faster than we flush.
+    if (sess.pendingBytes >= OUTPUT_MAX_BYTES) return flush();
+    if (sess.flushTimer) return;
+    const since = Date.now() - sess.lastFlushAt;
+    if (since >= OUTPUT_FLUSH_MS) return flush();
+    sess.flushTimer = setTimeout(flush, OUTPUT_FLUSH_MS - since);
   });
 
   sess.pty.onExit(() => {
+    flush();  // trailing output must reach subscribers before the exit message
     sessions.delete(sess.id);
     const subs = subscribers.get(sess.id);
     if (subs) {
@@ -237,6 +275,7 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
 
       const sess: DaemonSession = {
         id, pty: claimed.pty, pid: claimed.pid, cwd: targetCwd,
+        pending: [], pendingBytes: 0, flushTimer: null, lastFlushAt: 0,
       };
       sessions.set(id, sess);
       attachSessionHandlers(sess);
@@ -273,7 +312,10 @@ function handleCreate(req: DaemonRequest, socket: net.Socket): void {
     env: { ...process.env, ...req.env, TERM: 'xterm-256color' } as Record<string, string>,
   });
 
-  const sess: DaemonSession = { id, pty: p, pid: p.pid, cwd: targetCwd };
+  const sess: DaemonSession = {
+    id, pty: p, pid: p.pid, cwd: targetCwd,
+    pending: [], pendingBytes: 0, flushTimer: null, lastFlushAt: 0,
+  };
   sessions.set(id, sess);
   attachSessionHandlers(sess);
 

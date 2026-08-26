@@ -1,9 +1,10 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
-import { join, dirname } from 'path';
+import { join, dirname, extname, sep } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, statSync, watchFile, unwatchFile } from 'fs';
+import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'fs';
+import { gzipSync } from 'zlib';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import type { BridgeMessage } from './protocol.js';
@@ -20,14 +21,25 @@ export interface LogEntry {
   msg: string;
 }
 
+const LEVELS: Record<string, number | undefined> = { debug: 10, info: 20, warning: 30, error: 40 };
+const DEFAULT_LEVEL = 20;  // info
+
 export class LogBuffer {
   private buf: LogEntry[] = [];
   private subs = new Set<(e: LogEntry) => void>();
   private maxSize: number;
+  private threshold = DEFAULT_LEVEL;
 
   constructor(maxSize = 500) { this.maxSize = maxSize; }
 
+  /** --log-level / SHEEPIT_LOG_LEVEL; unknown values leave the level as-is. */
+  setLevel(level: string): void {
+    const t = LEVELS[level?.toLowerCase()];
+    if (t !== undefined) this.threshold = t;
+  }
+
   log(level: string, msg: string): void {
+    if ((LEVELS[level.toLowerCase()] ?? DEFAULT_LEVEL) < this.threshold) return;
     const entry: LogEntry = {
       ts: new Date().toISOString().slice(11, 23),
       level,
@@ -72,6 +84,58 @@ interface ClientState {
 
 // ── Server factory ────────────────────────────────────────────────────────────
 
+// ── Static assets ─────────────────────────────────────────────────────────────
+
+const COMPRESSIBLE = /\.(js|mjs|css|html|json|svg|map|txt)$/;
+
+/**
+ * express.static ships the UI bundle uncompressed — roughly 900 KB per cold
+ * load, which is the single biggest cost on a phone. Assets are content-hashed
+ * by Vite, so gzip each file once and serve every later request from memory.
+ */
+function gzipStatic(uiDist: string) {
+  const cache = new Map<string, { body: Buffer; etag: string }>();
+  const root = uiDist.endsWith(sep) ? uiDist : uiDist + sep;
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    if (!COMPRESSIBLE.test(req.path)) return next();
+    if (!String(req.headers['accept-encoding'] ?? '').includes('gzip')) return next();
+
+    const file = join(uiDist, req.path);
+    if (!file.startsWith(root)) return next();  // path traversal
+
+    let st;
+    try { st = statSync(file); } catch { return next(); }
+    if (!st.isFile()) return next();
+
+    const key = `${file}:${st.mtimeMs}:${st.size}`;
+    let entry = cache.get(key);
+    if (!entry) {
+      entry = {
+        body: gzipSync(readFileSync(file)),
+        etag: `W/"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}-gz"`,
+      };
+      cache.set(key, entry);
+    }
+
+    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Vary', 'Accept-Encoding');
+    res.setHeader('ETag', entry.etag);
+    // Vite fingerprints /assets/*, so those can be cached indefinitely.
+    res.setHeader('Cache-Control', req.path.startsWith('/assets/')
+      ? 'public, max-age=31536000, immutable'
+      : 'no-cache');
+    res.type(extname(file));
+
+    if (req.headers['if-none-match'] === entry.etag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(req.method === 'HEAD' ? undefined : entry.body);
+  };
+}
+
 export async function createApp(bridge: DirectBridge, ai: AIService) {
   const app = express();
   // UI preferences can contain workspace layouts, per-pane tabs, and other
@@ -88,6 +152,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
   // Static UI (production build only — in dev, Vite runs separately)
   const uiDist = join(__dirname, '..', 'ui', 'dist');
   if (existsSync(uiDist) && process.env.NODE_ENV !== 'development') {
+    app.use(gzipStatic(uiDist));
     app.use(express.static(uiDist));
     app.get('*', (_req, res) => res.sendFile(join(uiDist, 'index.html')));
   }
