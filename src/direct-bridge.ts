@@ -904,6 +904,22 @@ export class DirectBridge {
   setAgentState(sessionId: string, state: AgentState, source: string, turn?: { prompt?: string; response?: string }): boolean {
     if (!this.sessions.has(sessionId)) return false;
 
+    // Refresh, not a transition: the agent is still doing what it was already
+    // doing. This is the common case now that a ping fires on every tool call,
+    // so it must not cost a broadcast — publishPreviews() walks every session,
+    // and a hundred-tool turn would run it a hundred times to tell the client
+    // nothing it did not already know. Keep the timestamp fresh (it is what
+    // AGENT_STATE_TTL_MS is measured against) and stop there.
+    //
+    // Anything carrying turn text falls through: that is new information even
+    // when the state has not moved.
+    const current = this.agentState.get(sessionId);
+    if (current && current.state === state && !turn?.prompt && !turn?.response) {
+      current.at = Date.now();
+      current.source = source;
+      return true;
+    }
+
     // Merge rather than replace: the prompt arrives when the turn starts and
     // the response when it ends, so each report carries only half the pair.
     if (turn?.prompt || turn?.response) {
