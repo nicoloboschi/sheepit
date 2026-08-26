@@ -205,6 +205,148 @@ if [ "$UI_ONLY" -eq 0 ] && [ ! -d node_modules ]; then
   npm install
 fi
 
+# ── Ports ────────────────────────────────────────────────────────────────────
+#
+# Whatever is still holding 4444/4445 — a dev.sh whose terminal was closed, a
+# backend a crash left behind, a second worktree started by mistake — gets
+# taken out, so a restart never fails with EADDRINUSE.
+#
+# What must *not* get taken out is the flock. The PTY daemon and the session
+# shells it owns are the whole point of the daemon outliving dev.sh, so they
+# are protected by pid: a listener that turns out to be one of them is
+# reported, not killed. Anything a session merely *launched* (a stale dev.sh
+# parked in a pane, and the servers under it) is fair game — killing it is
+# exactly what was asked for, and the pane it ran in survives it.
+#
+# Only LISTEN holders are considered. An *established* connection to 4444 is a
+# browser tab; reclaiming a port is not a reason to kill the user's browser.
+
+port_listeners() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | sort -u
+}
+
+# The daemon and its direct children — i.e. one process per live session.
+# Deeper descendants are whatever the user ran *inside* a pane, which is not
+# the session and is not protected.
+protected_pids() {
+  d=$(cat "$DAEMON_PID_FILE" 2>/dev/null || true)
+  case "$d" in ''|*[!0-9]*) return 0 ;; esac
+  kill -0 "$d" 2>/dev/null || return 0
+  echo "$d"
+  pgrep -P "$d" 2>/dev/null || true
+}
+
+# This dev.sh and everything above it: never kill the shell we were started
+# from, nor ourselves.
+self_pids() {
+  p=$$
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+    echo "$p"
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+}
+
+PROTECTED_PIDS=$(protected_pids | tr '\n' ' ')
+SELF_PIDS=$(self_pids | tr '\n' ' ')
+
+in_list() {
+  for x in $2; do
+    if [ "$x" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
+pcmd() { ps -o command= -p "$1" 2>/dev/null | cut -c1-72; }
+
+# A parent worth killing along with the listener: kill only the server and
+# `tsx watch` or `npm exec` respawns it a second later, and the port is gone
+# again. Anything that is not one of these supervisors ends the chain.
+is_supervisor() {
+  case "$(ps -o command= -p "$1" 2>/dev/null)" in
+    *tsx*|*vite*|*"npm exec"*|*"npm run"*|*dev.sh*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The listener plus its supervisor ancestors, outermost first, so the thing
+# that would restart it dies before it can.
+kill_chain() {
+  chain="$1"
+  p="$1"
+  while :; do
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || break
+    if in_list "$p" "$PROTECTED_PIDS"; then break; fi
+    if in_list "$p" "$SELF_PIDS"; then break; fi
+    if ! is_supervisor "$p"; then break; fi
+    chain="$p $chain"
+  done
+  echo "$chain"
+}
+
+# $1 port, $2 label. Exits non-zero only when the port is still held after
+# both signals, or when the holder is a session we refuse to kill.
+free_port() {
+  port=$1
+  label=$2
+  pids=$(port_listeners "$port")
+  [ -n "$pids" ] || return 0
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    echo "  No lsof — cannot check who holds $port."
+    return 0
+  fi
+
+  for pid in $pids; do
+    if in_list "$pid" "$SELF_PIDS"; then continue; fi
+    if in_list "$pid" "$PROTECTED_PIDS"; then
+      echo "✗ Port $port ($label) is held by a sheepit session (pid $pid):" >&2
+      echo "    $(pcmd "$pid")" >&2
+      echo "  Refusing to kill it — that would close open shells. Use --${label}-port to pick another port." >&2
+      exit 1
+    fi
+    chain=$(kill_chain "$pid")
+    echo "  Port $port ($label) held by pid $pid — killing $(echo "$chain" | wc -w | tr -d ' ') process(es):"
+    for victim in $chain; do
+      echo "    $victim  $(pcmd "$victim")"
+      kill "$victim" 2>/dev/null || true
+    done
+  done
+
+  # TERM first, SIGKILL for whatever ignores it.
+  i=0
+  while [ -n "$(port_listeners "$port")" ] && [ "$i" -lt 15 ]; do
+    sleep 0.2
+    i=$((i + 1))
+  done
+  for pid in $(port_listeners "$port"); do
+    if in_list "$pid" "$SELF_PIDS" || in_list "$pid" "$PROTECTED_PIDS"; then continue; fi
+    for victim in $(kill_chain "$pid"); do
+      kill -9 "$victim" 2>/dev/null || true
+    done
+  done
+  i=0
+  while [ -n "$(port_listeners "$port")" ] && [ "$i" -lt 15 ]; do
+    sleep 0.2
+    i=$((i + 1))
+  done
+
+  remaining=$(port_listeners "$port")
+  if [ -n "$remaining" ]; then
+    echo "✗ Port $port ($label) is still held after SIGKILL by: $remaining" >&2
+    for pid in $remaining; do echo "    $pid  $(pcmd "$pid")" >&2; done
+    exit 1
+  fi
+}
+
+free_port "$UI_PORT" ui
+if [ "$UI_ONLY" -eq 0 ]; then
+  # Under --ui-only the backend on this port is deliberately someone else's —
+  # another worktree, another machine, or one started by hand. Leave it alone.
+  free_port "$BACKEND_PORT" backend
+fi
+
 cleanup() {
   echo "Shutting down..."
   kill ${BACKEND_PID:-} ${VITE_PID:-} 2>/dev/null || true

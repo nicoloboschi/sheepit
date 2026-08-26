@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Moon, Sun, RotateCcw } from 'lucide-react';
+import { Moon, Sun, RotateCcw, Download, Check, Loader2, CloudOff } from 'lucide-react';
 import useStore from '../store';
 import {
   TERMINAL_THEMES,
@@ -7,6 +7,12 @@ import {
   DEFAULT_TERMINAL_FONT,
 } from '../theme';
 import { resolveFontStack, type StackResolution } from '../fontAvailability';
+import {
+  GOOGLE_MONO_FONTS,
+  loadGoogleFont,
+  isLoaded as isFontLoaded,
+  type FontLoadState,
+} from '../googleFonts';
 
 /** Glyph-rich enough to answer the questions you actually open this for: is
  *  zero slashed, do l/1/I differ, does the box drawing join up, and did the
@@ -26,6 +32,9 @@ export function AppearanceContent() {
   const [draft, setDraft] = useState(fontFamily);
   useEffect(() => { setDraft(fontFamily); }, [fontFamily]);
 
+  // Per-family fetch state for the Google list.
+  const [loadState, setLoadState] = useState<Record<string, FontLoadState>>({});
+
   // Measured after document.fonts settles, or the bundled JetBrains Mono is
   // still loading and reports itself missing.
   const [resolved, setResolved] = useState<Record<string, StackResolution>>({});
@@ -40,9 +49,35 @@ export function AppearanceContent() {
     };
     document.fonts?.ready.then(measure) ?? measure();
     return () => { live = false; };
-  }, [fontFamily]);
+    // loadState: a download registers new faces, and a preset naming the same
+    // family has to stop calling itself missing the moment it arrives.
+  }, [fontFamily, loadState]);
 
   const current = resolved[fontFamily];
+
+  const [filter, setFilter] = useState('');
+  const [offline, setOffline] = useState(false);
+
+  const pickGoogleFont = async (family: string) => {
+    const stack = `"${family}", monospace`;
+    if (isFontLoaded(family)) { setFontFamily(stack); return; }
+    setLoadState(s => ({ ...s, [family]: 'loading' }));
+    try {
+      await loadGoogleFont(family);
+      setLoadState(s => ({ ...s, [family]: 'loaded' }));
+      setOffline(false);
+      setFontFamily(stack);
+    } catch {
+      // Say so. Falling back silently is what made this feature look broken
+      // the first time round.
+      setLoadState(s => ({ ...s, [family]: 'error' }));
+      setOffline(true);
+    }
+  };
+
+  const shown = GOOGLE_MONO_FONTS.filter(
+    f => f.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
 
   const term = TERMINAL_THEMES[theme];
 
@@ -90,9 +125,9 @@ export function AppearanceContent() {
           )}
         </div>
         <p className="text-xs text-muted-foreground mb-3">
-          Applies to every pane straight away. Only JetBrains Mono ships with sheepit — anything else has to be
-          installed on <em>this</em> device, not on the machine running the shells, and falls back to its plain
-          monospace if it isn't.
+          Applies to every pane straight away. These are the fonts already on <em>this</em> device — not the machine
+          running the shells — and one falls back to plain monospace if it isn't there. To get a font you don't
+          have, use <strong>Download a font</strong> below.
         </p>
 
         <div className="grid grid-cols-2 gap-2 mb-3">
@@ -163,6 +198,69 @@ export function AppearanceContent() {
             {SAMPLE}
           </div>
         </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-semibold mb-1">Download a font</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Fetched from Google Fonts the moment you pick one, then kept on this device — so a font you have used
+          once still works with no network later. Nothing is downloaded until you choose it.
+        </p>
+
+        <input
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Filter…"
+          spellCheck={false}
+          className="w-full rounded-md border px-2.5 py-1.5 text-xs mb-2"
+          style={{
+            borderColor: 'var(--border)', background: 'var(--background)',
+            color: 'var(--foreground)', outline: 'none',
+          }}
+        />
+
+        {offline && (
+          <div className="flex items-center gap-1.5 mb-2 text-[11px]" style={{ color: 'var(--warning)' }}>
+            <CloudOff size={12} />
+            Couldn't reach fonts.googleapis.com — this device may have no route to the internet. Fonts you have
+            already downloaded still work.
+          </div>
+        )}
+
+        <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+          {shown.map(family => {
+            const stack = `"${family}", monospace`;
+            const active = fontFamily === stack;
+            const state: FontLoadState = loadState[family] ?? (isFontLoaded(family) ? 'loaded' : 'idle');
+            return (
+              <button
+                key={family}
+                onClick={() => void pickGoogleFont(family)}
+                disabled={state === 'loading'}
+                className="rounded-md border px-2.5 py-2 text-left flex items-center gap-1.5"
+                style={{
+                  borderColor: active ? 'var(--primary)' : 'var(--border)',
+                  background: active ? 'var(--accent)' : 'var(--card)',
+                  color: 'var(--foreground)',
+                }}
+              >
+                <span
+                  className="text-[11px] flex-1 min-w-0 truncate"
+                  style={{ fontFamily: state === 'loaded' ? stack : undefined }}
+                >
+                  {family}
+                </span>
+                {state === 'loading' && <Loader2 size={11} className="animate-spin shrink-0" style={{ color: 'var(--muted-foreground)' }} />}
+                {state === 'loaded' && <Check size={11} className="shrink-0" style={{ color: 'var(--success)' }} />}
+                {state === 'error' && <CloudOff size={11} className="shrink-0" style={{ color: 'var(--warning)' }} />}
+                {state === 'idle' && <Download size={11} className="shrink-0" style={{ color: 'var(--muted-foreground)' }} />}
+              </button>
+            );
+          })}
+        </div>
+        {!shown.length && (
+          <div className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>No family matches "{filter}".</div>
+        )}
       </section>
     </div>
   );

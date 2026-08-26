@@ -16,6 +16,7 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import useStore, { activeTerminalSend, activePaneCycleView } from './store';
 import { requestNotificationPermission } from './utils';
+import { ensureStackLoaded } from './googleFonts';
 import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
@@ -54,6 +55,11 @@ export default function App() {
   useEffect(() => {
     document.title = attentionCount > 0 ? `(${attentionCount}) sheepit 🐑` : 'sheepit 🐑';
   }, [attentionCount]);
+
+  // A terminal font fetched from Google is only a string in preferences until
+  // something asks for the bytes. Do that before the panes settle, or a font
+  // chosen last week comes up as the fallback and looks like it was forgotten.
+  useEffect(() => { void ensureStackLoaded(useStore.getState().terminalFontFamily); }, []);
 
   // True while a popstate handler is running — prevents connectSession from
   // pushing another history entry for the same navigation.
