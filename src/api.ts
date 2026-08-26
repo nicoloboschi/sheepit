@@ -9,6 +9,7 @@ import { configDir, notesDir } from './paths.js';
 import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
+import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -386,6 +387,36 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    *  SHEEPIT_SESSION_ID — panes created before it existed, or an agent
    *  started outside the shell we seeded. The caller sends its process
    *  ancestry, nearest first. */
+  /** What the agent-state plugin is, and what each agent currently has. */
+  router.get('/plugin', async (_req, res) => {
+    try {
+      res.json(await getPluginStatus());
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /**
+   * Reinstall the plugin into every agent found, ignoring version equality.
+   *
+   * Startup installs only when the version differs, which is right for a
+   * release and wrong for a checkout: editing `plugin/` does not move the
+   * version, so the code on disk and the code the agent loads drift apart.
+   * This is how you push the current one out without inventing a version.
+   *
+   * Slow by nature — it shells out to `claude` and `codex`, each up to a
+   * minute — so it gets a generous window and the client shows a spinner.
+   */
+  router.post('/plugin/reinstall', async (_req, res) => {
+    try {
+      // installIntoClaude/installIntoCodex already log what they did, and the
+      // response carries the verified after-state, so nothing to add here.
+      res.json(await reinstallAgentPlugin());
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   router.post('/sessions/resolve', (req, res) => {
     try {
       const { pids } = req.body as { pids?: unknown };

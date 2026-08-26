@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, ScrollText, Keyboard, Sparkles, Zap, Palette, Moon, Sun } from 'lucide-react';
+import { Activity, ScrollText, Keyboard, Sparkles, Zap, Palette, Moon, Sun, Plug } from 'lucide-react';
 import { DialogHeader, DialogTitle } from './ui/dialog';
 import ConfigDialog from './ConfigDialog';
 import SheepIcon from './SheepIcon';
@@ -8,12 +8,14 @@ import { LogsContent } from './LogsModal';
 import { ShortcutsContent } from './ShortcutsDialog';
 import { AIFeaturesContent } from './AIFeaturesDialog';
 import { CommandsContent } from './CommandsDialog';
+import { PluginContent } from './PluginDialog';
 import useStore from '../store';
 
 const TABS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'ai', label: 'AI Features', icon: Sparkles },
   { id: 'commands', label: 'Commands', icon: Zap },
+  { id: 'plugin', label: 'Agent Plugin', icon: Plug },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'logs', label: 'Server Logs', icon: ScrollText },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity },
@@ -74,6 +76,7 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
           {tab === 'shortcuts' && <ShortcutsContent />}
           {tab === 'commands' && <CommandsContent />}
           {tab === 'ai' && <AIFeaturesContent />}
+          {tab === 'plugin' && <PluginContent />}
           {tab === 'appearance' && (
             <div className="p-5">
               <h3 className="text-sm font-semibold mb-1">Appearance</h3>

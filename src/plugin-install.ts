@@ -82,6 +82,68 @@ export async function ensureAgentPluginInstalled(): Promise<void> {
   ]);
 }
 
+/** Whether an agent's CLI exists on this machine at all. */
+async function agentAvailable(bin: string): Promise<boolean> {
+  try {
+    await execFileAsync(bin, ['--version'], { timeout: 10_000 });
+    return true;
+  } catch { return false; }
+}
+
+export interface AgentPluginState {
+  /** The agent's CLI is on PATH. When false, nothing here is installable. */
+  available: boolean;
+  /** Version that agent currently has installed, or null for none. */
+  installed: string | null;
+}
+
+export interface PluginStatus {
+  /** Version bundled with the sheepit build that is running. */
+  shipped: string | null;
+  claude: AgentPluginState;
+  codex: AgentPluginState;
+}
+
+/** Read-only: what is bundled, and what each agent currently has. */
+export async function getPluginStatus(): Promise<PluginStatus> {
+  const root = packageRoot();
+  const [claudeAvailable, codexAvailable] = await Promise.all([
+    agentAvailable('claude'),
+    agentAvailable('codex'),
+  ]);
+  return {
+    shipped: shippedVersion(root),
+    claude: { available: claudeAvailable, installed: installedVersion() },
+    codex: { available: codexAvailable, installed: codexInstalledVersion() },
+  };
+}
+
+/**
+ * Reinstall the plugin into every agent found, whatever versions say.
+ *
+ * The startup path deliberately skips when the installed version already
+ * matches, or every server start would reinstall forever. That check is wrong
+ * for someone who has edited `plugin/` in a checkout and wants that code
+ * running: the version has not moved, but the files have. This is the escape
+ * hatch behind the Settings button.
+ *
+ * Returns the status observed afterwards, so the caller can show what actually
+ * landed rather than trusting an exit code — both CLIs report success in cases
+ * where nothing changed.
+ */
+export async function reinstallAgentPlugin(): Promise<PluginStatus> {
+  const root = packageRoot();
+  const shipped = shippedVersion(root);
+  if (!shipped || !existsSync(join(root, '.claude-plugin', 'marketplace.json'))) {
+    return getPluginStatus();
+  }
+  await Promise.all([
+    installIntoClaude(root, shipped, true),
+    installIntoCodex(root, shipped, true),
+  ]);
+  return getPluginStatus();
+}
+
 /**
  * Codex reads the very same .claude-plugin/marketplace.json and the same
  * hooks/hooks.json, so one plugin serves both agents.
@@ -92,9 +154,13 @@ export async function ensureAgentPluginInstalled(): Promise<void> {
  * frequently already spoken for (Codex Computer Use sets it), and must not be
  * disturbed.
  */
-async function installIntoCodex(root: string, shipped: string): Promise<void> {
+async function installIntoCodex(root: string, shipped: string, force = false): Promise<void> {
   const current = codexInstalledVersion();
-  if (current === shipped) return;
+  // `force` is what the Settings button uses. Version equality means "the
+  // build you are running already shipped this", which is exactly the wrong
+  // test when someone has edited the plugin in place and wants that code out
+  // there — so a forced run always reinstalls.
+  if (current === shipped && !force) return;
 
   try {
     await execFileAsync('codex', ['--version'], { timeout: 10_000 });
@@ -102,7 +168,7 @@ async function installIntoCodex(root: string, shipped: string): Promise<void> {
 
   try {
     await execFileAsync('codex', ['plugin', 'marketplace', 'add', root], { timeout: 30_000 });
-    if (current) await execFileAsync('codex', ['plugin', 'remove', PLUGIN_ID], { timeout: 30_000 });
+    if (current) await execFileAsync('codex', ['plugin', 'remove', PLUGIN_ID], { timeout: 30_000 }).catch(() => {});
     await execFileAsync('codex', ['plugin', 'add', PLUGIN_ID], { timeout: 60_000 });
 
     const after = codexInstalledVersion();
@@ -120,9 +186,9 @@ async function installIntoCodex(root: string, shipped: string): Promise<void> {
   }
 }
 
-async function installIntoClaude(root: string, shipped: string): Promise<void> {
+async function installIntoClaude(root: string, shipped: string, force = false): Promise<void> {
   const current = installedVersion();
-  if (current === shipped) return;
+  if (current === shipped && !force) return;
 
   // No Claude Code on this machine — nothing to install into, and not worth a
   // warning: plenty of sheepit users do not run it.
@@ -131,7 +197,16 @@ async function installIntoClaude(root: string, shipped: string): Promise<void> {
   } catch { return; }
 
   try {
-    if (current) {
+    if (current && force) {
+      // A forced reinstall at the SAME version cannot use `update` — there is
+      // nothing newer to update to and it would report success having done
+      // nothing. Tear it out and put it back so the files on disk are the
+      // files in this checkout.
+      await execFileAsync('claude', ['plugin', 'marketplace', 'add', root], { timeout: 30_000 }).catch(() => {});
+      await execFileAsync('claude', ['plugin', 'marketplace', 'update', MARKETPLACE], { timeout: 30_000 }).catch(() => {});
+      await execFileAsync('claude', ['plugin', 'uninstall', PLUGIN_ID], { timeout: 60_000 }).catch(() => {});
+      await execFileAsync('claude', ['plugin', 'install', PLUGIN_ID, '--yes'], { timeout: 60_000 });
+    } else if (current) {
       // `install` refuses to touch an already-installed plugin ("already
       // installed"), so an upgrade needs the marketplace refreshed and then an
       // explicit update — otherwise every restart would re-run this and never
