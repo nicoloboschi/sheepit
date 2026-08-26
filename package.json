@@ -1,6 +1,6 @@
 {
   "name": "@nicoloboschi/sheepit",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Your machine, anywhere — a full-featured terminal in your browser. No tmux required.",
   "type": "module",
   "main": "electron/main.cjs",
