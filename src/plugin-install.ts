@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, copyFileSync, mkdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -80,6 +80,70 @@ export async function ensureAgentPluginInstalled(): Promise<void> {
     installIntoClaude(root, shipped),
     installIntoCodex(root, shipped),
   ]);
+
+  // Reach the sessions that are already running, not just the next one.
+  const refreshed = syncPluginScriptsIntoCaches(root);
+  if (refreshed) logger.debug(`Refreshed plugin scripts in ${refreshed} cached copies`);
+}
+
+/** Every version-keyed copy of this plugin on disk, across both agents. */
+function pluginCacheDirs(): string[] {
+  const roots = [
+    join(homedir(), '.claude', 'plugins', 'cache', MARKETPLACE, MARKETPLACE),
+    join(homedir(), '.codex', 'plugins', 'cache', MARKETPLACE, MARKETPLACE),
+  ];
+  const dirs: string[] = [];
+  for (const root of roots) {
+    try {
+      for (const v of readdirSync(root)) {
+        if (!/^\d/.test(v)) continue;
+        const dir = join(root, v);
+        if (statSync(dir).isDirectory()) dirs.push(dir);
+      }
+    } catch { /* that agent has never installed it */ }
+  }
+  return dirs;
+}
+
+/**
+ * Overwrite the scripts in EVERY cached copy, old versions included.
+ *
+ * An agent resolves `CLAUDE_PLUGIN_ROOT` when it starts and keeps using that
+ * directory for its whole life. Installing 0.9.0 therefore does nothing for a
+ * session that started on 0.6.0 — it goes on executing 0.6.0's scripts until
+ * someone restarts it, which is why a fix to the reporter never reached the
+ * sessions that most needed it.
+ *
+ * The hook *command* is a fresh process reading the file from disk each time
+ * it fires, so overwriting the script does reach a running session. That makes
+ * this the one way to ship a script fix without asking for a restart.
+ *
+ * What it deliberately cannot do is change WHICH events fire: hooks.json is
+ * read once when the agent starts, so a newly wired event still needs a
+ * restart. Copying it anyway keeps the directories self-consistent for
+ * whenever that restart happens.
+ */
+export function syncPluginScriptsIntoCaches(root: string): number {
+  const from = join(root, 'plugin');
+  if (!existsSync(from)) return 0;
+
+  let updated = 0;
+  for (const dir of pluginCacheDirs()) {
+    for (const sub of ['bin', 'hooks']) {
+      const src = join(from, sub);
+      const dest = join(dir, sub);
+      try {
+        if (!existsSync(src)) continue;
+        mkdirSync(dest, { recursive: true });
+        for (const file of readdirSync(src)) copyFileSync(join(src, file), join(dest, file));
+        updated++;
+      } catch (e) {
+        // A cache we cannot write is not worth failing a server start over.
+        logger.debug(`Could not refresh plugin scripts in ${dest}: ${e}`);
+      }
+    }
+  }
+  return updated;
 }
 
 /** Whether an agent's CLI exists on this machine at all. */
@@ -141,6 +205,7 @@ export async function reinstallAgentPlugin(): Promise<PluginStatus> {
     installIntoClaude(root, shipped, true),
     installIntoCodex(root, shipped, true),
   ]);
+  syncPluginScriptsIntoCaches(root);
   return getPluginStatus();
 }
 
