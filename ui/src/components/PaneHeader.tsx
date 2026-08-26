@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, Maximize2, Minimize2, FolderOpen, Columns2 } from 'lucide-react';
+import { SquareTerminal, X, Maximize2, Minimize2, FolderOpen, Columns2, RotateCcw } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
 import StatChips from './StatChips';
@@ -261,6 +261,25 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           <span className="pane-bar-voice">
             <VoiceInputButton sessionId={sessionId} />
           </span>
+        )}
+
+        {/* Headless only: kill this shell and start a fresh one.
+            A headless session has no pen and no sibling panes, so there is no
+            close-and-make-another path through the sidebar — and when it hangs
+            that is exactly what you want. Server-side in one step; see the
+            `restart` branch in server.ts for why the client cannot sequence
+            it itself. */}
+        {session.isHeadless && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              sharedWs.send({ type: 'create_session', path: null, headless: true, restart: true });
+            }}
+            title="Kill this headless shell and start a fresh one"
+            className="pane-bar-btn pane-bar-btn-danger"
+          >
+            <RotateCcw size={11} />
+          </button>
         )}
 
         {/* Zen toggle — enters/exits distraction-free fullscreen */}

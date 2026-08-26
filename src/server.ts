@@ -217,7 +217,16 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             // repeatedly without accidentally accumulating hidden PTYs.
             if (isHeadless) {
               const existing = (await bridge.listSessions()).find(s => s.isHeadless);
-              if (existing) {
+              // `restart` is the "it has hung, start over" path. Closing and
+              // re-asking from the client cannot do this: the two messages
+              // race the singleton lookup above, and a create that arrives
+              // before the close has landed is handed back the very session
+              // it was trying to replace. Doing both here makes it one step.
+              if (existing && msg.restart === true) {
+                state.subscribedSessions.get(existing.id)?.();
+                state.subscribedSessions.delete(existing.id);
+                await bridge.closeSession(existing.id);
+              } else if (existing) {
                 send({ type: 'session_created', session_id: existing.id, path: existing.path, headless: true, existing: true });
                 break;
               }
