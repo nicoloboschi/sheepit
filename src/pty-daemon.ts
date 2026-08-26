@@ -18,14 +18,31 @@
 import * as net from 'net';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
-import { existsSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 import { homedir } from 'os';
 import { configDir } from './paths.js';
 
 const CONFIG_DIR = configDir();
 const SOCKET_PATH = join(CONFIG_DIR, 'pty-daemon.sock');
 const PID_FILE = join(CONFIG_DIR, 'pty-daemon.pid');
+/** The code this process started with, so a supervisor can tell exactly
+ *  whether a running proxy predates the source on disk. Timestamps cannot:
+ *  a pull, a touch, a second worktree or a clock skew all lie about it, and
+ *  guessing wrong here closes every session. */
+const FINGERPRINT_FILE = join(CONFIG_DIR, 'pty-daemon.fingerprint');
+
+function codeFingerprint(): string {
+  const self = fileURLToPath(import.meta.url);
+  const ext = self.endsWith('.ts') ? '.ts' : '.js';
+  const h = createHash('sha256');
+  for (const f of [self, join(dirname(self), `paths${ext}`)]) {
+    try { h.update(readFileSync(f)); } catch { h.update(f); }
+  }
+  return h.digest('hex').slice(0, 16);
+}
 const LOG_FILE = join(CONFIG_DIR, 'pty-daemon.log');
 
 mkdirSync(CONFIG_DIR, { recursive: true });
@@ -297,7 +314,32 @@ function handleRequest(req: DaemonRequest, socket: net.Socket): void {
 
 // ── Server ───────────────────────────────────────────────────────────────────
 
-// Clean up stale socket
+/** True when something is already listening on the socket. */
+async function socketIsLive(): Promise<boolean> {
+  if (!existsSync(SOCKET_PATH)) return false;
+  return new Promise<boolean>((resolve) => {
+    const probe = net.createConnection(SOCKET_PATH);
+    const done = (live: boolean): void => {
+      try { probe.destroy(); } catch { /* already gone */ }
+      resolve(live);
+    };
+    probe.on('connect', () => done(true));
+    probe.on('error', () => done(false));
+    setTimeout(() => done(false), 1000);
+  });
+}
+
+// Never take the socket from a proxy that is still alive. Unlinking it and
+// binding our own would leave that process running and unreachable, holding
+// every PTY it owns forever: it ignores signals, has no idle timeout, and its
+// only clean exit is a message on the socket it no longer has. Two of these
+// racing at startup is exactly how a machine ends up with a stack of orphans.
+if (await socketIsLive()) {
+  daemonLog('another proxy already owns the socket — exiting rather than orphaning it');
+  process.exit(0);
+}
+
+// Nothing answered, so the socket file is a leftover.
 if (existsSync(SOCKET_PATH)) {
   try { unlinkSync(SOCKET_PATH); } catch {}
 }
@@ -336,17 +378,25 @@ const server = net.createServer((socket) => {
   });
 });
 
+let ownsSocket = false;
+
 server.listen(SOCKET_PATH, () => {
+  ownsSocket = true;
   // Write PID file so the main server can check if we're running
   writeFileSync(PID_FILE, String(process.pid));
+  writeFileSync(FINGERPRINT_FILE, codeFingerprint());
   daemonLog(`daemon started pid=${process.pid} socket=${SOCKET_PATH} protocol=${PROTOCOL_VERSION}`);
 });
 
 // Clean up on exit
 process.on('exit', () => {
+  // A proxy that never bound owns none of this. Cleaning up regardless would
+  // delete the live proxy's socket and take its sessions down with it.
+  if (!ownsSocket) return;
   daemonLog(`daemon exiting pid=${process.pid}`);
   try { unlinkSync(SOCKET_PATH); } catch {}
   try { unlinkSync(PID_FILE); } catch {}
+  try { unlinkSync(FINGERPRINT_FILE); } catch {}
   for (const [, sess] of sessions) {
     try { sess.pty.kill(); } catch {}
   }
