@@ -40,6 +40,7 @@ export const TERMINAL_FONT_PRESETS: readonly TerminalFontPreset[] = [
   { label: 'JetBrains Mono',  stack: DEFAULT_TERMINAL_FONT, note: 'bundled' },
   { label: 'System mono',     stack: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace' },
   { label: 'Menlo',           stack: 'Menlo, monospace' },
+  { label: 'Monaco',          stack: 'Monaco, monospace' },
   { label: 'Fira Code',       stack: '"Fira Code", monospace' },
   { label: 'Cascadia Code',   stack: '"Cascadia Code", "Cascadia Mono", monospace' },
   { label: 'Source Code Pro', stack: '"Source Code Pro", monospace' },

@@ -6,6 +6,7 @@ import {
   TERMINAL_FONT_PRESETS,
   DEFAULT_TERMINAL_FONT,
 } from '../theme';
+import { resolveFontStack, type StackResolution } from '../fontAvailability';
 
 /** Glyph-rich enough to answer the questions you actually open this for: is
  *  zero slashed, do l/1/I differ, does the box drawing join up, and did the
@@ -24,6 +25,24 @@ export function AppearanceContent() {
   // and pushes a resize to the PTY.
   const [draft, setDraft] = useState(fontFamily);
   useEffect(() => { setDraft(fontFamily); }, [fontFamily]);
+
+  // Measured after document.fonts settles, or the bundled JetBrains Mono is
+  // still loading and reports itself missing.
+  const [resolved, setResolved] = useState<Record<string, StackResolution>>({});
+  useEffect(() => {
+    let live = true;
+    const measure = () => {
+      if (!live) return;
+      const next: Record<string, StackResolution> = {};
+      for (const p of TERMINAL_FONT_PRESETS) next[p.stack] = resolveFontStack(p.stack);
+      next[fontFamily] = resolveFontStack(fontFamily);
+      setResolved(next);
+    };
+    document.fonts?.ready.then(measure) ?? measure();
+    return () => { live = false; };
+  }, [fontFamily]);
+
+  const current = resolved[fontFamily];
 
   const term = TERMINAL_THEMES[theme];
 
@@ -79,6 +98,12 @@ export function AppearanceContent() {
         <div className="grid grid-cols-2 gap-2 mb-3">
           {TERMINAL_FONT_PRESETS.map(p => {
             const active = fontFamily === p.stack;
+            // Anything ahead of the family you actually get is a family this
+            // device doesn't have — which makes the button's own label a lie.
+            // Undefined until the first measurement lands: treat as fine, so
+            // the grid doesn't flash a wall of warnings as the dialog opens.
+            const r = resolved[p.stack];
+            const missing = !!r && r.missing.length > 0;
             return (
               <button
                 key={p.label}
@@ -90,10 +115,10 @@ export function AppearanceContent() {
                   color: 'var(--foreground)',
                 }}
               >
-                <div className="text-xs" style={{ fontFamily: p.stack }}>{p.label}</div>
-                {p.note && (
-                  <div className="text-[10px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>{p.note}</div>
-                )}
+                <div className="text-xs" style={{ fontFamily: p.stack, opacity: missing ? 0.55 : 1 }}>{p.label}</div>
+                <div className="text-[10px] mt-0.5" style={{ color: missing ? 'var(--warning)' : 'var(--muted-foreground)' }}>
+                  {missing ? `not installed — you'd get ${r!.effective ?? 'the default'}` : p.note}
+                </div>
               </button>
             );
           })}
@@ -121,6 +146,13 @@ export function AppearanceContent() {
             outline: 'none',
           }}
         />
+
+        {current && current.missing.length > 0 && (
+          <div className="mt-1.5 text-[11px]" style={{ color: 'var(--warning)' }}>
+            {current.missing.join(', ')} {current.missing.length > 1 ? 'are' : 'is'} not installed on this device —
+            {' '}rendering in {current.effective ?? 'the default monospace'} instead.
+          </div>
+        )}
 
         <div
           className="mt-3 rounded-md border px-3 py-2.5 overflow-x-auto"
