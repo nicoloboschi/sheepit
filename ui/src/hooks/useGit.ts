@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { usePoll } from './usePoll';
 
 export interface GitStatus {
   branch: string;
@@ -26,59 +27,53 @@ export interface GithubPR {
   repoUrl?: string;
 }
 
+/** GET a JSON endpoint, or null if it is unreachable or unhappy. Every one of
+ *  these polls decorates the UI, so a failure means "show nothing", never an
+ *  error state. */
+async function getJson<T>(url: string): Promise<T | null> {
+  try {
+    const res = await fetch(url);
+    return res.ok ? (await res.json() as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useGit(sessionId: string | null, intervalMs = 5000): GitStatus | null {
   const [git, setGit] = useState<GitStatus | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  usePoll(useCallback(async () => {
     if (!sessionId) { setGit(null); return; }
-
-    async function fetchGit() {
-      try {
-        const res = await fetch(`/api/git/${encodeURIComponent(sessionId!)}`);
-        if (res.ok) setGit(await res.json());
-      } catch { /* ignore */ }
-    }
-
-    fetchGit();
-    timerRef.current = setInterval(fetchGit, intervalMs);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [sessionId, intervalMs]);
+    const data = await getJson<GitStatus>(`/api/git/${encodeURIComponent(sessionId)}`);
+    if (data) setGit(data);
+  }, [sessionId]), intervalMs, sessionId);
 
   return git;
 }
 
 export function useGitRoots(intervalMs = 15000): GitRoot | null {
   const [roots, setRoots] = useState<GitRoot | null>(null);
-  useEffect(() => {
-    async function fetchRoots() {
-      try {
-        const res = await fetch('/api/sessions/git-roots');
-        if (res.ok) setRoots(await res.json());
-      } catch { /* ignore */ }
-    }
-    fetchRoots();
-    const t = setInterval(fetchRoots, intervalMs);
-    return () => clearInterval(t);
-  }, [intervalMs]);
+
+  usePoll(useCallback(async () => {
+    const data = await getJson<GitRoot>('/api/sessions/git-roots');
+    if (data) setRoots(data);
+  }, []), intervalMs);
+
   return roots;
 }
 
 export function useWorktrees(sessionId: string | null, intervalMs = 10000): [Worktree[] | null, () => Promise<void>] {
   const [data, setData] = useState<Worktree[] | null>(null);
+
   const fetchData = useCallback(async () => {
     if (!sessionId) { setData(null); return; }
-    try {
-      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/worktrees`);
-      if (res.ok) setData(await res.json());
-    } catch { /* ignore */ }
+    const res = await getJson<Worktree[]>(`/api/git/${encodeURIComponent(sessionId)}/worktrees`);
+    if (res) setData(res);
   }, [sessionId]);
-  useEffect(() => {
-    setData(null);
-    fetchData();
-    const t = setInterval(fetchData, intervalMs);
-    return () => clearInterval(t);
-  }, [fetchData, intervalMs]);
+
+  useEffect(() => { setData(null); }, [sessionId]);
+  usePoll(fetchData, intervalMs, sessionId);
+
   return [data, fetchData];
 }
 
@@ -87,18 +82,12 @@ export function useGithubPR(sessionId: string | null, intervalMs = 30000): Githu
 
   const fetchData = useCallback(async () => {
     if (!sessionId) { setData(null); return; }
-    try {
-      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/github`);
-      if (res.ok) setData(await res.json());
-    } catch { /* ignore */ }
+    const res = await getJson<GithubPR>(`/api/git/${encodeURIComponent(sessionId)}/github`);
+    if (res) setData(res);
   }, [sessionId]);
 
-  useEffect(() => {
-    setData(null);
-    fetchData();
-    const t = setInterval(fetchData, intervalMs);
-    return () => clearInterval(t);
-  }, [fetchData, intervalMs]);
+  useEffect(() => { setData(null); }, [sessionId]);
+  usePoll(fetchData, intervalMs, sessionId);
 
   return data;
 }

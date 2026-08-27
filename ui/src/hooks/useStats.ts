@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useCallback } from 'react';
+import { usePoll } from './usePoll';
 
 export interface StatsProcess {
   pid: number;
@@ -15,25 +16,16 @@ export interface Stats {
 
 export function useStats(sessionId: string | null, intervalMs = 2000): Stats | null {
   const [stats, setStats] = useState<Stats | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    async function fetchStats() {
-      try {
-        const url = sessionId
-          ? `/api/stats?session_id=${encodeURIComponent(sessionId)}`
-          : '/api/stats';
-        const res = await fetch(url);
-        if (res.ok) setStats(await res.json());
-      } catch {
-        // ignore
-      }
-    }
-
-    fetchStats();
-    timerRef.current = setInterval(fetchStats, intervalMs);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [sessionId, intervalMs]);
+  usePoll(useCallback(async () => {
+    const url = sessionId
+      ? `/api/stats?session_id=${encodeURIComponent(sessionId)}`
+      : '/api/stats';
+    try {
+      const res = await fetch(url);
+      if (res.ok) setStats(await res.json());
+    } catch { /* decorative — show nothing rather than an error */ }
+  }, [sessionId]), intervalMs, sessionId);
 
   return stats;
 }
