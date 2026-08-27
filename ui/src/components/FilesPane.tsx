@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { usePoll } from '../hooks/usePoll';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
   Search, X, Filter, Upload, FilePlus, FolderPlus,
 } from 'lucide-react';
-import FileView from './FileView';
+// Deferred: the editor stack (CodeMirror + language packs + highlighter) is
+// the single biggest thing in the bundle, and it is not needed until you
+// actually open a file.
+const FileView = lazy(() => import('./FileView'));
 import { preferences } from '../preferences';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -245,6 +248,7 @@ interface FileViewerProps {
 export function FileViewer({ path, cwd: viewerCwd, sessionId, gitStatus, highlightQuery, highlightLine, onDelete, autoSave }: FileViewerProps) {
   const displayPath = viewerCwd && path?.startsWith(viewerCwd + '/') ? path.slice(viewerCwd.length + 1) : (path ?? undefined);
   return (
+    <Suspense fallback={<div style={{ padding: 12, fontSize: 11, color: 'var(--muted-foreground)' }}>Loading editor…</div>}>
     <FileView
       path={path}
       sessionId={sessionId}
@@ -257,6 +261,7 @@ export function FileViewer({ path, cwd: viewerCwd, sessionId, gitStatus, highlig
       autoSave={autoSave}
       defaultMode={autoSave ? 'edit' : 'content'}
     />
+    </Suspense>
   );
 }
 

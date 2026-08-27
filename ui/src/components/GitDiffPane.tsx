@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import {
   RefreshCw, ChevronDown, ChevronRight, FilePlus, FileMinus, FileCode,
   GitCommitHorizontal, FolderOpen,
 } from 'lucide-react';
-import FileView, { parseDiff, type DiffFile } from './FileView';
+import { parseDiff, type DiffFile } from '../diff';
+// Deferred: FileView drags CodeMirror and sixteen language packs behind it,
+// and a diff you have not opened needs none of them.
+const FileView = lazy(() => import('./FileView'));
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 // Diff types + parser live in FileView (the shared single-file component).
@@ -38,6 +41,7 @@ function FileBlock({ file, gitRoot, sessionId, isFocused, scrollRoot }: FileBloc
   // sidebar/keyboard "jump to file" can still scroll to it.
   return (
     <div data-file={displayPath}>
+      <Suspense fallback={<div style={{ height: 32 }} />}>
       <FileView
         path={absPath}
         sessionId={sessionId}
@@ -54,6 +58,7 @@ function FileBlock({ file, gitRoot, sessionId, isFocused, scrollRoot }: FileBloc
         isFocused={isFocused}
         scrollRoot={scrollRoot}
       />
+      </Suspense>
     </div>
   );
 }

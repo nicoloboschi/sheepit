@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -22,7 +22,9 @@ import Sidebar from './components/Sidebar';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
 import TerminalCell from './components/TerminalCell';
-import KnowledgeDialog from './components/KnowledgeDialog';
+// Deferred: the Knowledge dialog carries MDXEditor, which nothing else uses
+// and most sessions never open.
+const KnowledgeDialog = lazy(() => import('./components/KnowledgeDialog'));
 import MobileKeybar from './components/MobileKeybar';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
@@ -600,7 +602,11 @@ export default function App() {
         </div>
 
         <ConfirmDialog />
-        {knowledgeOpen && <KnowledgeDialog onClose={() => setKnowledgeOpen(false)} />}
+        {knowledgeOpen && (
+          <Suspense fallback={null}>
+            <KnowledgeDialog onClose={() => setKnowledgeOpen(false)} />
+          </Suspense>
+        )}
       </div>
 
       {/* DragOverlay floats with the cursor for both workspace and pane
