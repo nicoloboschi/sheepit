@@ -8,9 +8,8 @@ export interface StatsProcess {
 }
 
 export interface Stats {
-  cpu_percent: number;
-  mem_percent: number;
-  mem_used_gb: number;
+  /** This pane's child processes. The server used to also return machine-wide
+   *  cpu/mem here; nothing rendered them, so they are gone. */
   processes: StatsProcess[];
 }
 

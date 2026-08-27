@@ -570,7 +570,12 @@ interface StatChipsProps {
 }
 
 export default function StatChips({ sessionId, send }: StatChipsProps): React.ReactElement {
-  const stats = useStats(sessionId) as Stats | null;
+  // The bar only needs to know *whether* this pane has children, to decide if
+  // the handle is worth drawing — a fact that changes when you start or finish
+  // a command, not several times a second. The live figures are in the
+  // popover, so that is the only time worth paying for a fast poll.
+  const [open, setOpen] = useState(false);
+  const stats = useStats(sessionId, open ? 2000 : 20000) as Stats | null;
   const sessionUrls = useStore((s: any) => s.sessionUrls?.[sessionId] ?? EMPTY_URLS) as string[];
 
   // The pane's own child processes (not system-wide). Still polled, because
@@ -602,7 +607,7 @@ export default function StatChips({ sessionId, send }: StatChipsProps): React.Re
   return (
     <div className="stat-chips">
       <GitChip sessionId={sessionId} send={send} />
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button className="pane-bar-more" title={`This sheep: ${label}`}>
             <ListTree size={12} />

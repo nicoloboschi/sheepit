@@ -6,7 +6,6 @@ import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writ
 import nodePath from 'path';
 import os from 'os';
 import { configDir, notesDir } from './paths.js';
-import si from 'systeminformation';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
@@ -15,6 +14,68 @@ import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
 const execAsync = promisify(exec);
+
+// ── Per-working-directory coalescing ────────────────────────────────────────
+// Every pane polls these endpoints for itself, and the panes of a pen nearly
+// always sit in the same worktree — so without this, four panes fork four
+// identical `git status` runs every 5s, and make four identical GitHub API
+// calls every 30s. Keying on the directory collapses each set to one.
+//
+// Two things are shared, not one: a short result cache, and the in-flight
+// promise. The promise matters more — the duplicate requests arrive together,
+// so they would all miss a result cache that nothing has filled yet.
+interface Coalescer<T> {
+  cache: Map<string, { at: number; value: T }>;
+  inFlight: Map<string, Promise<T>>;
+  ttlMs: number;
+}
+
+function makeCoalescer<T>(ttlMs: number): Coalescer<T> {
+  return { cache: new Map(), inFlight: new Map(), ttlMs };
+}
+
+/** Drop entries whose TTL has passed. Keys are working directories, so the set
+ *  is small and bounded by live sessions — but the server outlives them, and a
+ *  map that only ever grows is a leak however slow. */
+function prune<T>(c: Coalescer<T>): void {
+  const now = Date.now();
+  for (const [k, v] of c.cache) if (now - v.at >= c.ttlMs) c.cache.delete(k);
+}
+
+async function coalesced<T>(c: Coalescer<T>, key: string, work: () => Promise<T>): Promise<T> {
+  if (c.cache.size > 64) prune(c);
+  const hit = c.cache.get(key);
+  if (hit && Date.now() - hit.at < c.ttlMs) return hit.value;
+  const pending = c.inFlight.get(key);
+  if (pending) return pending;
+  const p = work()
+    .then(value => { c.cache.set(key, { at: Date.now(), value }); return value; })
+    .finally(() => { c.inFlight.delete(key); });
+  c.inFlight.set(key, p);
+  return p;
+}
+
+interface GitStatusValue {
+  branch: string; detached: boolean; dirty: boolean; ahead: number; behind: number;
+}
+// Shorter than the client's 5s poll, so nothing is staler than it already was.
+const gitStatus = makeCoalescer<GitStatusValue | null>(2000);
+// `gh pr view` is a live GitHub API round-trip (~900ms) and burns rate limit.
+// Just under the client's 30s poll, so each cycle still refreshes once.
+const githubPr = makeCoalescer<unknown>(25_000);
+
+function buildGitStatus(
+  { branch, status, aheadBehind }: { branch: string; status: string; aheadBehind: string },
+): GitStatusValue {
+  const abParts = aheadBehind.split('\t');
+  return {
+    branch,
+    detached: false,
+    dirty: status.length > 0,
+    ahead: parseInt(abParts[1] ?? '0', 10) || 0,
+    behind: parseInt(abParts[0] ?? '0', 10) || 0,
+  };
+}
 
 const PKG_VERSION: string = (() => {
   try { return JSON.parse(readFileSync(nodePath.join(__dirname, '..', 'package.json'), 'utf-8')).version; }
@@ -233,18 +294,15 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
+  // The pane's own child processes — nothing else. This used to also report
+  // machine-wide CPU and memory via systeminformation, which cost ~85ms of the
+  // ~230ms per call and was rendered nowhere: the pane bar carries identity,
+  // not telemetry, and the only figures drawn are the per-process ones below,
+  // which come from `ps`. Polled once per visible pane, that was about a third
+  // of a core spent computing numbers no one saw.
   router.get('/stats', async (req, res) => {
     try {
       const sessionId = req.query.session_id as string | undefined;
-
-      const [cpuData, memData] = await Promise.all([
-        si.currentLoad(),
-        si.mem(),
-      ]);
-
-      const cpu_percent = cpuData.currentLoad ?? 0;
-      const mem_used_gb = memData.used / (1024 ** 3);
-      const mem_percent = (memData.used / memData.total) * 100;
 
       let processes: { pid: number; name: string; cpu_percent: number; mem_mb: number }[] = [];
       if (sessionId) {
@@ -269,7 +327,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         }
       }
 
-      res.json({ cpu_percent, mem_percent, mem_used_gb, processes });
+      res.json({ processes });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -489,29 +547,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json(null);
 
-      const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
+      const value = await coalesced(gitStatus, cwd, async () => {
+        const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
 
-      const [branch, status, aheadBehind] = await Promise.all([
-        run('git rev-parse --abbrev-ref HEAD'),
-        run('git status --short'),
-        run('git rev-list --left-right --count @{u}...HEAD 2>/dev/null'),
-      ]);
+        const [branch, status, aheadBehind] = await Promise.all([
+          run('git rev-parse --abbrev-ref HEAD'),
+          run('git status --short'),
+          run('git rev-list --left-right --count @{u}...HEAD 2>/dev/null'),
+        ]);
 
-      if (!branch || branch === 'HEAD') {
-        // Detached HEAD — try short hash
-        const hash = await run('git rev-parse --short HEAD');
-        if (!hash) return res.json(null);
-        return res.json({ branch: hash, detached: true, dirty: status.length > 0, ahead: 0, behind: 0 });
-      }
-
-      const abParts = aheadBehind.split('\t');
-      res.json({
-        branch,
-        detached: false,
-        dirty: status.length > 0,
-        ahead: parseInt(abParts[1] ?? '0', 10) || 0,
-        behind: parseInt(abParts[0] ?? '0', 10) || 0,
+        if (!branch || branch === 'HEAD') {
+          // Detached HEAD — try short hash
+          const hash = await run('git rev-parse --short HEAD');
+          if (!hash) return null;
+          return { branch: hash, detached: true, dirty: status.length > 0, ahead: 0, behind: 0 };
+        }
+        return buildGitStatus({ branch, status, aheadBehind });
       });
+      res.json(value);
     } catch {
       res.json(null);
     }
@@ -525,13 +578,14 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json(null);
 
+      const value = await coalesced(githubPr, cwd, async () => {
       const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
 
       const remoteUrl = await run('git remote get-url origin 2>/dev/null');
-      if (!remoteUrl) return res.json(null);
+      if (!remoteUrl) return null;
 
       const m = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
-      if (!m) return res.json(null);
+      if (!m) return null;
       const owner = m[1]!;
       const repo  = m[2]!.replace(/\.git$/, '');
       const repoUrl = `https://github.com/${owner}/${repo}`;
@@ -579,7 +633,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         } catch { /* no gh, no API access */ }
       }
 
-      res.json({ repoUrl, prUrl, prNum, prState, prChecks, prReviewDecision, branch, owner, repo });
+      return { repoUrl, prUrl, prNum, prState, prChecks, prReviewDecision, branch, owner, repo };
+      });
+      res.json(value);
     } catch {
       res.json(null);
     }
