@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { usePoll } from '../hooks/usePoll';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
@@ -751,20 +752,14 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   }, [openTabs, sessionId]);
 
   // Fetch git status and refresh every 5s
-  useEffect(() => {
+  usePoll(useCallback(async () => {
     if (!sessionId) return;
-    let cancelled = false;
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/status`);
-        const data = await res.json();
-        if (!cancelled) setGitStatus(data.files ?? null);
-      } catch { /* ignore */ }
-    };
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [sessionId]);
+    try {
+      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/status`);
+      const data = await res.json();
+      setGitStatus(data.files ?? null);
+    } catch { /* decorative — leave the last known status up */ }
+  }, [sessionId]), 5000, sessionId);
 
   // Expose openFile(path) to parent via ref
   useEffect(() => {

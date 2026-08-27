@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
 import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
@@ -510,11 +511,9 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
   }));
   const unseen = unseenCells.length > 0;
   const elRef = useRef<HTMLDivElement | null>(null);
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => tick(n => n + 1), 5_000);
-    return () => clearInterval(id);
-  }, []);
+  // Re-render on a clock so the row's relative age stays honest. Shared, so
+  // twenty pens mean one timer and one tick, not twenty of each.
+  useSharedTick(5_000);
 
   useEffect(() => {
     if (isActive && elRef.current) {
