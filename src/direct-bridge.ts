@@ -756,6 +756,9 @@ export class DirectBridge {
   private nextId = 1;
   private ringFlushInterval: ReturnType<typeof setInterval> | null = null;
   private sessionListInterval: ReturnType<typeof setInterval> | null = null;
+  /** Last session list actually broadcast, encoded, so an unchanged sweep can
+   *  stay quiet (see discoverSessions). */
+  private lastSessionsEncoded: string | null = null;
   private previewInterval: ReturnType<typeof setInterval> | null = null;
   private gitCacheInterval: ReturnType<typeof setInterval> | null = null;
   private prCacheInterval: ReturnType<typeof setInterval> | null = null;
@@ -969,6 +972,19 @@ export class DirectBridge {
     for (const s of sessions) {
       if (!this.knownSessions.has(s.id)) { this.knownSessions.add(s.id); this.persist(); }
     }
+    // The sweep runs every 2s whether or not anything moved, and the list is
+    // ~9 KB with twenty sessions. Broadcasting it regardless made it 73% of all
+    // socket traffic to an idle tab, and — worse than the bytes — handed every
+    // client a fresh object twice a second, so the sidebar re-rendered on a
+    // timer rather than on news. Same rule publishPreviews already follows:
+    // say nothing when there is nothing to say.
+    //
+    // A newly connected client does not depend on this. It asks for the list
+    // itself (`list_sessions`) and is answered on its own socket.
+    const encoded = JSON.stringify(sessions);
+    if (encoded === this.lastSessionsEncoded) return;
+    this.lastSessionsEncoded = encoded;
+
     this.pubsub.publish('__sessions__', { type: 'sessions', sessions });
   }
 
