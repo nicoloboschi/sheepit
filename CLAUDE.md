@@ -345,6 +345,20 @@ becomes the thing that keeps it from answering a permission question nobody
 asked it. Verify it against the hook trace on a real approval before trusting
 it.
 
+`post.sh` carries a fixed body, so it cannot be handed the caller's name —
+hooks.json is one file and said `"source":"claude"` for both agents. It works
+out which agent it is from the plugin root instead (`~/.claude` vs `~/.codex`).
+Without that the trace reported Codex's tool pings as Claude's, which is worse
+than leaving them unlabelled: the trace is where you go to ask "is Codex
+reporting at all", and it answered no while Codex was reporting fine.
+
+Observed, and not yet explained: **Codex fires `UserPromptSubmit` but has not
+been seen to fire `Stop`.** So a Codex pane is named — from the prompt alone,
+which is enough — but keeps the name the prompt implied rather than one that
+knows how the turn went, and stays grazing until `AGENT_STATE_TTL_MS` expires
+rather than settling when it finishes. Check the trace before assuming this is
+still true.
+
 ### Never delete a plugin directory a session is using
 
 Codex has no in-place upgrade for a local marketplace, so `installIntoCodex`

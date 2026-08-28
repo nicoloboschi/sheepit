@@ -66,11 +66,39 @@ if [ -z "$SID" ]; then
 fi
 [ -n "$SID" ] || exit 0
 
+# Which agent is calling.
+#
+# hooks.json is one file loaded by both agents, so the body it hands us cannot
+# name the caller and says "claude" in both. That made Codex's tool-call pings
+# arrive labelled as Claude's, which is worse than an unlabelled ping: the hook
+# trace is the one place you go to ask "is Codex reporting at all", and it was
+# answering no while Codex was reporting perfectly well.
+#
+# The agent is legible from the plugin root it handed us -- Claude Code caches
+# under ~/.claude, Codex under ~/.codex -- so this costs a case statement and
+# no subprocess. Done here rather than in hooks.json on purpose: the command
+# line is unchanged, so this reaches sessions that are ALREADY RUNNING via
+# syncPluginScriptsIntoCaches, and needs neither a version bump nor Codex
+# re-trusting a changed hook.
+#
+# The replacement is deliberately of one exact literal, not a general rewrite:
+# both call sites are fixed strings in hooks.json, and a `sed` would cost more
+# than the request it is labelling.
+BODY="${2:-\{\}}"
+case "${CLAUDE_PLUGIN_ROOT:-}" in
+  */.codex/*)
+    NEEDLE='"source":"claude"'
+    case "$BODY" in
+      *"$NEEDLE"*) BODY="${BODY%%"$NEEDLE"*}\"source\":\"codex\"${BODY#*"$NEEDLE"}" ;;
+    esac
+    ;;
+esac
+
 # Backgrounded and detached: the agent waits for this script, not for the
 # request. A server that is down, restarting or slow costs the turn nothing.
 curl -s -m 2 -o /dev/null -X POST \
   -H 'Content-Type: application/json' \
-  -d "${2:-\{\}}" \
+  -d "$BODY" \
   "${URL%/}/api/sessions/${SID}/${1:-agent-state}" \
   >/dev/null 2>&1 &
 
