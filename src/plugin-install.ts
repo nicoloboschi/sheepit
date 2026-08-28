@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync, readFileSync, readdirSync, copyFileSync, mkdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, copyFileSync, cpSync, mkdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -241,6 +241,8 @@ async function installIntoCodex(root: string, shipped: string, force = false): P
       logger.info(`Codex plugin still at ${after ?? 'none'} after install (wanted ${shipped})`);
       return;
     }
+    // Put the directory we just deleted back. See restoreCodexVersionDir.
+    if (current && current !== shipped) restoreCodexVersionDir(current, shipped);
     logger.info(
       current
         ? `Updated Codex plugin ${PLUGIN_ID} ${current} -> ${shipped}`
@@ -248,6 +250,43 @@ async function installIntoCodex(root: string, shipped: string, force = false): P
     );
   } catch (e) {
     logger.info(`Could not install the Codex plugin (agent state falls back to none): ${e}`);
+  }
+}
+
+/**
+ * Re-create the cache directory an upgrade just deleted, holding the new code.
+ *
+ * Codex has no in-place upgrade for a local marketplace, so an update is
+ * remove-then-add — and `plugin remove` deletes the whole version-keyed
+ * directory. Every Codex session that is *already running* resolved
+ * CLAUDE_PLUGIN_ROOT to that directory when it started and keeps using the
+ * path for its whole life, so removing it does not quietly downgrade those
+ * sessions: it makes every one of their hooks fail. `sh` cannot find
+ * post.sh, so the failure lands on PreToolUse and PostToolUse — which is to
+ * say on every tool call the agent makes, with an error in the TUI each time.
+ *
+ * That turns a version bump into a visible break of every open Codex pane,
+ * which is a far worse outcome than the stale hooks the bump was fixing.
+ *
+ * Claude Code never had the problem: it leaves old version directories in
+ * place, which is the assumption syncPluginScriptsIntoCaches is built on.
+ * This restores the same property for Codex — the old path resolves again,
+ * and what it resolves to is the *new* code, so a running session gets the
+ * fix rather than merely surviving.
+ *
+ * hooks.json is still only read at startup, so a newly wired *event* still
+ * needs a restart. What this buys is that nothing breaks in the meantime.
+ */
+function restoreCodexVersionDir(oldVersion: string, shipped: string): void {
+  const base = join(homedir(), '.codex', 'plugins', 'cache', MARKETPLACE, MARKETPLACE);
+  const from = join(base, shipped);
+  const to = join(base, oldVersion);
+  try {
+    if (!existsSync(from) || existsSync(to)) return;
+    cpSync(from, to, { recursive: true });
+    logger.debug(`Restored Codex plugin dir ${oldVersion} so running sessions keep their hooks`);
+  } catch (e) {
+    logger.info(`Could not restore Codex plugin dir ${oldVersion}: ${e}`);
   }
 }
 

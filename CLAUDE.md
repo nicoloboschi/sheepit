@@ -307,6 +307,89 @@ alone on screen there is no neighbour to keep it off.
   file-type colours in `FilesPane` keep their language colours. Those are other
   people's brands, not ours.
 
+## Agent hooks — the two agents do not share a vocabulary
+
+`plugin/hooks/hooks.json` is one file loaded by **both** Claude Code and
+Codex, and each silently ignores event names it does not know. That tolerance
+is what makes one file work; it is also what makes a mis-named event
+undetectable, because a hook that was never wired and a hook that failed look
+identical from a pane — both reporters exit 0 and print nothing by design.
+
+The events are **not** the same set:
+
+| moment | Claude Code | Codex |
+|---|---|---|
+| turn starts | `UserPromptSubmit` | `UserPromptSubmit` |
+| still working | `PreToolUse` / `PostToolUse` | `PreToolUse` / `PostToolUse` |
+| turn ends | `Stop` | `Stop` |
+| **waiting on you** | `Notification` | `PermissionRequest` — **not wired yet**, see below |
+| session starts / cleared | `SessionStart` (`startup`, `clear`) | `SessionStart` (`startup`, `resume`, `clear`, `compact`) |
+| session ends | `SessionEnd` | `SessionEnd` |
+
+Codex has **no `Notification` event at all**. Its full set is `PreToolUse`,
+`PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`,
+`SubagentStop`, `Stop`, `Interrupt`. So the plugin reports `waiting` for
+Claude and never once for Codex — the pane goes from grazing straight to
+nothing while the agent sits on an approval prompt.
+
+**`PermissionRequest` is deliberately not wired yet.** It is the right event,
+but it is not a passive notification the way `Notification` is: Codex reads
+the hook's *decision* from it, an exit code of 2 denies the request, and
+invalid JSON on stdout is an error. A reporter on that hook sits directly in
+front of the approval prompt the user is waiting to see. If it is wired, it
+must go through `post.sh` rather than `report-state.mjs` — a fixed body needs
+no payload parsing, so there is nothing to buy with a node spawn, and there
+the rule that every path exits 0 and prints nothing stops being politeness and
+becomes the thing that keeps it from answering a permission question nobody
+asked it. Verify it against the hook trace on a real approval before trusting
+it.
+
+### Never delete a plugin directory a session is using
+
+Codex has no in-place upgrade for a local marketplace, so `installIntoCodex`
+does remove-then-add — and `codex plugin remove` deletes the whole
+version-keyed cache directory. Every **already running** Codex session
+resolved `CLAUDE_PLUGIN_ROOT` to that directory when it started and uses that
+path for its whole life, so deleting it does not downgrade those sessions, it
+makes every hook in them fail. `sh` cannot find `post.sh`, and post.sh is on
+`PreToolUse`/`PostToolUse` — so the error lands on **every tool call the agent
+makes**, in the TUI, and a routine version bump reads to the user as sheepit
+breaking every open Codex pane.
+
+`restoreCodexVersionDir()` puts the deleted directory back, holding the new
+code. That restores the property Claude Code has for free — it keeps old
+version directories, which is the assumption `syncPluginScriptsIntoCaches` is
+built on — and a running session gets the fixed scripts rather than merely
+surviving. Bump the plugin version freely; do not remove a cache directory
+without putting it back.
+
+### Codex trusts hooks by hash
+
+Codex will not run a hook command it has not been told to trust. `config.toml`
+grows a `[hooks.state."<plugin>:hooks/hooks.json:<event>:<i>:<j>"]` table per
+hook with a `trusted_hash`, and an entry that is missing or stale means that
+hook is skipped — silently, like everything else on this path. So the list of
+those tables is a second, independent answer to "is this hook live", and the
+event missing from it is the one that is not running.
+
+It also means a new event needs a Codex restart *and* the user's approval
+before it fires for the first time. Adding one and seeing nothing in the trace
+is expected on the first run; seeing nothing on the second is a bug.
+
+### The hook trace
+
+`src/hook-trace.ts` keeps every hook that reached the server for **one hour**,
+in memory, and Settings → Agent Plugin renders it. It records at the *edge*,
+in the request handlers, not in `DirectBridge` — a report rejected for an
+unknown session never reaches the bridge, and `setAgentState`'s log only fires
+when the state actually moved, so neither the rejections nor the refreshes
+were visible anywhere before.
+
+Read it for the **gaps**. A wired-but-broken hook is a red row; an event the
+agent never fires is no row at all, and that absence is what the table above
+is for.
+
 ## The PTY proxy — keep it empty
 
 `src/pty-daemon.ts` holds every session's PTY master fd. That single fact sets

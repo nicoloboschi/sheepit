@@ -14,6 +14,144 @@ interface PluginStatus {
   codex: AgentPluginState;
 }
 
+interface HookTraceEntry {
+  at: number;
+  firstAt: number;
+  count: number;
+  endpoint: string;
+  sessionId: string | null;
+  source: string | null;
+  event: string | null;
+  state: string | null;
+  turn: string | null;
+  outcome: 'ok' | 'unknown-session' | 'unresolved' | 'rejected';
+  detail?: string;
+}
+
+/** Colour by outcome, not by state: the question this list answers is whether
+ *  the hook landed, and a perfectly ordinary `busy` that hit a dead pane is
+ *  the interesting row, not the successful one. */
+const OUTCOME_COLOR: Record<HookTraceEntry['outcome'], string> = {
+  ok: 'var(--success)',
+  'unknown-session': 'var(--warning)',
+  unresolved: 'var(--destructive)',
+  rejected: 'var(--destructive)',
+};
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h`;
+}
+
+/**
+ * What has actually reached us, newest first.
+ *
+ * Read it for the gaps: both reporters are silent by design, so a hook that
+ * was never wired and a hook that was wired and failed look identical from a
+ * pane. Here they don't — one is a red row and the other is no row at all.
+ */
+function HookTrace() {
+  const [entries, setEntries] = useState<HookTraceEntry[] | null>(null);
+  const [retentionMs, setRetentionMs] = useState(3600_000);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/hook-trace');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const body = await r.json();
+      setEntries(body.entries);
+      setRetentionMs(body.retentionMs);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  // Polled, not pushed: this panel is open for seconds at a time and only
+  // while someone is debugging, so a socket message type for it would cost
+  // every client something to serve the one that asked.
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), 3000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const rows = entries ? entries.slice().reverse() : [];
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-semibold">Hook trace</h3>
+        <button
+          onClick={() => void load()}
+          className="text-[11px] text-muted-foreground"
+          style={{ cursor: 'pointer' }}
+        >
+          Refresh
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Every hook that reached sheepit in the last {Math.round(retentionMs / 60000)} minutes, newest
+        first. Identical hooks in a row are collapsed with a count. Both reporters exit silently on
+        purpose, so this is the only place a hook that failed differs from one that never fired.
+      </p>
+
+      {error && <p className="text-[11px]" style={{ color: 'var(--destructive)' }}>{error}</p>}
+
+      {!error && entries && rows.length === 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Nothing yet. Either no agent has run since the server started, or the plugin is not
+          reaching us at all.
+        </p>
+      )}
+
+      {rows.length > 0 && (
+        <div
+          className="rounded-md border overflow-auto"
+          style={{ borderColor: 'var(--border)', background: 'var(--card)', maxHeight: 260 }}
+        >
+          {rows.map((e, i) => (
+            <div
+              key={`${e.firstAt}-${i}`}
+              className="flex items-center gap-2 px-3 py-1.5 text-[11px]"
+              style={{ borderTop: i ? '1px solid var(--border)' : undefined }}
+            >
+              <span
+                className="shrink-0 rounded-full"
+                style={{ width: 6, height: 6, background: OUTCOME_COLOR[e.outcome] }}
+                title={e.outcome}
+              />
+              <span className="shrink-0 text-muted-foreground" style={{ width: 30 }}>{ago(e.at)}</span>
+              <span className="shrink-0 font-semibold" style={{ width: 52 }}>{e.source ?? '—'}</span>
+              <span className="shrink-0 truncate" style={{ width: 130 }}>{e.event ?? e.endpoint}</span>
+              <span className="shrink-0 text-muted-foreground" style={{ width: 56 }}>{e.state ?? ''}</span>
+              {/* Naming reads nothing but these two strings, so a column of
+                  blanks here is the whole explanation for a session that
+                  lights up correctly and is never renamed. */}
+              <span
+                className="shrink-0"
+                style={{ width: 96, color: e.turn ? 'var(--primary)' : 'var(--muted-foreground)' }}
+                title={e.turn ? 'carried the exchange sessions are named from' : undefined}
+              >
+                {e.turn ?? ''}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                {e.outcome === 'ok' ? (e.sessionId ?? '') : `${e.outcome}${e.detail ? ` — ${e.detail}` : ''}`}
+              </span>
+              {e.count > 1 && (
+                <span className="shrink-0 text-muted-foreground">×{e.count}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** One agent's row: is its CLI here, and what has it got installed. */
 function AgentRow({
   label, icon, state, shipped,
@@ -180,6 +318,8 @@ export function PluginContent() {
         moved, so the automatic install at startup sees nothing to do, and the agent goes
         on loading the previous copy.
       </p>
+
+      <HookTrace />
     </div>
   );
 }

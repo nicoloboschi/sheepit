@@ -9,6 +9,7 @@ import { configDir, notesDir } from './paths.js';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
+import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
@@ -419,7 +420,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     try {
       const { state, source, event, prompt, response } = req.body as
         { state?: string; source?: string; event?: string; prompt?: string; response?: string };
+      // Traced from here, before anything can reject it: a report that never
+      // lands is precisely the case the trace exists for, and by the time the
+      // bridge would log it that outcome is already gone.
+      const trace = {
+        endpoint: 'agent-state',
+        sessionId: req.params.id,
+        source: typeof source === 'string' ? source.slice(0, 32) : null,
+        event: typeof event === 'string' ? event.slice(0, 32) : null,
+        state: typeof state === 'string' ? state.slice(0, 32) : null,
+        // Presence only — the text itself is a user's prompt and does not
+        // belong in a panel anyone can leave open on a shared screen.
+        turn: [
+          typeof prompt === 'string' && prompt.trim() ? 'prompt' : null,
+          typeof response === 'string' && response.trim() ? 'response' : null,
+        ].filter(Boolean).join('+') || null,
+      };
       if (!state || !AGENT_STATES.includes(state as AgentState)) {
+        recordHook({ ...trace, outcome: 'rejected', detail: `not a known state` });
         return res.status(400).json({ error: `state must be one of ${AGENT_STATES.join(', ')}` });
       }
       // A hook firing just after its pane closed is ordinary, not an error
@@ -435,11 +453,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           response: typeof response === 'string' ? response.slice(0, 4000) : undefined,
         },
       );
+      recordHook({ ...trace, outcome: ok ? 'ok' : 'unknown-session' });
       if (!ok) return res.status(404).json({ error: 'unknown session' });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
+  });
+
+  /**
+   * Every hook that reached us in the last hour, and what became of it.
+   *
+   * The one place to look when the answer to "is the plugin working" is not
+   * obvious from the panes. Read it for what is *absent* as much as for what
+   * is there: the agents do not name the same moments the same way, so an
+   * event one of them never posts is the usual finding.
+   */
+  router.get('/hook-trace', (_req, res) => {
+    res.json({ retentionMs: HOOK_TRACE_RETENTION_MS, entries: hookTrace() });
   });
 
   /** Which session owns this process? Used by agent hooks that have no
@@ -487,7 +518,12 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     try {
       const { id } = req.params;
       const session = (await bridge.listSessions()).find(s => s.id === id);
-      if (!session) return res.status(404).json({ error: 'no such session' });
+      const trace = { endpoint: 'cleared', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null };
+      if (!session) {
+        recordHook({ ...trace, outcome: 'unknown-session' });
+        return res.status(404).json({ error: 'no such session' });
+      }
+      recordHook({ ...trace, outcome: 'ok' });
 
       bridge.clearAgentTurn(id);
       bridge.markSessionFresh(id);
@@ -518,7 +554,12 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.post('/sessions/:id/fresh', (req, res) => {
     try {
       const { id } = req.params;
-      if (!bridge.hasSession(id)) return res.status(404).json({ error: 'no such session' });
+      const trace = { endpoint: 'fresh', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null };
+      if (!bridge.hasSession(id)) {
+        recordHook({ ...trace, outcome: 'unknown-session' });
+        return res.status(404).json({ error: 'no such session' });
+      }
+      recordHook({ ...trace, outcome: 'ok' });
       bridge.clearAgentTurn(id);
       bridge.markSessionFresh(id);
       res.json({ ok: true });
@@ -533,8 +574,22 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       if (!Array.isArray(pids) || pids.some(p => !Number.isInteger(p))) {
         return res.status(400).json({ error: 'pids must be an array of integers' });
       }
-      const sessionId = bridge.resolveSessionByPids(pids.slice(0, 32) as number[]);
-      if (!sessionId) return res.status(404).json({ error: 'no session owns those pids' });
+      const walked = pids.slice(0, 32) as number[];
+      const sessionId = bridge.resolveSessionByPids(walked);
+      // A failed resolve is the quietest failure in the whole chain: both
+      // reporters exit 0 on it, so the hook that follows simply never happens.
+      // Record the ancestry that missed — it is the only way to tell this
+      // apart from a hook that was never wired.
+      if (!sessionId) {
+        recordHook({
+          endpoint: 'resolve', sessionId: null, source: null, event: null, state: null, turn: null,
+          outcome: 'unresolved', detail: `pids ${walked.slice(0, 8).join(',')}`,
+        });
+        return res.status(404).json({ error: 'no session owns those pids' });
+      }
+      recordHook({
+        endpoint: 'resolve', sessionId, source: null, event: null, state: null, turn: null, outcome: 'ok',
+      });
       res.json({ sessionId });
     } catch (e) {
       res.status(500).json({ error: String(e) });

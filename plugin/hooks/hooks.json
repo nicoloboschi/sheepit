@@ -1,5 +1,5 @@
 {
-  "description": "Report agent state to sheepit. The four turn-level events go through report-state.mjs; the per-tool-call \"still working\" ping is a shell script, because a node spawn per tool call is not affordable.",
+  "description": "Report agent state to sheepit. The four turn-level events go through report-state.mjs; the per-tool-call \"still working\" ping is a shell script, because a node spawn per tool call is not affordable. Claude Code and Codex do not name the same moments the same way, so a few events here exist for one agent only and the other silently ignores them.",
   "hooks": {
     "SessionStart": [
       {
