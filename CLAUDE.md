@@ -307,6 +307,31 @@ alone on screen there is no neighbour to keep it off.
   file-type colours in `FilesPane` keep their language colours. Those are other
   people's brands, not ours.
 
+## Session names — the writer and the reader are one definition
+
+Ownership of an AI-assigned name lives only in memory, so after a restart the
+namer works out which names are its own from their *shape*
+(`looksLikeAssignedName`). That makes the shape test and the write path two
+halves of one contract: **anything the writer stores, the reader must claim.**
+
+They drifted, and the cost was total. A name outside the overlap was written
+once and then disowned at the next restart — `isRenameable()` said no, the
+sweep skipped it with a silent `continue`, and that pane could never be
+renamed again. Four gaps, all of them hit real sessions: an underscore or a
+dot (`rrf cross_encoder benchmark`, `compare 0.9.1 pr regression`), a capital
+letter, more than six words, and the 61–80 character band where the writer's
+cap was 80 and the reader's 60.
+
+`normalizeAssignedName()` closes it from the writing side — it is total, and
+its output always satisfies `looksLikeAssignedName()`, which is asserted in
+`ai.test.ts`. Widening the charset to accept `_` and `.` closes it from the
+other side, and is what un-freezes sessions already stuck.
+
+If you change either limit, change the other, and keep the invariant test
+green. A name the namer cannot recognise is one it can never fix — the same
+failure `stripNameDecoration` exists for, which arrived as a session called
+`` `pytest` ``.
+
 ## Agent hooks — the two agents do not share a vocabulary
 
 `plugin/hooks/hooks.json` is one file loaded by **both** Claude Code and

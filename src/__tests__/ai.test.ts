@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNamerInvocation, isRenameable, stripNameDecoration, CLEARED_SESSION_NAME } from '../ai.js';
+import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, CLEARED_SESSION_NAME } from '../ai.js';
 
 describe('AI naming CLI isolation', () => {
   it('runs Claude Code in safe mode without slash commands', () => {
@@ -74,3 +74,60 @@ describe('name decoration', () => {
     expect(isRenameable('`pytest`', path, '`pytest`')).toBe(true);
   });
 });
+
+describe('assigned-name shape', () => {
+  // The bug this whole pair exists to prevent: the namer wrote a name its own
+  // recogniser could not read back, so after a restart it disowned it and
+  // isRenameable() froze the pane for good. Both of these were live sessions.
+  it('claims names it actually produced', () => {
+    expect(looksLikeAssignedName('rrf cross_encoder benchmark')).toBe(true)
+    expect(looksLikeAssignedName('compare 0.9.1 pr regression')).toBe(true)
+    expect(looksLikeAssignedName('merge and deploy dev')).toBe(true)
+  })
+
+  it('still refuses names that are plainly a human\'s', () => {
+    expect(looksLikeAssignedName('Do Not Touch This')).toBe(false)
+    expect(looksLikeAssignedName('a name with far too many words in it to be ours')).toBe(false)
+    expect(looksLikeAssignedName('x'.repeat(61))).toBe(false)
+  })
+
+  it('normalises every way a name could fall outside the recogniser', () => {
+    expect(normalizeAssignedName('Merge And Deploy')).toBe('merge and deploy')
+    expect(normalizeAssignedName('one two three four five six seven')).toBe('one two three four five six')
+    expect(normalizeAssignedName('feat/document-transfer')).toBe('feat document-transfer')
+    expect(normalizeAssignedName('`fix the parser`')).toBe('fix the parser')
+    expect(normalizeAssignedName('rrf cross_encoder benchmark')).toBe('rrf cross_encoder benchmark')
+  })
+
+  it('declines rather than storing something unusable', () => {
+    expect(normalizeAssignedName('')).toBeNull()
+    expect(normalizeAssignedName('12345')).toBeNull()
+    expect(normalizeAssignedName('!!!')).toBeNull()
+  })
+
+  it('trims to whole words, never mid-word', () => {
+    const long = normalizeAssignedName('alpha bravo charlie delta echo foxtrotfoxtrotfoxtrotfoxtrotfoxtrot')!
+    expect(long.length).toBeLessThanOrEqual(60)
+    expect(long).toBe('alpha bravo charlie delta echo')
+  })
+
+  // The invariant. If this fails, the writer can once again store a name the
+  // reader will disown, and a pane freezes.
+  it('always produces something it will claim back', () => {
+    const raws = [
+      'Merge And Deploy', 'rrf cross_encoder benchmark', 'compare 0.9.1 pr regression',
+      '`pytest`', '**bold name**', 'feat/document-transfer-knowledge-base',
+      'one two three four five six seven eight', 'x'.repeat(200),
+      'UPPER CASE NAME', 'trailing   spaces   ', 'émoji café run',
+      CLEARED_SESSION_NAME,
+    ]
+    for (const raw of raws) {
+      const out = normalizeAssignedName(raw)
+      if (out === null) continue
+      expect(looksLikeAssignedName(out), `normalised ${JSON.stringify(raw)} -> ${JSON.stringify(out)}`).toBe(true)
+      // And a claimed name is a renameable one, which is the property that
+      // actually keeps the pane unfrozen.
+      expect(isRenameable(out, '/tmp/some-project', out)).toBe(true)
+    }
+  })
+})

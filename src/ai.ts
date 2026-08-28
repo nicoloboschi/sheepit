@@ -122,6 +122,72 @@ export function stripNameDecoration(raw: string): string {
   return name;
 }
 
+/**
+ * The shape of a name this service assigns.
+ *
+ * These three constants and the two functions below are ONE definition used
+ * from both ends, and that is the entire point. Ownership of a name lives only
+ * in memory, so after a restart the namer works out which names are its own by
+ * looking at their shape — and it used to recognise a *narrower* set than it
+ * was willing to write. Any name outside the overlap was written once and then
+ * disowned forever: isRenameable() said no, the sweep skipped it in silence,
+ * and that pane could never be renamed again.
+ *
+ * Four ways a name could land outside it, all of them real: an underscore or a
+ * dot (`rrf cross_encoder benchmark`, `compare 0.9.1 pr regression` — both
+ * frozen live sessions), a capital letter, more than six words, or 61-80
+ * characters, since the writer's cap was 80 and the reader's 60.
+ *
+ * So the writer no longer stores anything the reader cannot claim:
+ * normalizeAssignedName() is total, and its output always satisfies
+ * looksLikeAssignedName(). Widening the charset to include `_` and `.` is the
+ * other half — it is what lets the already-frozen sessions be reclaimed rather
+ * than merely stopping new ones freezing.
+ */
+const NAME_CHARSET = /^[a-z][a-z0-9 ._-]*$/;
+const MAX_NAME_WORDS = 6;
+const MAX_NAME_LEN = 60;
+
+/** Could this name have come from us? Drives ownership after a restart.
+ *
+ *  Deliberately a shape test and not a memory: the alternative is persisting
+ *  ownership, and a name we cannot recognise is one we can never fix. */
+export function looksLikeAssignedName(raw: string): boolean {
+  const name = stripNameDecoration(raw);
+  if (!name || name.length > MAX_NAME_LEN) return false;
+  if (!NAME_CHARSET.test(name)) return false;
+  const words = name.split(/\s+/).filter(Boolean);
+  return words.length >= 1 && words.length <= MAX_NAME_WORDS;
+}
+
+/** Coerce a model's answer into a name we will still recognise as ours.
+ *
+ *  Returns null when there is nothing usable left, which the caller treats as
+ *  "decline to rename" — leaving the old name alone is always better than
+ *  storing one that locks us out.
+ *
+ *  Out-of-charset runs become spaces rather than being deleted, so `feat/foo`
+ *  reads as two words instead of one portmanteau. `_` and `.` survive, because
+ *  they are usually part of an identifier the user would recognise. */
+export function normalizeAssignedName(raw: string): string | null {
+  let name = stripNameDecoration(raw).toLowerCase()
+    .replace(/[^a-z0-9 ._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // The charset requires a letter first; a name that is only punctuation and
+    // digits has nothing to lead with and is rejected below.
+    .replace(/^[^a-z]+/, '')
+    .trim();
+
+  const words = name.split(' ').filter(Boolean).slice(0, MAX_NAME_WORDS);
+  // Drop whole words before cutting one in half — a truncated word reads as a
+  // bug, a shorter name just reads as a shorter name.
+  while (words.length > 1 && words.join(' ').length > MAX_NAME_LEN) words.pop();
+  name = words.join(' ').slice(0, MAX_NAME_LEN).trim();
+
+  return looksLikeAssignedName(name) ? name : null;
+}
+
 export function isRenameable(name: string, path: string | undefined, ownedName: string | undefined): boolean {
   const basename = path?.split('/').filter(Boolean).pop() ?? 'shell';
   const isDefaultName = name === basename
@@ -205,7 +271,7 @@ export class AIService {
     if (!this.bridge) return;
     const sessions = await this.bridge.listSessions();
     for (const s of sessions) {
-      if (this._looksLikeOurOutput(s.name)) {
+      if (looksLikeAssignedName(s.name)) {
         this.aiAssignedName.set(s.id, s.name);
       }
     }
@@ -214,17 +280,6 @@ export class AIService {
     }
   }
 
-  /** True if `name` looks like something our naming prompt would produce. */
-  private _looksLikeOurOutput(rawName: string): boolean {
-    // Compare the stripped form: a name we previously saved with decoration
-    // still came from us, and refusing to claim it would leave it frozen.
-    const name = stripNameDecoration(rawName);
-    if (!name || name.length > 60) return false;
-    // Lowercase, letters/digits/spaces/hyphens, at most 6 tokens
-    if (!/^[a-z][a-z0-9 \-]*$/.test(name)) return false;
-    const words = name.split(/\s+/).filter(Boolean);
-    return words.length >= 1 && words.length <= 6;
-  }
 
   start(): void {
     this.stop();
@@ -440,11 +495,20 @@ Session name:`;
         return;
       }
 
-      await this.bridge!.renameSession(sessionId, name);
+      // Never store a name we would not recognise as ours after a restart.
+      // See normalizeAssignedName: the writer's limits used to be looser than
+      // the reader's, and every name that fell in the gap froze its pane.
+      const assigned = normalizeAssignedName(name);
+      if (!assigned) {
+        logger.debug(`AI naming ${sessionId}: "${name}" normalises to nothing, skipping`);
+        return;
+      }
+
+      await this.bridge!.renameSession(sessionId, assigned);
       // Record that we own this name — future runs can re-rename it without
       // needing the brittle "looks AI named" string heuristic.
-      this.aiAssignedName.set(sessionId, name);
-      logger.info(`AI renamed ${sessionId} → "${name}"`);
+      this.aiAssignedName.set(sessionId, assigned);
+      logger.info(`AI renamed ${sessionId} → "${assigned}"`);
     } catch (e) {
       // Release the claim so the next sweep retries this exact content.
       this.lastContentHash.delete(sessionId);
