@@ -352,12 +352,11 @@ Without that the trace reported Codex's tool pings as Claude's, which is worse
 than leaving them unlabelled: the trace is where you go to ask "is Codex
 reporting at all", and it answered no while Codex was reporting fine.
 
-Observed, and not yet explained: **Codex fires `UserPromptSubmit` but has not
-been seen to fire `Stop`.** So a Codex pane is named — from the prompt alone,
-which is enough — but keeps the name the prompt implied rather than one that
-knows how the turn went, and stays grazing until `AGENT_STATE_TTL_MS` expires
-rather than settling when it finishes. Check the trace before assuming this is
-still true.
+Codex reports the whole turn correctly — `UserPromptSubmit` with the prompt,
+tool pings, and `Stop` with the response. The only thing genuinely missing is
+`waiting`, for the reason above. Do not read a short sample of the trace as a
+missing event: `Stop` fires once per turn against hundreds of tool pings, so
+an idle minute looks exactly like a broken hook.
 
 ### Never delete a plugin directory a session is using
 
