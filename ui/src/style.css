@@ -344,8 +344,10 @@
   transition: background 0.25s ease;
 }
 .flock-footer-sep { opacity: 0.5; }
-/* The pasture: grass at the back, sheep walking in front of it. Decoration
-   only — it must never intercept a click meant for the last pen card, and it
+/* The pasture: grass at the back, and in front of it one sheep for every pane
+   that wants you — nothing else. The band itself is pointer-events:none, so it
+   can never intercept a click meant for the last pen card; only the animals
+   opt back in (.flock-sheep-hit), because clicking one goes to its pane. It
    must not add height the list could have used. */
 .flock-pasture {
   position: relative;
@@ -400,15 +402,40 @@
   filter: saturate(0.7) brightness(0.88);
   animation: sheep-bob var(--bob) ease-in-out infinite;
 }
-.flock-sheep-grazing .flock-sheep-body {
-  /* Head down, nose in the grass. */
-  animation: sheep-graze calc(var(--bob) * 2.2) ease-in-out infinite;
-}
+/* Every sheep in the strip is bleating (see FlockSheep) — a grazing or idle
+   one is a count on the footer line above, not an animal down here. */
 .flock-sheep-bleating .flock-sheep-body {
   opacity: 0.92;
   filter: none;
   animation: sheep-hop calc(var(--bob) * 1.1) ease-in-out infinite;
 }
+/* A sheep is a button: it is the shortest path from "something wants me" to
+   being there. The padding is the hit target — 14px of emoji is not one — and
+   the matching negative margin keeps the glyph exactly where it stood, so
+   growing the target does not move the animal. */
+.flock-sheep-hit {
+  pointer-events: auto;
+  cursor: pointer;
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 6px;
+  margin: -6px;
+  color: inherit;
+  font-family: inherit;
+  border-radius: 50%;
+}
+/* Hover lights the ground under the sheep rather than the sheep itself: its
+   opacity and filter are set per theme, and its transform belongs to the hop
+   animation — a hover that touched any of the three would fight one of them. */
+.flock-sheep-hit:hover {
+  background: radial-gradient(circle, color-mix(in srgb, var(--bleating) 35%, transparent) 0%, transparent 72%);
+}
+.flock-sheep-hit:focus-visible {
+  outline: 2px solid var(--bleating);
+  outline-offset: -3px;
+}
+
 .flock-sheep-baa {
   position: absolute;
   left: 100%; bottom: 60%;
@@ -420,25 +447,11 @@
   animation: sheep-baa 3.4s ease-in-out infinite;
 }
 
-/* Finished, and nobody has read it. No noise for this one — the sheep plods
-   like an idle one and carries an amber mark, matching the pen card's amber
-   and the pane bar's. */
-.flock-sheep-unread {
-  position: absolute;
-  right: -1px;
-  top: -1px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 70%, transparent);
-}
-.flock-sheep-unread .flock-sheep-body,
-.flock-sheep-unread + .flock-sheep-body { opacity: 0.7; }
 
 /* ── A sheep calling you by name ───────────────────────────────────────────
-   The strip is pointer-events:none by design, so there is no tooltip to hover
-   and the name has to be on screen or nowhere. It sits above the animal and
+   Every other sheep carries its name in a tooltip and an aria-label, but a
+   tooltip is something you have to go looking for: the loudest one says its
+   name on screen without being asked. It sits above the animal and
    fades in with the "baa" it belongs to, then leaves — a label pinned there
    permanently would be a status bar, and this is a field.
 
@@ -517,11 +530,6 @@
 @keyframes sheep-bob {
   0%, 100% { transform: translateY(0) rotate(0deg); }
   50%      { transform: translateY(-1px) rotate(-1.5deg); }
-}
-@keyframes sheep-graze {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  35%      { transform: translateY(1px) rotate(7deg); }
-  65%      { transform: translateY(1px) rotate(5deg); }
 }
 @keyframes sheep-hop {
   0%, 62%, 100% { transform: translateY(0) rotate(0deg); }

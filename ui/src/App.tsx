@@ -892,7 +892,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             bottom edge is the pasture instead, the way the sidebar's is on
             desktop — so the flock is visible on a phone without opening the
             Pens sheet. */}
-        <FlockStrip slim />
+        <FlockStrip slim onConnect={onConnect} />
       </header>
 
       {uploadStatus && (
@@ -906,7 +906,8 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
         <>
           <div className="md:hidden fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowSessions(false)} />
           {/* Same chrome as the desktop sidebar: the flock band on top, the
-              pasture (grass + one sheep per pen) along the bottom. */}
+              pasture along the bottom — grass, plus a sheep for each pane
+              that wants you, each one a shortcut to that pane. */}
           <div className="md:hidden mobile-flock-sheet fixed left-0 right-0 z-50 flex flex-col rounded-b-2xl border-b border-x"
             style={{ top: 48, maxHeight: '72vh', background: 'var(--card)', borderColor: 'var(--border)', overflow: 'hidden' }}>
             <FlockBand />
@@ -917,7 +918,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
                 send={send}
               />
             </div>
-            <FlockFooter />
+            <FlockFooter onConnect={(id) => { onConnect(id); setShowSessions(false); }} />
           </div>
         </>
       )}

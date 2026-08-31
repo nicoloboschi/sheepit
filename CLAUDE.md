@@ -142,28 +142,49 @@ the gradient fill itself is the light surface there.
 
 ### The pasture (sidebar footer)
 
-`FlockGrass` draws the grass strip and `FlockSheep` puts one 🐑 in it per
-**real sheep** — one per pane, in the state that pane is actually in, read from
-`useFlockSheep()`. It used to be one per *pen* with moods handed out from the
-aggregate counts, so no animal in the strip corresponded to anything you could
-go and look at. A sheep's behaviour is its pane's state: bleating sheep hop and
-puff a "baa", grazing sheep keep their heads down, unread sheep plod with an
-amber mark, idle sheep just plod.
+`FlockGrass` draws the grass strip and `FlockSheep` puts a 🐑 in it for
+**every pane that is bleating, and nothing else** — read from `useFlockSheep()`
+and filtered to that one state.
 
-**A bleating sheep calls you by its pane's name.** The footer line above says
-how many are bleating; the name tag answers the other half — which one. Only
-one sheep says a name at a time (`MAX_CALLING`): the strip is ~250px and a tag
-is up to 118px of it. The tag breathes rather than blinking out — a label
-legible for one second in four is one you have to sit and wait for. Rules:
+It held one animal per pane before, in whatever state that pane was in, which
+made it a second copy of the pen list: the same twenty sheep whether or not
+anything wanted you, so the one that did was lost among them. The pasture now
+answers one question — *who wants me?* — and answers it by being **empty grass**
+when the answer is nobody. Every other count is still on the footer line above
+it. A sheep in the strip therefore always hops and puffs a "baa"; there are no
+grazing, unread or idle animals down there any more.
 
-- Both are pure CSS animation over a real emoji glyph — **no image requests**,
-  nothing to load, and it stays correct on a LAN with no internet route.
+**Clicking a sheep goes to its pane** — the pen, then the pane inside it, since
+switching pens alone lands you on whichever pane that pen last had focused and
+not the one that called you. `FlockStrip` / `FlockFooter` take the caller's own
+`onConnect` so the strip knows nothing about hash syncing, last-session
+preferences or closing the mobile sheet; without it the sheep stay decoration.
+
+**A sheep calls you by its pane's name.** The footer line above says how many
+are bleating; the name tag answers the other half — which one. Only one sheep
+says a name at a time (`MAX_CALLING`): the strip is ~250px and a tag is up to
+118px of it. The rest carry their name in a `title` and an `aria-label`, which
+is reachable now that a sheep is a button. The tag breathes rather than
+blinking out — a label legible for one second in four is one you have to sit
+and wait for. Rules:
+
+- The sheep are pure CSS animation over a real emoji glyph — **no image
+  requests**, nothing to load, and it stays correct on a LAN with no internet
+  route. The grass under them is canvas, drawn by the same `grass.ts` the pens
+  use, so the ground the flock walks on is the ground inside a pen. It was SVG
+  with its own blade shape and its own alpha, and the two fields six pixels
+  apart did not look like the same field.
 - Blade and lane positions come from a fixed integer hash, never `Math.random`.
   A field that reshuffles itself every time a session goes busy is a
   distraction, not decoration.
-- The strip is `pointer-events: none` end to end. It must never eat a click
-  meant for the last pen card above it. That is also why a calling sheep's
-  name is drawn rather than left to a tooltip: there is nothing to hover.
+- The strip is `pointer-events: none`; the animals opt back in
+  (`.flock-sheep-hit`) and nothing else does. The band must never eat a click
+  meant for the last pen card above it. A sheep's hit target is padding plus a
+  matching negative margin — 14px of emoji is not a click target, and growing
+  the box must not move the animal.
+- Hover lights the ground under a sheep rather than the sheep: its opacity and
+  filter are set per theme and its transform belongs to the hop animation, so
+  a hover touching any of the three would fight one of them.
 - The turn-around flip lives on `.flock-sheep-facing`, not on the sheep
   wrapper. As a transform on the whole sheep it also mirrored the name tag,
   and a sheep calling you in mirror writing is not calling you.
@@ -207,8 +228,10 @@ grows in, and with an even inset the cards sat straight on top of it. The cards 
 paint on top, so what you see is the field showing through the gutters, the
 margins and the gap under the last card — which is what makes an enclosure
 read as ground rather than as a box with a border. The blades come from the
-same deterministic hash as the posts, so one never moves when a sheep goes
-busy, and none of it animates (unlike the sidebar's pasture strip). Keep the
+same deterministic hash as the posts and from the same `grass.ts` as the
+sidebar's pasture strip, so one never moves when a sheep goes busy and both
+fields look like one field. None of it animates (unlike the strip, where the
+sheep do). Keep the
 front strip's alpha high: `--grazing` and `--fence` are both olive, and a
 washed-out blade beside a rail just reads as more fence.
 

@@ -1,29 +1,33 @@
 /**
- * The flock, grazing at the bottom of the sidebar.
+ * The sheep that want you, standing in the grass at the bottom of the sidebar.
  *
- * One 🐑 per **real sheep** — one per pane, in the state that pane is actually
- * in. It used to be one per pen with moods handed out from the aggregate
- * counts ("N sheep, draw the first `bleating` of them bleating"), which meant
- * no animal in the strip corresponded to anything you could go and look at.
- * Now each one is a pane, and a bleating sheep **calls you by that pane's
- * name**, so the strip answers "who wants me?" and not just "does anyone?".
+ * **Only bleating sheep appear here.** The strip used to hold one animal per
+ * pane in whatever state that pane was in, which made it a second copy of the
+ * pen list — the same twenty sheep whether or not anything needed you, so the
+ * one that did was lost among them. Now the pasture answers one question,
+ * "who wants me?", and answers it by being empty when the answer is nobody.
+ * The counts for everything else are in the footer line above.
+ *
+ * A sheep **calls you by its pane's name**, and clicking it takes you to that
+ * pane. That click is the one exception to the strip's `pointer-events: none`
+ * — the pasture band as a whole must never swallow a click meant for the last
+ * pen card, so only the animals themselves are hit-testable.
  *
  * Everything is CSS animation on a real emoji glyph — no image requests, no
- * canvas, nothing to load. The strip stays `pointer-events: none` so it can
- * never swallow a click meant for the pen list above it, which is also why the
- * name is shown rather than left to a tooltip nobody could hover.
+ * canvas, nothing to load. (The grass behind them is canvas; see FlockGrass.)
  */
-import { useFlockSheep, type SheepState } from '../flock';
+import { useFlockSheep } from '../flock';
 
 /** More than this and the strip reads as a stampede rather than a flock.
- *  The list arrives loudest-first, so what gets dropped is always quiet. */
+ *  Reached only when a lot of panes want you at once; what gets dropped is
+ *  still counted on the footer line above. */
 const MAX_SHEEP = 9;
 
-/** How many sheep say a name at once. Every bleating sheep still hops and
- *  puffs — this is only about the label. One, because the strip is ~250px and
- *  a name tag is up to 118px of it, so two of them collide as often as not.
- *  The footer line right above already says how many are bleating; this
- *  answers the other half, which one. */
+/** How many sheep say a name at once. Every one of them still hops and puffs
+ *  a "baa" — this is only about the label. One, because the strip is ~250px
+ *  and a name tag is up to 118px of it, so two of them collide as often as
+ *  not. The rest carry their names in their tooltip and their aria-label,
+ *  which is reachable now that the sheep are buttons. */
 const MAX_CALLING = 1;
 
 /** Deterministic 0..1 from an integer — same trick as FlockGrass, so a sheep
@@ -52,35 +56,40 @@ function shortName(name: string, max = 18): string {
   return (space > max * 0.5 ? cut.slice(0, space) : cut).trimEnd() + '…';
 }
 
-export default function FlockSheep(): React.ReactElement | null {
-  const flock = useFlockSheep();
+export default function FlockSheep({ onSelect }: {
+  /** Go to this pane. Given by the sidebar and the mobile Pens sheet; without
+   *  it the sheep stay decoration, as they were. */
+  onSelect?: (workspaceId: string, paneIndex: number) => void;
+}): React.ReactElement | null {
+  // Only the ones asking for you — see the note at the top of the file.
+  const flock = useFlockSheep().filter(sheep => sheep.state === 'bleating');
   if (flock.length === 0) return null;
 
   const shown = flock.slice(0, MAX_SHEEP);
-  let calling = 0;
 
   return (
-    <div className="flock-sheep" aria-hidden>
+    // Interactive sheep must not be hidden from assistive tech; decorative
+    // ones must not be announced at all.
+    <div className="flock-sheep" aria-hidden={onSelect ? undefined : true}>
       {shown.map((sheep, i) => {
-        const state: SheepState = sheep.state;
         const seed = seedOf(sheep.sessionId);
         // Spread across the strip by position, jittered by the sheep's own
         // seed so they do not line up and do not shuffle when one changes.
         const left = (i + 0.5) / shown.length * 100
           + (noise(seed, 1) - 0.5) * (60 / shown.length);
-        // Walk distance and speed vary per sheep; the ones that want you fidget.
+        // Walk distance and speed vary per sheep; these ones want you, so
+        // they fidget rather than plod.
         const roam = 8 + noise(seed, 2) * 16;
-        const walk = (state === 'bleating' ? 5 : 9) + noise(seed, 3) * 7;
+        const walk = 5 + noise(seed, 3) * 7;
         const bob = 0.9 + noise(seed, 4) * 0.5;
-        const speaks = state === 'bleating' && calling < MAX_CALLING;
-        if (speaks) calling++;
+        const speaks = i < MAX_CALLING;
         return (
           <span
             key={sheep.sessionId}
             // The edge modifier is on the wrapper, not on the label: the
             // "baa" hangs off the sheep's right too, and both need to fold
             // inward for a sheep standing at the end of the strip.
-            className={`flock-sheep-one flock-sheep-${state}${
+            className={`flock-sheep-one flock-sheep-bleating${
               left < 26 ? ' flock-sheep-at-start' : left > 74 ? ' flock-sheep-at-end' : ''}`}
             style={{
               left: `${Math.max(2, Math.min(96, left))}%`,
@@ -102,11 +111,21 @@ export default function FlockSheep(): React.ReactElement | null {
                 on the whole sheep it also mirrored the name tag, which came
                 out written backwards. */}
             <span className="flock-sheep-facing">
-              <span className="flock-sheep-body">🐑</span>
+              {onSelect ? (
+                <button
+                  type="button"
+                  className="flock-sheep-body flock-sheep-hit"
+                  title={`${sheep.name} — wants your input`}
+                  aria-label={`Go to ${sheep.name}, which wants your input`}
+                  onClick={() => onSelect(sheep.workspaceId, sheep.paneIndex)}
+                >
+                  🐑
+                </button>
+              ) : (
+                <span className="flock-sheep-body">🐑</span>
+              )}
             </span>
-            {state === 'bleating' && <span className="flock-sheep-baa">baa</span>}
-            {/* Finished, and nobody has read it: no noise, just a mark. */}
-            {state === 'unread' && <span className="flock-sheep-unread" />}
+            <span className="flock-sheep-baa">baa</span>
           </span>
         );
       })}

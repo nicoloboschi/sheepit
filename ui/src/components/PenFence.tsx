@@ -1,13 +1,6 @@
 import { useEffect, useRef } from 'react';
 import useStore from '../store';
-
-/** Deterministic 0..1 from an integer — the same trick FlockGrass uses.
- *  Never Math.random: a pen that reshuffled its fence every time one of its
- *  sheep went busy would be a distraction, not decoration. */
-function noise(i: number, salt: number): number {
-  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
-  return x - Math.floor(x);
-}
+import { noise, scatterGrass, frontGrass } from './grass';
 
 /** The fence around a pen, drawn on a canvas rather than in CSS gradients.
  *
@@ -110,56 +103,21 @@ export default function PenFence({
       // and the gap under the last card — which is what makes the enclosure
       // read as ground rather than as a box with a border.
       //
-      // Same deterministic hash as the posts, so a blade never moves when a
-      // sheep goes busy, and it is static: nothing here animates, unlike the
-      // sidebar's pasture strip.
-      const blade = (x: number, y: number, salt: number, alpha: number) => {
-        const height = 3 + noise(salt, 4) * 5;
-        const lean   = (noise(salt, 5) - 0.5) * 6;
-        g.globalAlpha = alpha;
-        g.beginPath();
-        g.moveTo(x, y);
-        g.quadraticCurveTo(x + lean * 0.35, y - height * 0.65, x + lean, y - height);
-        g.stroke();
-      };
-
+      // Drawn by the same code as the sidebar's pasture strip (./grass), from
+      // the same deterministic hash as the posts above — so a blade never
+      // moves when a sheep goes busy, and the ground the flock walks on looks
+      // like the ground inside the pens. Static: nothing here animates.
       g.strokeStyle = grass;
       g.lineWidth = 1;
-
-      // Scattered over the whole floor, thickly. A third of the candidate
-      // spots are still skipped and the jitter is wider than the spacing, so
-      // it clumps like a field instead of ruling itself into a lawn. Kept
-      // faint: this is texture behind content, not a thing to look at.
-      const COL = 8, ROW = 10;
-      for (let y = m + ROW; y < H - m - 8; y += ROW) {
-        for (let x = m + 4; x < W - m - 4; x += COL) {
-          k++;
-          if (noise(k, 7) > 0.66) continue;
-          blade(x + (noise(k, 8) - 0.5) * 11, y + (noise(k, 9) - 0.5) * 9, k, 0.14 + noise(k, 6) * 0.18);
-        }
-      }
-
-      // The front edge is denser and stronger — it is the one strip that is
-      // never covered by a card, so it carries the metaphor on its own. It
-      // grows in the bottom padding, which .pen-body / .workspace-pen keep
-      // deeper than the other three sides precisely to leave it room: rooted
-      // any higher and the cards sit on top of it.
-      // Rooted ABOVE the bottom rail's pickets, not among them: a first cut
-      // grew them from the rail itself, where they interleaved with the
-      // pickets and read as more fence rather than as ground.
-      // Two staggered passes so the front reads as depth rather than a comb:
-      // a shorter, dimmer rank behind, then the tall saturated one in front.
-      for (let x = m + 6; x < W - m - 4; x += 3.5) {
-        k++;
-        blade(x, H - m - 6, k, 0.3 + noise(k, 6) * 0.22);
-      }
-      for (let x = m + 4; x < W - m - 4; x += 3) {
-        k++;
-        // Alpha this high on purpose: --grazing and --fence are both olive
-        // tones, and a washed-out blade next to a fence rail reads as more
-        // fence. The green has to be saturated to say "ground".
-        blade(x, H - m - 3, k, 0.68 + noise(k, 6) * 0.3);
-      }
+      k = scatterGrass(g, { left: m + 4, right: W - m - 4, top: m + 10, bottom: H - m - 8 }, k);
+      // The front edge is the one strip that is never covered by a card, so
+      // it carries the metaphor on its own. It grows in the bottom padding,
+      // which .pen-body / .workspace-pen keep deeper than the other three
+      // sides precisely to leave it room: rooted any higher and the cards sit
+      // on top of it. Rooted ABOVE the bottom rail's pickets, not among them:
+      // a first cut grew them from the rail itself, where they interleaved
+      // with the pickets and read as more fence rather than as ground.
+      k = frontGrass(g, { left: m + 4, right: W - m - 4, baseline: H - m - 3 }, k);
 
       g.globalAlpha = 1;
     };

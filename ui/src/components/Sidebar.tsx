@@ -137,7 +137,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         send={send}
       />
 
-      <FlockFooter />
+      <FlockFooter onConnect={onConnect} />
     </aside>
   );
 }
