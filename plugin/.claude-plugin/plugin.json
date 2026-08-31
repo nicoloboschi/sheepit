@@ -1,7 +1,7 @@
 {
   "name": "sheepit",
-  "description": "Reports coding-agent state (busy / waiting / idle) and the last exchange to the sheepit session that owns this terminal, so panes light up the moment a turn ends and sessions are named from what was actually asked. Works with Claude Code and Codex.",
-  "version": "0.11.1",
+  "description": "Reports coding-agent state (busy / waiting / idle), the last exchange, and any pull request or issue the agent touched, to the sheepit session that owns this terminal — so panes light up the moment a turn ends, sessions are named from what was actually asked, and the pane bar shows the PR without anything reading the terminal. Works with Claude Code and Codex.",
+  "version": "0.12.0",
   "author": {
     "name": "Nicolò Boschi"
   }

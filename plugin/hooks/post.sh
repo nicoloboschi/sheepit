@@ -94,6 +94,57 @@ case "${CLAUDE_PLUGIN_ROOT:-}" in
     ;;
 esac
 
+# PR / issue references, out of the tool call the hook is reporting.
+#
+# The pane bar's PR number used to come from the browser scanning terminal
+# output for anything URL-shaped. For a TUI agent that is close to useless: it
+# wraps and redraws its own output, so the URL rarely survives as one
+# contiguous string, and the scraped list died with the browser tab anyway.
+# The hook payload has the same text before any of that happens -- the command
+# on PreToolUse, its result on PostToolUse -- so the link is read here and sent
+# with the ping that was going out regardless.
+#
+# Two spawns and a bounded read, on a path that runs per tool call, so both
+# limits matter: the payload is capped before grep ever sees it (a Read of a
+# large file arrives in full), and only unambiguous shapes are matched. A bare
+# `#42` is deliberately NOT matched here -- in a tool result it is far more
+# often a colour, a comment or a line number than a pull request. That form is
+# read on the server from the turn text, where a human or the model wrote it.
+#
+# Gated on the payload mentioning `gh pr` / `gh issue`, so a reference is only
+# taken from a tool call that was ABOUT a pull request -- the command, or the
+# output it produced. Without the gate, reading or writing any file that merely
+# happens to contain a PR link (a changelog, a test fixture, these very
+# comments) would relabel the pane.
+#
+# `--repo owner/name` is matched as a fragment of its own: grep -o returns only
+# what matched, so a `gh pr view 3730 --repo other/repo` would otherwise arrive
+# as a bare "gh pr view 3730" and be read as a PR of whatever repository this
+# pane happens to be sitting in. The server reassembles the fragments before
+# parsing them, so the flag finds its command again.
+#
+# Never blocks: no stdin (someone running this by hand) simply means no refs.
+REFS=""
+if [ ! -t 0 ]; then
+  PAYLOAD=$(head -c 65536 2>/dev/null)
+  case "$PAYLOAD" in
+    *"gh pr"*|*"gh issue"*)
+      REFS=$(printf '%s' "$PAYLOAD" \
+        | grep -oE 'https?://(www\.)?github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/(pull|issues)/[0-9]+|gh (pr|issue) [a-z-]+ #?[0-9]+|--repo[= ][A-Za-z0-9._-]+/[A-Za-z0-9._-]+' 2>/dev/null \
+        | head -n 5 \
+        | awk '{ printf "%s\"%s\"", (NR>1 ? "," : ""), $0 }')
+      ;;
+  esac
+fi
+
+# Splice them into the fixed body. String surgery rather than a JSON tool: the
+# body is a literal from hooks.json, so its last character is known to be `}`.
+if [ -n "$REFS" ]; then
+  case "$BODY" in
+    *\}) BODY="${BODY%\}},\"refs\":[$REFS]}" ;;
+  esac
+fi
+
 # Backgrounded and detached: the agent waits for this script, not for the
 # request. A server that is down, restarting or slow costs the turn nothing.
 curl -s -m 2 -o /dev/null -X POST \

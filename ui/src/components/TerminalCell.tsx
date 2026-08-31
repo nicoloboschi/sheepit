@@ -131,9 +131,11 @@ import { preferences } from '../preferences';
 // (The old tmux bridge needed alt-screen stripping because tmux attach
 // would dump spurious alt-screen transitions. Direct PTY doesn't have that.)
 
-// Match URLs: scheme + domain + optional path/query/fragment (stop at whitespace, quotes, parens, angles, control chars)
-const URL_RE = /https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](?::\d+)?(?:\/[^\s"'<>()\x1b\x07\u0007\]{}|\\^`]*)?/g;
-const stripAnsi = (s: string) => s.replace(/\x1b(?:\[[0-9;]*[a-zA-Z]|\].*?(?:\x07|\x1b\\))/g, '');
+// Nothing here reads the output as text any more. A URL scanner used to run
+// over every batch to collect links (and, from them, the pane's PR number);
+// it matched only what arrived contiguous in one chunk, so a TUI agent that
+// wraps or redraws its own output defeated it, and the list died with the tab.
+// PR and issue references now come from the agent's hooks — see src/pr-refs.ts.
 
 /** Cap on output parked for a hidden pane (see flushOutput). Matches the
  *  daemon's reconnect ring so a revealed pane shows the same tail a reconnect
@@ -729,16 +731,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       let mm: RegExpExecArray | null;
       while ((mm = re.exec(batch)) !== null) {
         if (mm[1]!.split(';').includes('1006')) sgrMouseRef.current = mm[2] === 'h';
-      }
-    }
-
-    const plain = stripAnsi(batch);
-    const urls = plain.match(URL_RE);
-    if (urls) {
-      const store = useStore.getState();
-      for (const url of urls) {
-        const clean = url.replace(/[.,;:!?)'"}\]]+$/, '');
-        store.addSessionUrl(sessionId, clean);
       }
     }
   }

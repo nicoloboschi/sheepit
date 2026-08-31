@@ -21,6 +21,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import { configDir, ringBuffersDir } from './paths.js';
 import { SessionStore, type StoredSession } from './session-store.js';
+import { mergePrRefs, type PrRef } from './pr-refs.js';
 import { logger } from './server.js';
 
 const execAsync = promisify(exec);
@@ -67,10 +68,6 @@ const PERSIST_DEBOUNCE_MS = 1000;
  *  forever. An hour is far longer than any single model turn, so this only
  *  fires for a session whose agent genuinely went away. */
 const AGENT_STATE_TTL_MS = 60 * 60_000;
-
-/** How much of a session's ring the preview sweep decodes. A preview is two
- *  lines; this is generous even for very wide panes. */
-const PREVIEW_TAIL_BYTES = 8 * 1024;
 
 /** How many external commands a background sweep may have in flight.
  *
@@ -768,10 +765,9 @@ export class DirectBridge {
   /** Last session list actually broadcast, encoded, so an unchanged sweep can
    *  stay quiet (see discoverSessions). */
   private lastSessionsEncoded: string | null = null;
-  private previewInterval: ReturnType<typeof setInterval> | null = null;
+  private activityInterval: ReturnType<typeof setInterval> | null = null;
   private gitCacheInterval: ReturnType<typeof setInterval> | null = null;
   private prCacheInterval: ReturnType<typeof setInterval> | null = null;
-  private lastPreviews = new Map<string, string>();
   private cachedSessions: Session[] = [];
   private knownSessions = new Set<string>();
   private daemon = new DaemonClient();
@@ -783,9 +779,6 @@ export class DirectBridge {
   private inputPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Pending coalesced persist triggered by a mode change (see schedulePersist). */
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Ring version last used to build a preview / written to disk, per session.
-   *  Both periodic sweeps use these to skip sessions that produced no output. */
-  private previewVersions = new Map<string, number>();
   /** Warm shells spawned in the proxy under POOL_PREFIX ids, waiting to be
    *  claimed. Subscribed but absent from `sessions`, so their rc-file chatter
    *  is dropped on arrival and an exit before claim is still noticed. */
@@ -801,6 +794,9 @@ export class DirectBridge {
   private agentState = new Map<string, { state: AgentState; source: string; at: number }>();
   /** Last prompt/response pair per session (see AgentTurn). */
   private agentTurns = new Map<string, AgentTurn>();
+  /** PR/issue references the agent's hooks reported, newest first (see
+   *  pr-refs.ts). Nothing here comes from terminal output. */
+  private sessionRefs = new Map<string, PrRef[]>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -942,7 +938,7 @@ export class DirectBridge {
     // keystroke delivery.
     this.ringFlushInterval = setInterval(() => this.flushRings(), 10_000);
     this.sessionListInterval = setInterval(() => this.discoverSessions(), 2000);
-    this.previewInterval = setInterval(() => this.publishPreviews(), 1000);
+    this.activityInterval = setInterval(() => this.publishActivity(), 1000);
     this.gitCacheInterval = setInterval(() => this._refreshGitCache(), 20_000);
     this.prCacheInterval = setInterval(() => this._refreshPRCache(), 120_000);
 
@@ -961,7 +957,7 @@ export class DirectBridge {
     this.store.flush();
     if (this.ringFlushInterval) clearInterval(this.ringFlushInterval);
     if (this.sessionListInterval) clearInterval(this.sessionListInterval);
-    if (this.previewInterval) clearInterval(this.previewInterval);
+    if (this.activityInterval) clearInterval(this.activityInterval);
     if (this.gitCacheInterval) clearInterval(this.gitCacheInterval);
     if (this.prCacheInterval) clearInterval(this.prCacheInterval);
     this.flushRings(true);
@@ -987,7 +983,7 @@ export class DirectBridge {
     // ~9 KB with twenty sessions. Broadcasting it regardless made it 73% of all
     // socket traffic to an idle tab, and — worse than the bytes — handed every
     // client a fresh object twice a second, so the sidebar re-rendered on a
-    // timer rather than on news. Same rule publishPreviews already follows:
+    // timer rather than on news. Same rule publishActivity already follows:
     // say nothing when there is nothing to say.
     //
     // A newly connected client does not depend on this. It asks for the list
@@ -1011,7 +1007,7 @@ export class DirectBridge {
 
     // Refresh, not a transition: the agent is still doing what it was already
     // doing. This is the common case now that a ping fires on every tool call,
-    // so it must not cost a broadcast — publishPreviews() walks every session,
+    // so it must not cost a broadcast — publishActivity() walks every session,
     // and a hundred-tool turn would run it a hundred times to tell the client
     // nothing it did not already know. Keep the timestamp fresh (it is what
     // AGENT_STATE_TTL_MS is measured against) and stop there.
@@ -1059,9 +1055,10 @@ export class DirectBridge {
     // busy->false transition alone is what the UI turns into "X finished", and
     // reporting a prompt as a completed turn is worse than saying nothing.
     //
-    // Published BEFORE the preview below, and the ordering is load-bearing:
-    // the attention handler clears the client's busy flag, so the preview that
-    // follows sees it already false and does not also fire "finished".
+    // Published BEFORE the activity flip below, and the ordering is
+    // load-bearing: the attention handler clears the client's busy flag, so
+    // the flip that follows sees it already false and does not also fire
+    // "finished".
     if (state === 'waiting') {
       this.pubsub.publish('__sessions__', {
         type: 'attention', session_id: sessionId, message: 'needs your input',
@@ -1070,7 +1067,7 @@ export class DirectBridge {
 
     // Publish immediately: waiting for the next sweep would give back the very
     // latency this whole mechanism exists to remove.
-    this.publishPreviews();
+    this.publishActivity(sessionId);
     return true;
   }
 
@@ -1171,44 +1168,49 @@ export class DirectBridge {
 
   getCachedSessions(): Session[] { return this.cachedSessions; }
 
-  /** Publish last 2 lines of each session as a preview (triggers unseen indicators) */
-  private publishPreviews(): void {
+  /**
+   * Tell clients when a session's busy flag flips.
+   *
+   * This replaced a once-a-second sweep that decoded 8 KB of every session's
+   * ring, stripped the escape sequences and published the last two lines as a
+   * "preview". Nothing rendered that text — the client stored it and used it
+   * for one thing, noticing that a background pane had changed — and the
+   * signal for that is the agent's hooks firing, not bytes moving. A shell
+   * echoing a progress bar is not news; an agent finishing a turn is.
+   *
+   * What is left is a boolean per session, so the sweep costs a map lookup
+   * rather than a decode. It still has to exist: `isSessionBusy` goes false on
+   * its own when a report goes stale (AGENT_STATE_TTL_MS), and nobody would
+   * ever tell the client about a transition that is made of time passing.
+   */
+  private publishActivity(only?: string): void {
     for (const sess of this.sessions.values()) {
+      if (only && sess.id !== only) continue;
       const busy = this.isSessionBusy(sess.id);
-
-      // A session that has gone quiet stops bumping its ring version, so the
-      // skip below would never let us announce that it finished. Publish
-      // whenever the busy flag flips, regardless of whether the text changed.
-      const busyChanged = this.lastBusy.get(sess.id) !== busy;
-      if (busyChanged) this.lastBusy.set(sess.id, busy);
-
-      // Nothing written since the last tick → the preview cannot have changed.
-      // Idle sessions are the common case, and skipping them here is what keeps
-      // this once-a-second sweep off the keystroke path.
-      const versionChanged = this.previewVersions.get(sess.id) !== sess.ring.version;
-      if (!versionChanged && !busyChanged) continue;
-      this.previewVersions.set(sess.id, sess.ring.version);
-
-      // Two lines are all we show, so only the tail is worth decoding.
-      const raw = sess.ring.readTail(PREVIEW_TAIL_BYTES);
-      if (!raw) continue;
-      // Strip ANSI escapes and get last 2 non-empty lines
-      const stripped = stripEscapeSequences(raw);
-      const lines = stripped.split('\n').filter(l => l.trim());
-      const preview = lines.slice(-2).join('\n');
-
-      // Only publish if something changed
-      const prev = this.lastPreviews.get(sess.id);
-      if (preview === prev && !busyChanged) continue;
-      this.lastPreviews.set(sess.id, preview);
-
-      this.pubsub.publish('__sessions__', {
-        type: 'preview',
-        session_id: sess.id,
-        preview,
-        busy,
-      });
+      if (this.lastBusy.get(sess.id) === busy) continue;
+      this.lastBusy.set(sess.id, busy);
+      this.pubsub.publish('__sessions__', { type: 'activity', session_id: sess.id, busy });
     }
+  }
+
+  /** Record PR/issue references an agent reported through its hooks.
+   *
+   *  Merged rather than replaced, and persisted: a reference is mentioned once,
+   *  when the agent opens or checks out the PR, and has to survive every
+   *  subsequent tool call and a server restart. Returns false when nothing
+   *  moved — this is called on every hook that carried text. */
+  addPrRefs(sessionId: string, refs: PrRef[]): boolean {
+    if (!this.sessions.has(sessionId) || refs.length === 0) return false;
+    const merged = mergePrRefs(this.sessionRefs.get(sessionId) ?? [], refs);
+    if (!merged) return false;
+    this.sessionRefs.set(sessionId, merged);
+    this.persistSession(sessionId);
+    return true;
+  }
+
+  /** PR/issue references reported for this session, newest first. */
+  getPrRefs(sessionId: string): PrRef[] {
+    return this.sessionRefs.get(sessionId) ?? [];
   }
 
   // ── Shell pool ───────────────────────────────────────────────────────────
@@ -1606,6 +1608,11 @@ export class DirectBridge {
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, ...git,
+        // Hook-reported, newest first. `git` above carries the PR of the
+        // session's *branch*; this carries the ones its agent actually
+        // touched, which is the only answer for a branch with no PR of its
+        // own (a local checkout of someone else's, or work on main).
+        prRefs: this.sessionRefs.get(sess.id),
       };
     });
   }
@@ -1745,11 +1752,12 @@ export class DirectBridge {
   private toStored(sess: DirectSession): StoredSession {
     const agent = this.agentState.get(sess.id);
     const turn = this.agentTurns.get(sess.id);
+    const refs = this.sessionRefs.get(sess.id);
     return {
       name: sess.name, path: sess.path, sessionType: sess.sessionType,
       isHeadless: sess.isHeadless,
       modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
-      agent, turn,
+      agent, turn, refs: refs?.length ? refs : undefined,
     };
   }
 
@@ -1794,6 +1802,9 @@ export class DirectBridge {
         });
       }
       if (info.turn) this.agentTurns.set(id, info.turn);
+      // Unlike the agent's state this has no shelf life: a PR the session was
+      // working on before the restart is still the PR it is working on.
+      if (info.refs?.length) this.sessionRefs.set(id, info.refs);
 
       const ring = new RingBuffer(RING_SIZE);
       ring.loadFrom(join(RING_DIR, `${id}.buf`));

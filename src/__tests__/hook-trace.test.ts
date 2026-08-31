@@ -10,6 +10,7 @@ function hook(over: Partial<Parameters<typeof recordHook>[0]> = {}) {
     event: 'PreToolUse',
     state: 'busy',
     turn: null,
+    refs: null,
     outcome: 'ok' as const,
     ...over,
   }

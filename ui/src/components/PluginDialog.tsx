@@ -24,6 +24,7 @@ interface HookTraceEntry {
   event: string | null;
   state: string | null;
   turn: string | null;
+  refs: string | null;
   outcome: 'ok' | 'unknown-session' | 'unresolved' | 'rejected';
   detail?: string;
 }
@@ -137,6 +138,16 @@ function HookTrace() {
                 title={e.turn ? 'carried the exchange sessions are named from' : undefined}
               >
                 {e.turn ?? ''}
+              </span>
+              {/* The pane bar's PR number comes from these and nothing else
+                  now that nothing reads the terminal, so a bar with no PR on
+                  it is answered in this column. */}
+              <span
+                className="shrink-0 truncate"
+                style={{ width: 74, color: e.refs ? 'var(--primary)' : 'var(--muted-foreground)' }}
+                title={e.refs ? 'carried the PR/issue the pane bar shows' : undefined}
+              >
+                {e.refs ?? ''}
               </span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">
                 {e.outcome === 'ok' ? (e.sessionId ?? '') : `${e.outcome}${e.detail ? ` — ${e.detail}` : ''}`}

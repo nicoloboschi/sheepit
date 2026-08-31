@@ -36,6 +36,11 @@ export interface Session {
   prState?: string;
   /** PR URL */
   prUrl?: string;
+  /** PR/issue references the agent's hooks reported for THIS session, newest
+   *  first — see pr-refs.ts. Distinct from prNum above, which belongs to the
+   *  session's branch: a session can work on a PR that its branch knows
+   *  nothing about. */
+  prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
   /** A background-only session. It stays running but is not presented as a workspace. */
   isHeadless?: boolean;
 }
@@ -43,7 +48,10 @@ export interface Session {
 export type BridgeMessage =
   | { type: 'sessions'; sessions: Session[] }
   | { type: 'output'; data: string }
-  | { type: 'preview'; session_id: string; preview: string; busy: boolean }
+  /** A session's busy flag flipped. Was a `preview` message carrying two
+   *  decoded lines of output; nothing rendered the text, and the signal is the
+   *  agent's hooks firing rather than bytes moving. */
+  | { type: 'activity'; session_id: string; busy: boolean }
   | { type: 'current_input'; session_id: string; input: string }
   /** The app in the PTY asked for the user's attention (OSC 9) — for coding
    *  agents this is emitted when a turn completes. */

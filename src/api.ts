@@ -10,6 +10,7 @@ import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
+import { extractPrRefs } from './pr-refs.js';
 import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
@@ -418,8 +419,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    */
   router.post('/sessions/:id/agent-state', (req, res) => {
     try {
-      const { state, source, event, prompt, response } = req.body as
-        { state?: string; source?: string; event?: string; prompt?: string; response?: string };
+      const { state, source, event, prompt, response, refs } = req.body as
+        { state?: string; source?: string; event?: string; prompt?: string; response?: string; refs?: unknown };
       // Traced from here, before anything can reject it: a report that never
       // lands is precisely the case the trace exists for, and by the time the
       // bridge would log it that outcome is already gone.
@@ -435,6 +436,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           typeof prompt === 'string' && prompt.trim() ? 'prompt' : null,
           typeof response === 'string' && response.trim() ? 'response' : null,
         ].filter(Boolean).join('+') || null,
+        // Filled in below, once the references have been read out of the
+        // report. Unlike the turn text these are safe to show: a PR number is
+        // already on the pane bar.
+        refs: null as string | null,
       };
       if (!state || !AGENT_STATES.includes(state as AgentState)) {
         recordHook({ ...trace, outcome: 'rejected', detail: `not a known state` });
@@ -453,6 +458,35 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           response: typeof response === 'string' ? response.slice(0, 4000) : undefined,
         },
       );
+
+      // PR/issue references, from what the agent reported and nothing else.
+      //
+      // Two sources, both hooks: `refs` is what post.sh grepped out of the
+      // tool call and its result (a URL, or a `gh pr view 42` command line),
+      // and the turn text is what the user and the model actually wrote. The
+      // bare `#42` form is read from the turn only — in a tool result it is
+      // far more often a colour, a comment or a line number than a PR.
+      if (ok) {
+        // Joined, not parsed one at a time: post.sh sends the fragments its
+        // grep matched, so `--repo owner/name` arrives as its own string and
+        // only means something next to the command it qualifies.
+        const fromTools = extractPrRefs(
+          (Array.isArray(refs) ? refs : [])
+            .filter((r): r is string => typeof r === 'string')
+            .slice(0, 20)
+            .map(r => r.slice(0, 400))
+            .join(' '),
+        );
+        const fromTurn = [prompt, response]
+          .filter((t): t is string => typeof t === 'string' && t.length > 0)
+          .flatMap(t => extractPrRefs(t.slice(0, 4000), { bare: true }));
+        const found = [...fromTurn, ...fromTools];
+        if (found.length) {
+          trace.refs = found.slice(0, 3).map(r => `${r.kind}#${r.num}`).join(' ');
+          bridge.addPrRefs(req.params.id, found);
+        }
+      }
+
       recordHook({ ...trace, outcome: ok ? 'ok' : 'unknown-session' });
       if (!ok) return res.status(404).json({ error: 'unknown session' });
       res.json({ ok: true });
@@ -518,7 +552,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     try {
       const { id } = req.params;
       const session = (await bridge.listSessions()).find(s => s.id === id);
-      const trace = { endpoint: 'cleared', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null };
+      const trace = { endpoint: 'cleared', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null, refs: null };
       if (!session) {
         recordHook({ ...trace, outcome: 'unknown-session' });
         return res.status(404).json({ error: 'no such session' });
@@ -554,7 +588,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.post('/sessions/:id/fresh', (req, res) => {
     try {
       const { id } = req.params;
-      const trace = { endpoint: 'fresh', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null };
+      const trace = { endpoint: 'fresh', sessionId: id, source: null, event: 'SessionStart', state: null, turn: null, refs: null };
       if (!bridge.hasSession(id)) {
         recordHook({ ...trace, outcome: 'unknown-session' });
         return res.status(404).json({ error: 'no such session' });
@@ -583,12 +617,12 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       if (!sessionId) {
         recordHook({
           endpoint: 'resolve', sessionId: null, source: null, event: null, state: null, turn: null,
-          outcome: 'unresolved', detail: `pids ${walked.slice(0, 8).join(',')}`,
+          refs: null, outcome: 'unresolved', detail: `pids ${walked.slice(0, 8).join(',')}`,
         });
         return res.status(404).json({ error: 'no session owns those pids' });
       }
       recordHook({
-        endpoint: 'resolve', sessionId, source: null, event: null, state: null, turn: null, outcome: 'ok',
+        endpoint: 'resolve', sessionId, source: null, event: null, state: null, turn: null, refs: null, outcome: 'ok',
       });
       res.json({ sessionId });
     } catch (e) {

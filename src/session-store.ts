@@ -15,6 +15,10 @@ export interface StoredSession {
   agent?: { state: string; source: string; at: number };
   /** Last exchange the agent reported, used for naming. */
   turn?: { prompt?: string; response?: string; at: number };
+  /** PR/issue references the agent's hooks reported, newest first. Persisted
+   *  because a PR is mentioned once — when it is opened or checked out — and
+   *  the pane has to keep showing it long after that turn ended. */
+  refs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
 }
 
 const LEGACY_FILE = join(configDir(), 'direct-sessions.json');

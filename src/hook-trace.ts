@@ -72,6 +72,11 @@ export interface HookTraceEntry {
    *  gets named" and "the pane never lights up" are separate faults with
    *  separate causes, and this column is what tells them apart at a glance. */
   turn: string | null;
+  /** PR/issue references this hook carried, e.g. `pr#322`. The pane bar's PR
+   *  number comes from these and from nothing else now that no one scrapes the
+   *  terminal, so a bar with no PR on it is answered here: either the hooks
+   *  never carried one, or they did and it was rejected. */
+  refs: string | null;
   outcome: HookOutcome;
   /** Free text for the outcome — the rejection reason, or the ancestry that
    *  failed to resolve. Absent when there is nothing to add. */
@@ -90,6 +95,7 @@ function sameShape(a: HookTraceEntry, b: Omit<HookTraceEntry, 'at' | 'firstAt' |
     && a.event === b.event
     && a.state === b.state
     && a.turn === b.turn
+    && a.refs === b.refs
     && a.outcome === b.outcome
     && a.detail === b.detail;
 }

@@ -26,10 +26,19 @@ export interface Session {
   prNum?: number;
   prState?: string;
   prUrl?: string;
+  /** PR/issue references the agent's own hooks reported for this pane, newest
+   *  first. `prNum` above is the PR of the *branch*; this is what the agent
+   *  actually touched, which is the only answer for a session working on a
+   *  branch with no PR of its own. Nothing here is scraped from output. */
+  prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
   /** Background-only session; kept alive by the backend but not shown as a workspace. */
   isHeadless?: boolean;
   /** No work in it yet: newly started, or just `/clear`ed. */
   fresh?: boolean;
+  /** Agent-reported, as of the server's last sweep. Transitions arrive as
+   *  `activity` messages; this is only read to seed a tab that has just
+   *  loaded and has never seen one (see renderSessions). */
+  busy?: boolean;
 }
 
 export interface ConfirmState {
@@ -129,7 +138,6 @@ export interface StoreState {
   /** The **active workspace id** (synthetic, not a session id). Legacy field
    *  name — kept for call-site compatibility. See CLAUDE.md glossary. */
   currentSessionId: string | null;
-  sessionPreviews: Record<string, string>;
   sessionBusy: Record<string, boolean>;
   /** Sessions with unseen output (cleared when you switch to their workspace) */
   sessionHasUnseen: Record<string, boolean>;
@@ -139,7 +147,6 @@ export interface StoreState {
   sessionLastEvent: Record<string, number>;
   sessionOrder: string[];
   sessionMap: Record<string, Session>;
-  sessionUrls: Record<string, string[]>;
   sessionCurrentInput: Record<string, string>;
   openPaneMap: Record<string, number[]>;
   /** Per-workspace state. Keyed by **synthetic workspace id**. */
@@ -177,11 +184,10 @@ export interface StoreState {
   renderSessions: (sessions: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
   setOpenPaneMap: (panes: (string | null)[]) => void;
-  updatePreview: (sessionId: string, preview: string, busy?: boolean) => void;
+  /** A pane's agent started or finished working (server `activity` message). */
+  updateActivity: (sessionId: string, busy?: boolean) => void;
   showConfirm: (message: string) => Promise<boolean>;
   dismissConfirm: (result: boolean) => void;
-  addSessionUrl: (sessionId: string, url: string) => void;
-  clearSessionUrls: (sessionId: string) => void;
   setCurrentInput: (sessionId: string, input: string) => void;
   /** The app in the session asked for attention (OSC 9) — for coding agents,
    *  the turn finished. */
@@ -468,14 +474,12 @@ const _initialWorkspaces = loadWorkspacesFromStorage();
 const useStore = create<StoreState>((set, get) => ({
   sessions: [],
   currentSessionId: loadLastWorkspaceId(),
-  sessionPreviews: {},
   sessionBusy: {},
   sessionHasUnseen: {},
   sessionNeedsAttention: {},
   sessionLastEvent: {},
   sessionOrder: [],
   sessionMap: {},
-  sessionUrls: {},
   sessionCurrentInput: {},
   openPaneMap: {},
   workspaces: _initialWorkspaces.workspaces,
@@ -613,13 +617,31 @@ const useStore = create<StoreState>((set, get) => ({
           && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
           && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
           && p.prNum === s.prNum && p.prState === s.prState
+          && p.prRefs?.length === s.prRefs?.length
+          && (p.prRefs ?? []).every((r, n) => r.num === s.prRefs?.[n]?.num && r.kind === s.prRefs[n]?.kind)
           && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless
           && p.fresh === s.fresh;
       });
-    if (workspacesUnchanged && sessionsUnchanged && nextCurrentId === prev.currentSessionId) return;
+    // Seed the busy flag for panes this tab has no opinion about yet.
+    //
+    // `activity` messages own transitions — they are what fires "finished" —
+    // but they only arrive when something flips. A tab that loads while an
+    // agent is halfway through a turn has missed the flip, and would show that
+    // pane as idle until it next changed. The list says so, so use it, and
+    // only for ids we have never recorded: adopting it wholesale would let the
+    // 2s sweep beat the activity message to a transition and swallow the
+    // notification that goes with it.
+    let seededBusy: Record<string, boolean> | null = null;
+    for (const s of allSorted) {
+      if (s.busy === undefined || prev.sessionBusy[s.id] !== undefined) continue;
+      (seededBusy ??= { ...prev.sessionBusy })[s.id] = s.busy;
+    }
+
+    if (workspacesUnchanged && sessionsUnchanged && !seededBusy && nextCurrentId === prev.currentSessionId) return;
 
     if (!workspacesUnchanged) saveWorkspaces(nextWorkspaces, nextWorkspaceOrder);
     set({
+      ...(seededBusy ? { sessionBusy: seededBusy } : {}),
       sessions: allSorted,
       sessionMap,
       sessionOrder,
@@ -667,10 +689,18 @@ const useStore = create<StoreState>((set, get) => ({
     set({ openPaneMap: map });
   },
 
-  updatePreview(sessionId: string, preview: string, busy?: boolean) {
-    const { sessionPreviews, currentSessionId, workspaces } = get();
-    const prevPreview = sessionPreviews[sessionId];
-    set(s => ({ sessionPreviews: { ...s.sessionPreviews, [sessionId]: preview } }));
+  /**
+   * A pane's agent started or finished working.
+   *
+   * This was `updatePreview`, which also carried two decoded lines of that
+   * pane's output. Nothing ever rendered them: the text existed so that a
+   * *change* in it could mark a background pane unread. That signal is gone
+   * with it, on purpose — a shell repainting a progress bar is not news, and
+   * the thing worth telling you about is a turn ending, which the agent
+   * reports itself.
+   */
+  updateActivity(sessionId: string, busy?: boolean) {
+    const { currentSessionId, workspaces } = get();
 
     // A session is "visible" if it belongs to the currently-active workspace.
     const isVisible = (() => {
@@ -710,11 +740,6 @@ const useStore = create<StoreState>((set, get) => ({
         set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
       }
       set(s => ({ sessionBusy: { ...s.sessionBusy, [sessionId]: false } }));
-    } else if (prevPreview !== undefined && preview !== prevPreview && !isVisible) {
-      const { sessionBusy } = get();
-      if (!sessionBusy[sessionId]) {
-        set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
-      }
     }
   },
 
@@ -730,20 +755,6 @@ const useStore = create<StoreState>((set, get) => ({
       confirm.resolve(result);
       set({ confirm: null });
     }
-  },
-
-  addSessionUrl(sessionId: string, url: string) {
-    const prev = get().sessionUrls[sessionId] ?? [];
-    if (prev.length >= 50) return;
-    const lower = url.toLowerCase();
-    if (prev.some(u => u.toLowerCase() === lower)) return;
-    set({ sessionUrls: { ...get().sessionUrls, [sessionId]: [...prev, url] } });
-  },
-
-  clearSessionUrls(sessionId: string) {
-    const urls = { ...get().sessionUrls };
-    delete urls[sessionId];
-    set({ sessionUrls: urls });
   },
 
   setCurrentInput(sessionId: string, input: string) {

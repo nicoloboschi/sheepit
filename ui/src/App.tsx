@@ -247,8 +247,8 @@ export default function App() {
         }
         break;
       }
-      case 'preview':
-        store.updatePreview(msg.session_id as string, msg.preview as string, msg.busy as boolean | undefined);
+      case 'activity':
+        store.updateActivity(msg.session_id as string, msg.busy as boolean | undefined);
         break;
       case 'current_input':
         store.setCurrentInput(msg.session_id as string, msg.input as string);

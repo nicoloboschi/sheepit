@@ -16,14 +16,12 @@ describe('useStore', () => {
     useStore.setState({
       sessions: [],
       currentSessionId: null,
-      sessionPreviews: {},
       sessionBusy: {},
       sessionHasUnseen: {},
       sessionNeedsAttention: {},
       sessionLastEvent: {},
       sessionOrder: [],
       sessionMap: {},
-      sessionUrls: {},
       sessionCurrentInput: {},
       workspaces: {},
       workspaceOrder: [],
@@ -159,24 +157,29 @@ describe('useStore', () => {
     })
   })
 
-  describe('updatePreview', () => {
-    it('updates preview text', () => {
-      useStore.getState().updatePreview('$0', 'ls output...')
-      expect(useStore.getState().sessionPreviews['$0']).toBe('ls output...')
-    })
-
-    it('marks unseen when preview changes for non-active session', () => {
+  describe('updateActivity', () => {
+    it('marks unseen and notifies when a background session finishes', () => {
       useStore.getState().setCurrentSessionId('$1')
-      useStore.getState().updatePreview('$0', 'initial')
-      useStore.getState().updatePreview('$0', 'changed')
+      useStore.setState({ sessionBusy: { $0: true } })
+      useStore.getState().updateActivity('$0', false)
+
+      expect(useStore.getState().sessionBusy['$0']).toBe(false)
       expect(useStore.getState().sessionHasUnseen['$0']).toBe(true)
     })
 
-    it('does not mark unseen for active session', () => {
+    it('leaves the active session alone when it finishes — you are looking at it', () => {
       useStore.getState().setCurrentSessionId('$0')
-      useStore.getState().updatePreview('$0', 'initial')
-      useStore.getState().updatePreview('$0', 'changed')
+      useStore.setState({ sessionBusy: { $0: true } })
+      useStore.getState().updateActivity('$0', false)
+
       expect(useStore.getState().sessionHasUnseen['$0']).toBeUndefined()
+    })
+
+    it('clears a pending attention request when work resumes', () => {
+      useStore.getState().sessionAttention('$0', 'Waiting for input')
+      useStore.getState().updateActivity('$0', true)
+
+      expect(useStore.getState().sessionNeedsAttention['$0']).toBeUndefined()
     })
   })
 
@@ -204,29 +207,6 @@ describe('useStore', () => {
 
       useStore.getState().setCurrentSessionId('$0')
       expect(useStore.getState().sessionNeedsAttention['$0']).toBeUndefined()
-    })
-  })
-
-  describe('session URLs', () => {
-    it('adds and clears URLs', () => {
-      useStore.getState().addSessionUrl('$0', 'http://localhost:3000')
-      useStore.getState().addSessionUrl('$0', 'http://localhost:8080')
-
-      expect(useStore.getState().sessionUrls['$0']).toEqual([
-        'http://localhost:3000',
-        'http://localhost:8080',
-      ])
-
-      useStore.getState().clearSessionUrls('$0')
-      // clearSessionUrls deletes the key
-      expect(useStore.getState().sessionUrls['$0']).toBeUndefined()
-    })
-
-    it('does not add duplicate URLs', () => {
-      useStore.getState().addSessionUrl('$0', 'http://localhost:3000')
-      useStore.getState().addSessionUrl('$0', 'http://localhost:3000')
-
-      expect(useStore.getState().sessionUrls['$0']).toHaveLength(1)
     })
   })
 

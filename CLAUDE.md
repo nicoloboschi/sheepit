@@ -269,7 +269,7 @@ The bar carries **identity, not telemetry**, in three ruled groups. The
 **sheep leads it** — status is what you scan a wall of panes for, and the
 agent's logo is not, since you already know what you started. Then the name
 with the cwd as its subtitle. Then, flush right: what the pane is connected to
-(agent mark, git handle, PR, links) │ what it is showing (the view switch) │
+(agent mark, git handle, PR) │ what it is showing (the view switch) │
 what you can do to it (mic, zen, close). The agent mark is drawn as a *mark*,
 not a chip — no fill, no border, same weight as the git icon beside it — and
 mic, zen and close share one `.pane-bar-btn` style so the right end reads as
@@ -278,10 +278,13 @@ it was the only arbitrary-length string on the bar, so it set the width of
 everything and squeezed the title, which matters more. The git icon still
 carries the dirty state in its colour and opens the popover with the branch,
 its ahead/behind counts and the rest; the sidebar's pen card keeps the branch
-too. CPU / memory / URL-count readouts were deliberately removed. The
-process list (with kill) and the detected-link list are still real tools, so
-they keep one small `ListTree` handle that appears only when there is
-something behind it — don't reintroduce the inline readouts.
+too. CPU / memory / URL-count readouts were deliberately removed. The process
+list (with kill) is still a real tool, so it keeps one small `ListTree` handle
+that appears only when there is something behind it — don't reintroduce the
+inline readouts. The list of every URL seen in the pane hung off that same
+handle and is **gone**: it was built by scanning output in the browser, which
+is the one thing nothing does any more (see [Nothing reads the
+terminal](#nothing-reads-the-terminal-as-text)).
 
 **It is two lines tall at every width** — not from wrapping, but because the
 name carries the path as its subtitle (`.pane-bar-title-block`). That stable
@@ -449,7 +452,70 @@ were visible anywhere before.
 
 Read it for the **gaps**. A wired-but-broken hook is a red row; an event the
 agent never fires is no row at all, and that absence is what the table above
-is for.
+is for. Two columns carry what the hooks brought rather than what they were:
+`turn` (the exchange sessions are named from) and `refs` (the PR/issue the
+pane bar shows). Both are otherwise invisible, and a blank column is the whole
+explanation for a pane that lights up correctly but is never named, or never
+shows its PR.
+
+## Nothing reads the terminal as text
+
+Two things used to be derived by reading the output as prose. Both are gone,
+and the rule now is: **the terminal is bytes to render, not a source of
+facts.** What an agent is doing, what it was asked, and what it touched all
+arrive through its hooks; everything else the server needs it asks the OS or
+git for.
+
+What is left on the byte stream is *protocol*, and that stays: OSC 7 (the
+shell reporting its cwd), OSC 9 / 777 / 99 (the app raising a notification →
+bleating), OSC 9;4 progress, and the DEC private modes that have to survive a
+reconnect. Those are applications reporting in a defined format, which is a
+different thing from guessing.
+
+### PR and issue references
+
+`src/pr-refs.ts` is the only extractor, and it is fed only by hooks:
+
+- **`post.sh`** greps the tool payload on stdin and forwards what it finds as
+  `refs` on the ping it was sending anyway. It is **gated on the payload
+  mentioning `gh pr` / `gh issue`** — otherwise reading or writing any file
+  that happens to contain a PR link (a changelog, a test fixture) would
+  relabel the pane. Bounded to 64 KB, one `grep`, `head -c` before it: this
+  runs per tool call, on the agent's critical path.
+- **`report-state.mjs`** already sends the prompt and the reply for naming.
+  The server reads those too, and only there does it accept the bare `#123`
+  form — in a tool *result* that shape is more often a colour, a comment or a
+  line number than a pull request.
+
+The result is merged per session (newest first, capped at `MAX_REFS`) and
+**persisted**: a PR is mentioned once, when it is opened or checked out, and
+the pane has to keep showing it long after that turn ended. It rides to the
+client on the session object as `prRefs`.
+
+The bar shows the most recently touched reference, not the highest-numbered
+one — a session that has just checked out #3672 is about #3672 whatever else
+it read. `gh pr view` still runs (`/api/git/:id/github`) and is still the only
+source of *state* and *check results*, but it answers for the **branch**, so
+those decorations are painted only when its number and the reference agree.
+That split is the whole point: a session on `main`, or on a local checkout of
+someone else's PR, has no branch PR at all and used to show nothing.
+
+### The unread signal
+
+There is no `preview` message any more. The server used to decode 8 KB of
+every session's ring once a second, strip the escapes and publish the last two
+lines; nothing ever rendered that text, and its only remaining job was to
+notice that a background pane had *changed* so it could be marked unread. A
+shell repainting a progress bar is not news. `publishActivity` publishes the
+busy flag instead, and only when it flips — which is a map lookup per session
+rather than a decode. The sweep still has to exist because `isSessionBusy`
+goes false on its own when a report goes stale, and nobody would otherwise
+tell the client about a transition made of time passing.
+
+One consequence, on purpose: **a plain shell pane no longer lights up when it
+prints something.** Unread now means an agent finished a turn, or the app rang
+the bell. A pane with no reporter in it is quiet, which is the same trade the
+busy flag already made (see `isSessionBusy`).
 
 ## The PTY proxy — keep it empty
 

@@ -25,6 +25,13 @@ export interface GithubPR {
   prChecks?: 'PASS' | 'FAIL' | 'PENDING' | null;
   prReviewDecision?: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
   repoUrl?: string;
+  /** Owner and repo parsed from the remote. Used to build a link for a
+   *  reference the agent reported as a bare number, which has nowhere else to
+   *  learn which repository it belongs to. */
+  owner?: string;
+  repo?: string;
+  /** The branch `gh pr view` answered for. */
+  branch?: string;
 }
 
 /** GET a JSON endpoint, or null if it is unreachable or unhappy. Every one of
