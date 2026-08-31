@@ -15,6 +15,7 @@ import { PubSub } from './pubsub.js';
 import { config } from './config.js';
 import type { BridgeMessage, Session } from './protocol.js';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
@@ -445,7 +446,15 @@ export class RingBuffer {
     return Buffer.concat([this.buf.slice(start), this.buf.slice(0, n - head)]).toString('utf-8');
   }
 
-  saveTo(path: string): void { writeFileSync(path, this.read(), 'utf-8'); }
+  /** Ordered bytes with no UTF-8 decode. Decoding a full 256 KB ring just to
+   *  re-encode it on write is pure overhead — and a decode that starts
+   *  mid-character corrupts the head, which writing the raw bytes avoids. */
+  snapshotBytes(): Buffer {
+    if (!this.full) return Buffer.from(this.buf.subarray(0, this.pos));
+    return Buffer.concat([this.buf.subarray(this.pos), this.buf.subarray(0, this.pos)]);
+  }
+
+  saveTo(path: string): void { writeFileSync(path, this.snapshotBytes()); }
   loadFrom(path: string): void {
     if (!existsSync(path)) return;
     this.write(readFileSync(path, 'utf-8'));
@@ -799,6 +808,8 @@ export class DirectBridge {
   /** Incomplete OSC 99 frames, keyed by session id. */
   private pendingOsc99 = new Map<string, string>();
   private flushedVersions = new Map<string, number>();
+  /** Sessions with an async ring write in flight, so ticks don't stack up. */
+  private ringWritesInFlight = new Set<string>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
   private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
@@ -953,7 +964,7 @@ export class DirectBridge {
     if (this.previewInterval) clearInterval(this.previewInterval);
     if (this.gitCacheInterval) clearInterval(this.gitCacheInterval);
     if (this.prCacheInterval) clearInterval(this.prCacheInterval);
-    this.flushRings();
+    this.flushRings(true);
     // Don't kill daemon or sessions — they survive restarts
     this.daemon.close();
     this.sessions.clear();
@@ -1860,13 +1871,34 @@ export class DirectBridge {
    *  (and therefore keystroke delivery) for hundreds of milliseconds. Idle
    *  sessions are skipped outright now; `stop()` still calls this to get a final
    *  flush, so nothing is lost on shutdown. */
-  private flushRings(): void {
+  private flushRings(sync = false): void {
     for (const [id, sess] of this.sessions) {
       if (this.flushedVersions.get(id) === sess.ring.version) continue;
-      try {
-        sess.ring.saveTo(join(RING_DIR, `${id}.buf`));
-        this.flushedVersions.set(id, sess.ring.version);
-      } catch { /* retry on the next tick */ }
+
+      if (sync) {
+        // Shutdown path: the process is going away, so the write must land
+        // before we return.
+        try {
+          sess.ring.saveTo(join(RING_DIR, `${id}.buf`));
+          this.flushedVersions.set(id, sess.ring.version);
+        } catch { /* nothing left to retry into */ }
+        continue;
+      }
+
+      // A previous write for this session is still in flight; the next tick
+      // picks up whatever it missed.
+      if (this.ringWritesInFlight.has(id)) continue;
+
+      // Snapshot version and bytes together, before yielding: the ring keeps
+      // taking output while the write is in flight, and marking that newer
+      // content as flushed would lose it.
+      const version = sess.ring.version;
+      const bytes = sess.ring.snapshotBytes();
+      this.ringWritesInFlight.add(id);
+      writeFile(join(RING_DIR, `${id}.buf`), bytes)
+        .then(() => { this.flushedVersions.set(id, version); })
+        .catch(() => { /* retry on the next tick */ })
+        .finally(() => { this.ringWritesInFlight.delete(id); });
     }
   }
 }
