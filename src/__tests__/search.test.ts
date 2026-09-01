@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { homedir } from 'os'
 import { join } from 'path'
 import {
-  parseQuery, matchFacts, snippetAround, transcriptLineText, transcriptScore,
+  parseQuery, matchFacts, matchFactsAll, bestPerGroup, groupOf, speakerOf,
+  snippetAround, transcriptLineText, transcriptScore,
   isSearchableTranscript, transcriptPattern, containsPattern,
 } from '../search.js'
 
@@ -80,6 +81,45 @@ describe('matchFacts', () => {
 
   it('says nothing for an empty query', () => {
     expect(matchFacts(facts, [], q('   '))).toBeNull()
+  })
+})
+
+// "I asked this pane about 3993" and "this pane told me 3993 is merged" are
+// different answers to the same query, and they send you to different things
+// to do next — so the results are grouped by who said it.
+describe('grouping by speaker', () => {
+  const facts = { id: 'direct-1', name: 'mirror deletion fix', gitBranch: 'pr-3672' }
+
+  it('files a match under the speaker, and a fact under neither', () => {
+    expect(groupOf({ source: 'name', snippet: '', score: 1 })).toBe('facts')
+    expect(groupOf({ source: 'turn', snippet: '', score: 1, role: 'you' })).toBe('you')
+    expect(groupOf({ source: 'transcript', snippet: '', score: 1, role: 'agent' })).toBe('agent')
+    expect(speakerOf('user')).toBe('you')
+    expect(speakerOf('assistant')).toBe('agent')
+  })
+
+  it('reports both halves of one exchange, not just the louder one', () => {
+    const matches = matchFactsAll(facts, [{ prompt: 'look at the flake', response: 'the flake is fixed' }], q('flake'))
+    expect(matches.map(m => m.role)).toEqual(['you', 'agent'])
+  })
+
+  it('gives a pane a row in every group it answers in', () => {
+    const best = bestPerGroup(matchFactsAll(
+      facts, [{ prompt: 'mirror deletion again', response: 'mirror deletion done' }], q('mirror deletion'),
+    ))
+    expect(Object.keys(best).sort()).toEqual(['agent', 'facts', 'you'])
+    expect(best.facts!.source).toBe('name')
+    expect(best.you!.snippet).toBe('mirror deletion again')
+    expect(best.agent!.snippet).toBe('mirror deletion done')
+  })
+
+  it('keeps one row per group — the best reason, not every reason', () => {
+    const best = bestPerGroup(matchFactsAll(
+      facts, [{ prompt: 'the flake again' }, { prompt: 'the flake' }], q('flake'),
+    ))
+    expect(Object.keys(best)).toEqual(['you'])
+    // The recent turn wins its group.
+    expect(best.you!.snippet).toBe('the flake again')
   })
 })
 

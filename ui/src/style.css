@@ -595,6 +595,16 @@
 .flock-search-busy { color: var(--muted-foreground); font-size: 12px; }
 
 .flock-search-results { overflow-y: auto; max-height: 460px; }
+/* The three answers, in the order they are read: what the pane is, then what
+   you said, then what the agent said. */
+.flock-search-group {
+  padding: 8px 14px 4px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted-foreground); opacity: 0.7;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  position: sticky; top: 0; z-index: 1;
+}
 .flock-search-row {
   display: block; width: 100%; text-align: left;
   padding: 8px 14px;

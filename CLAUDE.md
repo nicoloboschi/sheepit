@@ -561,8 +561,15 @@ Rules that are easy to get wrong:
   roots. Codex reports no path at all, only a session id; its rollout filename
   ends in that id, which is how `findCodexRollout` finds it, and the answer is
   cached back onto the session so the directory walk is paid once.
-- **One row per pane**, carrying its best reason. The question is which sheep,
-  so a pane matching four ways is one answer, not four.
+- **Three groups, one row per pane in each.** Results are split into what the
+  pane *is* (`PR · branch · name`), what **you said**, and what **the agent
+  said** — "I asked this pane about 3993" and "this pane told me 3993 is
+  merged" are different answers that send you to different things to do next.
+  Within a group it is still one row per pane: the question is which sheep, so
+  four reasons in one group are one answer. `matchFactsAll` returns every
+  candidate and `bestPerGroup` picks the winner in each; the client sorts into
+  section order once, where the cursor's array is built, so ↑/↓ walks down the
+  screen rather than around it.
 - **A snippet must contain what you searched for.** Two ways it did not:
   ripgrep matches the raw JSONL row, so a hit can land in a uuid or a tool
   result rather than in what anyone said (`containsPattern` drops those — a

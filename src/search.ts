@@ -66,6 +66,25 @@ export interface Match {
   /** When the matched message was written, epoch ms. Absent for the sources
    *  that are not a message — a name or a branch has no "when". */
   at?: number;
+  /** Whose words these were. Absent for a name, a branch or a PR reference,
+   *  which nobody said. */
+  role?: Speaker;
+}
+
+/** Who said the thing that matched. */
+export type Speaker = 'you' | 'agent';
+
+/** The three answers a search gives, in the order they are shown.
+ *
+ *  `facts` is what the pane *is* — its PR, its name, its branch, its
+ *  directory. The other two are what was *said*, split by who said it: "I
+ *  asked this pane about 3993" and "this pane told me about 3993" are
+ *  different answers, and which one you are looking at decides whether you go
+ *  and read it or go and ask it. */
+export type MatchGroup = 'facts' | 'you' | 'agent';
+
+export function groupOf(match: Match): MatchGroup {
+  return match.role ?? 'facts';
 }
 
 /** How loudly each source answers "who is working on this?".
@@ -168,15 +187,17 @@ function hasAll(haystack: string | undefined, terms: string[]): boolean {
 }
 
 /**
- * Match a pane on what the server already knows — no disk, no subprocess.
+ * Every way a pane matches on what the server already knows — no disk, no
+ * subprocess.
  *
- * Returns the single best match, because the palette shows one row per pane:
- * a pane that matches on both its name and a turn is one answer, not two.
+ * All of them, not the best one, because the results are grouped by who said
+ * it: a pane whose *name* matches and where *you* asked about it belongs in
+ * both groups, and the caller picks the best within each.
  */
-export function matchFacts(
+export function matchFactsAll(
   facts: SessionFacts, turns: TurnText[], q: SearchQuery,
-): Match | null {
-  if (q.terms.length === 0) return null;
+): Match[] {
+  if (q.terms.length === 0) return [];
   const out: Match[] = [];
 
   if (q.prNumber !== null) {
@@ -194,15 +215,36 @@ export function matchFacts(
     // work better than what the agent replied, which may be quoting the
     // question back or explaining why it did not do it.
     const recency = Math.max(0, 20 - i * 10);
+    // Both halves, not the first that hits: they land in different groups.
     if (hasAll(turn.prompt, q.terms)) {
-      out.push({ source: 'turn', snippet: snippetAround(turn.prompt!, q.terms), score: WEIGHT.turn + 25 + recency, at: turn.at });
-    } else if (hasAll(turn.response, q.terms)) {
-      out.push({ source: 'turn', snippet: snippetAround(turn.response!, q.terms), score: WEIGHT.turn + recency, at: turn.at });
+      out.push({ source: 'turn', snippet: snippetAround(turn.prompt!, q.terms), score: WEIGHT.turn + 25 + recency, at: turn.at, role: 'you' });
+    }
+    if (hasAll(turn.response, q.terms)) {
+      out.push({ source: 'turn', snippet: snippetAround(turn.response!, q.terms), score: WEIGHT.turn + recency, at: turn.at, role: 'agent' });
     }
   });
 
-  if (out.length === 0) return null;
-  return out.sort((a, b) => b.score - a.score)[0]!;
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/** The single best way a pane matches, when only one answer is wanted. */
+export function matchFacts(facts: SessionFacts, turns: TurnText[], q: SearchQuery): Match | null {
+  return matchFactsAll(facts, turns, q)[0] ?? null;
+}
+
+/** The best match per group, so one pane can answer in more than one way. */
+export function bestPerGroup(matches: Match[]): Partial<Record<MatchGroup, Match>> {
+  const out: Partial<Record<MatchGroup, Match>> = {};
+  for (const m of matches) {
+    const g = groupOf(m);
+    if (!out[g] || out[g]!.score < m.score) out[g] = m;
+  }
+  return out;
+}
+
+/** The transcript's word for a speaker, in the search's vocabulary. */
+export function speakerOf(role: 'user' | 'assistant'): Speaker {
+  return role === 'user' ? 'you' : 'agent';
 }
 
 /** Score a transcript hit. `count` is how many lines matched in that file. */

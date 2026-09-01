@@ -15,9 +15,23 @@ import { Dialog, DialogContent } from './ui/dialog';
 import useStore from '../store';
 import { relativeTime } from '../utils';
 
+/** Which of the three answers a row belongs to — see MatchGroup in search.ts. */
+type Group = 'facts' | 'you' | 'agent';
+
+/** In the order they are read. What the pane *is* comes first, because a PR
+ *  reference is a fact rather than a remark; then what was said, split by who
+ *  said it — "I asked this pane about 3993" and "this pane told me 3993 is
+ *  merged" send you to different places, and to different things to do next. */
+const GROUPS: { id: Group; label: string }[] = [
+  { id: 'facts', label: 'PR \u00b7 branch \u00b7 name' },
+  { id: 'you',   label: 'You said' },
+  { id: 'agent', label: 'The agent said' },
+];
+
 /** What the server says matched. */
 interface SearchHit {
   sessionId: string;
+  group: Group;
   source: 'pr' | 'name' | 'branch' | 'path' | 'turn' | 'transcript';
   snippet: string;
   score: number;
@@ -25,6 +39,10 @@ interface SearchHit {
   /** When the matched message was written. Absent for a name or a branch,
    *  which have no "when" — see Match.at. */
   at?: number;
+  /** What to light up in the snippet, as the server matched it. Not the
+   *  query's words: `pr 3993` matches on the number alone, and highlighting
+   *  "pr" as a substring paints half of every "prompt" in the line. */
+  highlight: string[];
 }
 
 /** A hit, resolved against the flock: which pen, which sheep, what it is called. */
@@ -71,6 +89,45 @@ function Highlighted({ text, terms }: { text: string; terms: string[] }): React.
   );
 }
 
+function ResultRow({ row, active, onHover, onSelect }: {
+  row: Row;
+  active: boolean;
+  onHover: () => void;
+  onSelect: () => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      data-active={active}
+      className="flock-search-row"
+      onMouseEnter={onHover}
+      onClick={onSelect}
+    >
+      <div className="flock-search-row-top">
+        <span className="flock-search-sheep" aria-hidden>🐑</span>
+        <span className="flock-search-name">{row.name}</span>
+        <span className="flock-search-where">
+          {row.penName}
+          {row.branch && <><span className="flock-sep">·</span>{row.branch}</>}
+        </span>
+        <span className="flock-search-source">
+          {/* When it was said, not when the pane last did anything: a pane can
+              be busy right now on something it discussed yesterday, and which
+              of those you are looking at is the difference between the right
+              answer and a stale one. */}
+          {row.at && <span className="flock-search-when">{relativeTime(row.at)}</span>}
+          <SourceIcon source={row.source} />
+          {SOURCE_LABEL[row.source]}
+          {row.matchCount > 1 && <span className="flock-search-count">{row.matchCount}</span>}
+        </span>
+      </div>
+      <div className="flock-search-snippet">
+        <Highlighted text={row.snippet} terms={row.highlight ?? []} />
+      </div>
+    </button>
+  );
+}
+
 export default function FlockSearch({ onClose, onJump }: {
   onClose: () => void;
   /** Go to this pane — the pen first, then the sheep inside it. */
@@ -82,8 +139,6 @@ export default function FlockSearch({ onClose, onJump }: {
   const [cursor, setCursor] = useState(0);
   const inFlight = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   /** Resolve server hits (session ids) against the flock. The server deals in
    *  sessions and knows nothing about pens and panes — that mapping is the
@@ -127,7 +182,12 @@ export default function FlockSearch({ onClose, onJump }: {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctl.signal });
         const data = await res.json();
-        setRows(resolve(data.results ?? []));
+        // Sorted into section order here, not at render: the cursor walks this
+        // array, and it has to move down the screen rather than around it.
+        const resolved = resolve(data.results ?? []);
+        const rank = (g: Group) => GROUPS.findIndex(x => x.id === g);
+        resolved.sort((a, b) => rank(a.group) - rank(b.group) || b.score - a.score);
+        setRows(resolved);
         setCursor(0);
       } catch {
         // Aborted, or the server is unhappy — either way, show nothing rather
@@ -171,38 +231,26 @@ export default function FlockSearch({ onClose, onJump }: {
         </div>
 
         <div className="flock-search-results" ref={listRef}>
-          {rows.map((row, i) => (
-            <button
-              key={`${row.sessionId}-${row.source}`}
-              type="button"
-              data-active={i === cursor}
-              className="flock-search-row"
-              onMouseEnter={() => setCursor(i)}
-              onClick={() => { onJump(row.workspaceId, row.paneIndex); onClose(); }}
-            >
-              <div className="flock-search-row-top">
-                <span className="flock-search-sheep" aria-hidden>🐑</span>
-                <span className="flock-search-name">{row.name}</span>
-                <span className="flock-search-where">
-                  {row.penName}
-                  {row.branch && <><span className="flock-sep">·</span>{row.branch}</>}
-                </span>
-                <span className="flock-search-source">
-                  {/* When it was said, not when the pane last did anything: a
-                      pane can be busy right now on something it discussed
-                      yesterday, and which of those you are looking at is the
-                      difference between the right answer and a stale one. */}
-                  {row.at && <span className="flock-search-when">{relativeTime(row.at)}</span>}
-                  <SourceIcon source={row.source} />
-                  {SOURCE_LABEL[row.source]}
-                  {row.matchCount > 1 && <span className="flock-search-count">{row.matchCount}</span>}
-                </span>
+          {GROUPS.map(group => {
+            const inGroup = rows.filter(r => r.group === group.id);
+            if (inGroup.length === 0) return null;
+            return (
+              <div key={group.id}>
+                <div className="flock-search-group">{group.label}</div>
+                {inGroup.map(row => (
+                  <ResultRow
+                    key={`${row.sessionId}-${row.group}`}
+                    row={row}
+                    // The cursor walks the flat list, so a heading is never a
+                    // stop on the way down it.
+                    active={rows.indexOf(row) === cursor}
+                    onHover={() => setCursor(rows.indexOf(row))}
+                    onSelect={() => { onJump(row.workspaceId, row.paneIndex); onClose(); }}
+                  />
+                ))}
               </div>
-              <div className="flock-search-snippet">
-                <Highlighted text={row.snippet} terms={terms} />
-              </div>
-            </button>
-          ))}
+            );
+          })}
 
           {rows.length === 0 && (
             <div className="flock-search-empty">

@@ -11,7 +11,11 @@ import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
-import { parseQuery, matchFacts, snippetAround, transcriptLineText, transcriptScore, transcriptPattern, containsPattern } from './search.js';
+import {
+  parseQuery, matchFactsAll, bestPerGroup, snippetAround, transcriptLineText,
+  transcriptScore, transcriptPattern, containsPattern, speakerOf,
+  type MatchGroup, type Speaker,
+} from './search.js';
 import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
@@ -1149,16 +1153,37 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const sessions = bridge.getCachedSessions().length
         ? bridge.getCachedSessions()
         : await bridge.listSessions();
-      const hits = new Map<string, { sessionId: string; source: string; snippet: string; score: number; matchCount: number; at?: number; highlight: string[] }>();
+
+      interface Hit {
+        sessionId: string; group: MatchGroup; source: string; snippet: string;
+        score: number; matchCount: number; at?: number; highlight: string[];
+      }
+      // Keyed by session AND group: results are shown under "you said" and
+      // "agent said", and a pane that matched in both belongs in both. Within
+      // one group it is still one row — the question is which sheep.
+      const hits = new Map<string, Hit>();
+      const key = (sessionId: string, group: MatchGroup) => `${sessionId}\u0000${group}`;
+      const offer = (hit: Hit) => {
+        const k = key(hit.sessionId, hit.group);
+        const prev = hits.get(k);
+        if (!prev) hits.set(k, hit);
+        else if (prev.score < hit.score) hits.set(k, { ...hit, matchCount: prev.matchCount + hit.matchCount });
+        else hits.set(k, { ...prev, matchCount: prev.matchCount + hit.matchCount });
+      };
 
       // 1. The facts. Free, and the answer for most queries.
       for (const s of sessions) {
-        const m = matchFacts(
+        const matches = matchFactsAll(
           { id: s.id, name: s.name, path: s.path, gitBranch: s.gitBranch, prRefs: s.prRefs },
           bridge.getAgentTurns(s.id).map(t => ({ prompt: t.prompt, response: t.response, at: t.at })),
           query,
         );
-        if (m) hits.set(s.id, { sessionId: s.id, source: m.source, snippet: m.snippet, score: m.score, matchCount: 1, at: m.at, highlight: query.terms });
+        for (const [group, m] of Object.entries(bestPerGroup(matches))) {
+          offer({
+            sessionId: s.id, group: group as MatchGroup, source: m.source, snippet: m.snippet,
+            score: m.score, matchCount: 1, at: m.at, highlight: query.terms,
+          });
+        }
       }
 
       // 2. The transcripts. One ripgrep over every pane's file rather than one
@@ -1173,6 +1198,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
 
       if (files.size > 0) {
         const pattern = transcriptPattern(query);
+        type Said = { text: string; count: number; at?: number };
         // Per-file cap, not per-run: most matched lines are tool results and
         // attachments that transcriptLineText drops, so a small cap would let
         // discarded lines hide the real one further down the file.
@@ -1180,7 +1206,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           '--json', '--smart-case', '-F', '--max-filesize', '64M', '-m', '25',
           '--', pattern, ...files.keys(),
         ];
-        const perFile = new Map<string, { role: 'user' | 'assistant'; text: string; count: number; at?: number }>();
+        // One entry per speaker per file: "you asked this pane about 3993" and
+        // "this pane told me about 3993" are different answers, and the reader
+        // is choosing between reading it and asking it.
+        const perFile = new Map<string, Partial<Record<Speaker, Said>>>();
         await new Promise<void>((resolve) => {
           const child = spawn(rgPath, args);
           let buf = '';
@@ -1207,16 +1236,15 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
                 // snippet that does not contain the term reads as a wrong
                 // answer, so such a line is not a match at all.
                 if (!containsPattern(said.text, pattern)) continue;
-                const prev = perFile.get(file);
-                // Keep the first thing the *user* said over anything the agent
-                // said, however many times the agent said it.
-                if (!prev) perFile.set(file, { ...said, count: 1 });
-                else {
-                  prev.count++;
-                  if (prev.role === 'assistant' && said.role === 'user') {
-                    prev.role = 'user'; prev.text = said.text; prev.at = said.at;
-                  }
-                }
+                const bySpeaker = perFile.get(file) ?? {};
+                const speaker = speakerOf(said.role);
+                const prev = bySpeaker[speaker];
+                // First one wins the snippet, the rest only add to the count:
+                // ripgrep walks the file from the top, so the first is where
+                // the subject came up rather than where it was repeated.
+                if (!prev) bySpeaker[speaker] = { text: said.text, count: 1, at: said.at };
+                else prev.count++;
+                perFile.set(file, bySpeaker);
               } catch { /* not a line we can read */ }
             }
           });
@@ -1224,22 +1252,24 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           child.on('close', () => { clearTimeout(timer); finish(); });
         });
 
-        for (const [file, said] of perFile) {
+        for (const [file, bySpeaker] of perFile) {
           const sessionId = files.get(file);
           if (!sessionId) continue;
-          const score = transcriptScore(said.role, said.count);
-          // Centred on what ripgrep actually matched, not on the query's
-          // words: for `pr 3993` that is the number, and highlighting "pr"
-          // would send the window to the wrong place.
-          const snippet = snippetAround(said.text, [pattern.toLowerCase()]);
-          const prev = hits.get(sessionId);
-          // A transcript hit never outranks a fact, but it does add its count
-          // to a pane that matched on both.
-          // What to light up is what was actually matched, and for `pr 3993`
-          // that is the number alone: highlighting "pr" as a substring paints
-          // half of every "prompt" in the snippet.
-          if (!prev) hits.set(sessionId, { sessionId, source: 'transcript', snippet, score, matchCount: said.count, at: said.at, highlight: [pattern] });
-          else hits.set(sessionId, { ...prev, matchCount: prev.matchCount + said.count });
+          for (const [speaker, said] of Object.entries(bySpeaker) as [Speaker, Said][]) {
+            offer({
+              sessionId,
+              group: speaker,
+              source: 'transcript',
+              // Centred on what ripgrep actually matched, not on the query's
+              // words: for `pr 3993` that is the number, and highlighting "pr"
+              // as a substring paints half of every "prompt" in the snippet.
+              snippet: snippetAround(said.text, [pattern.toLowerCase()]),
+              score: transcriptScore(speaker === 'you' ? 'user' : 'assistant', said.count),
+              matchCount: said.count,
+              at: said.at,
+              highlight: [pattern],
+            });
+          }
         }
       }
 
