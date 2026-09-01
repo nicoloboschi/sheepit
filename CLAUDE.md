@@ -563,6 +563,22 @@ Rules that are easy to get wrong:
   cached back onto the session so the directory walk is paid once.
 - **One row per pane**, carrying its best reason. The question is which sheep,
   so a pane matching four ways is one answer, not four.
+- **A snippet must contain what you searched for.** Two ways it did not:
+  ripgrep matches the raw JSONL row, so a hit can land in a uuid or a tool
+  result rather than in what anyone said (`containsPattern` drops those — a
+  snippet visibly missing the term reads as a wrong answer); and a window
+  centred on the first term missed the rest, so `snippetAround` anchors on the
+  **rarest** term and falls back to two fragments when they are too far apart.
+  "pane bar" used to centre on the first of a hundred "pane"s — inside
+  "panel" — and never reach "bar".
+- **The row's own timestamp**, not the pane's last activity: a pane can be busy
+  right now on something it discussed yesterday, and which of those you are
+  looking at is the difference between the right answer and a stale one. Both
+  agents stamp every transcript row, and `AgentTurn` already carried an `at`.
+  A name or a branch has no "when" and shows none.
+- **The server says what to highlight.** For `pr 3993` the pattern is the
+  number alone, and lighting up the query's words instead paints half of every
+  "prompt" in the snippet.
 - A snippet is only ever returned **for an explicit query**. That is the
   difference from the hook trace, which shows that a turn carried a prompt and
   never what the prompt said.

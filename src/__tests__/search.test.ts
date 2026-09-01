@@ -3,7 +3,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import {
   parseQuery, matchFacts, snippetAround, transcriptLineText, transcriptScore,
-  isSearchableTranscript, transcriptPattern,
+  isSearchableTranscript, transcriptPattern, containsPattern,
 } from '../search.js'
 
 const q = (s: string) => parseQuery(s)
@@ -71,6 +71,13 @@ describe('matchFacts', () => {
     expect(m!.source).toBe('name')
   })
 
+  it('carries the turn timestamp, so a result can say when it was said', () => {
+    const at = Date.now() - 60_000
+    expect(matchFacts(facts, [{ prompt: 'the flake', at }], q('flake'))!.at).toBe(at)
+    // A name or a branch is not a message and has no "when".
+    expect(matchFacts(facts, [], q('deletion'))!.at).toBeUndefined()
+  })
+
   it('says nothing for an empty query', () => {
     expect(matchFacts(facts, [], q('   '))).toBeNull()
   })
@@ -88,17 +95,72 @@ describe('snippetAround', () => {
   it('leaves a short line alone', () => {
     expect(snippetAround('  rebase   onto 3993 ', ['3993'])).toBe('rebase onto 3993')
   })
+
+  // The complaint that started this: "pane bar" matched a turn where "pane"
+  // appeared inside "panel" near the top and "bar" was hundreds of characters
+  // later, and the snippet showed neither of them.
+  it('anchors on the rare term, not on the first common one', () => {
+    const text = 'pane '.repeat(60) + 'the BAR is here ' + 'pane '.repeat(60)
+    const s = snippetAround(text, ['pane', 'bar'])
+    expect(s).toContain('BAR')
+  })
+
+  it('shows both terms in two fragments when they are far apart', () => {
+    const text = 'RAREWORD ' + 'x'.repeat(600) + ' OTHERWORD'
+    const s = snippetAround(text, ['rareword', 'otherword'])
+    expect(s).toContain('RAREWORD')
+    expect(s).toContain('OTHERWORD')
+    expect(s).toContain('…')
+  })
+
+  it('keeps one window when the terms sit close together', () => {
+    const text = 'z'.repeat(300) + ' alpha and beta ' + 'z'.repeat(300)
+    const s = snippetAround(text, ['alpha', 'beta'])
+    expect(s).toContain('alpha and beta')
+    expect(s.split(' … ')).toHaveLength(1)
+  })
+
+  it('never claims a match it cannot show', () => {
+    const s = snippetAround('nothing relevant here '.repeat(20), ['absent'])
+    expect(s.endsWith('…')).toBe(true)
+  })
+})
+
+// ripgrep searches the raw JSONL row, so a hit can land in a uuid or a tool
+// result. Showing the message anyway produces a result whose snippet visibly
+// does not contain the search term.
+describe('containsPattern', () => {
+  it('is what keeps a match in machinery out of the results', () => {
+    expect(containsPattern('rebase onto 3993 please', '3993')).toBe(true)
+    expect(containsPattern('an unrelated reply', '3993')).toBe(false)
+    expect(containsPattern('The Pane Bar', 'pane bar')).toBe(true)
+  })
 })
 
 describe('transcriptLineText', () => {
   it('reads a Claude user row (content is a plain string)', () => {
     const line = JSON.stringify({ type: 'user', message: { content: 'who is on 3993?' } })
-    expect(transcriptLineText(line)).toEqual({ role: 'user', text: 'who is on 3993?' })
+    expect(transcriptLineText(line)).toMatchObject({ role: 'user', text: 'who is on 3993?' })
+  })
+
+  // "20m ago" beside a result comes from the row, not from the pane: a pane can
+  // be busy right now on something it discussed yesterday.
+  it('carries the row timestamp when there is one', () => {
+    const at = Date.parse('2026-09-01T10:09:53.087Z')
+    expect(transcriptLineText(JSON.stringify({
+      type: 'user', timestamp: '2026-09-01T10:09:53.087Z', message: { content: 'hi' },
+    }))?.at).toBe(at)
+    expect(transcriptLineText(JSON.stringify({
+      type: 'response_item', timestamp: '2026-09-01T10:09:53.087Z',
+      payload: { type: 'message', role: 'user', content: [{ text: 'hi' }] },
+    }))?.at).toBe(at)
+    // A row without one is still a match, just without a time.
+    expect(transcriptLineText(JSON.stringify({ type: 'user', message: { content: 'hi' } }))?.at).toBeUndefined()
   })
 
   it('reads a Claude assistant row (content is a block list)', () => {
     const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'looking at 3993' }] } })
-    expect(transcriptLineText(line)).toEqual({ role: 'assistant', text: 'looking at 3993' })
+    expect(transcriptLineText(line)).toMatchObject({ role: 'assistant', text: 'looking at 3993' })
   })
 
   it('reads a Codex rollout message', () => {
@@ -106,7 +168,7 @@ describe('transcriptLineText', () => {
       type: 'response_item',
       payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'rebase onto 3993' }] },
     })
-    expect(transcriptLineText(line)).toEqual({ role: 'user', text: 'rebase onto 3993' })
+    expect(transcriptLineText(line)).toMatchObject({ role: 'user', text: 'rebase onto 3993' })
   })
 
   // Without this, a search for "skills" matches every Codex pane on a preamble

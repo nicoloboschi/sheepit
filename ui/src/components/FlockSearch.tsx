@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, GitBranch, GitPullRequest, MessageSquare, FolderTree, Tag } from 'lucide-react';
 import { Dialog, DialogContent } from './ui/dialog';
 import useStore from '../store';
+import { relativeTime } from '../utils';
 
 /** What the server says matched. */
 interface SearchHit {
@@ -21,6 +22,9 @@ interface SearchHit {
   snippet: string;
   score: number;
   matchCount: number;
+  /** When the matched message was written. Absent for a name or a branch,
+   *  which have no "when" — see Match.at. */
+  at?: number;
 }
 
 /** A hit, resolved against the flock: which pen, which sheep, what it is called. */
@@ -184,6 +188,11 @@ export default function FlockSearch({ onClose, onJump }: {
                   {row.branch && <><span className="flock-sep">·</span>{row.branch}</>}
                 </span>
                 <span className="flock-search-source">
+                  {/* When it was said, not when the pane last did anything: a
+                      pane can be busy right now on something it discussed
+                      yesterday, and which of those you are looking at is the
+                      difference between the right answer and a stale one. */}
+                  {row.at && <span className="flock-search-when">{relativeTime(row.at)}</span>}
                   <SourceIcon source={row.source} />
                   {SOURCE_LABEL[row.source]}
                   {row.matchCount > 1 && <span className="flock-search-count">{row.matchCount}</span>}

@@ -54,6 +54,8 @@ export interface SessionFacts {
 export interface TurnText {
   prompt?: string;
   response?: string;
+  /** When it was reported, for "20m ago" beside the result. */
+  at?: number;
 }
 
 export interface Match {
@@ -61,6 +63,9 @@ export interface Match {
   /** What to show under the pane's name. Already trimmed to a readable width. */
   snippet: string;
   score: number;
+  /** When the matched message was written, epoch ms. Absent for the sources
+   *  that are not a message — a name or a branch has no "when". */
+  at?: number;
 }
 
 /** How loudly each source answers "who is working on this?".
@@ -76,23 +81,83 @@ const WEIGHT: Record<MatchSource, number> = {
 /** Longest snippet we return. Two lines in the palette at its width. */
 const SNIPPET_LEN = 160;
 
-/** A window of `text` around the first match, so the term is visible rather
- *  than 160 characters before it. */
+/** How many occurrences of `term` are in `lower`, and where the first is. */
+function occurrences(lower: string, term: string): { count: number; first: number } {
+  let count = 0, first = -1, i = lower.indexOf(term);
+  while (i >= 0) {
+    if (first < 0) first = i;
+    count++;
+    i = lower.indexOf(term, i + term.length);
+  }
+  return { count, first };
+}
+
+/** A fragment of `clean` around `at`. A third of the window sits before the
+ *  match: the words after a term are usually the ones that explain it. */
+function fragment(clean: string, at: number, width: number): { start: number; end: number } {
+  const start = Math.max(0, at - Math.floor(width / 3));
+  return { start, end: Math.min(clean.length, start + width) };
+}
+
+/**
+ * The part of `text` that shows why it matched.
+ *
+ * A snippet that does not contain the thing you searched for is worse than no
+ * snippet: it reads as a wrong result. Three cases, in order:
+ *
+ *   - everything fits — show it all;
+ *   - the terms sit close enough together — one window over all of them;
+ *   - they are far apart — two fragments joined by an ellipsis, anchored on
+ *     the *rarest* term (the one that actually distinguishes this pane; a
+ *     query like "pane bar" would otherwise centre on the first of a hundred
+ *     "pane"s and never reach "bar").
+ */
 export function snippetAround(text: string, terms: string[], max = SNIPPET_LEN): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (clean.length <= max) return clean;
   const lower = clean.toLowerCase();
-  let at = -1;
-  for (const t of terms) {
-    const i = lower.indexOf(t);
-    if (i >= 0 && (at < 0 || i < at)) at = i;
+
+  const found = terms
+    .map(t => ({ term: t, ...occurrences(lower, t) }))
+    .filter(f => f.first >= 0)
+    // Rarest first, longest breaking the tie: that is the term carrying the
+    // information, and the one the reader is looking for.
+    .sort((a, b) => a.count - b.count || b.term.length - a.term.length);
+
+  if (found.length === 0) return clean.slice(0, max).trimEnd() + '…';
+
+  const anchor = found[0]!;
+  const lo = Math.min(...found.map(f => f.first));
+  const hi = Math.max(...found.map(f => f.first + f.term.length));
+
+  // All of them within one window: show the span that covers them.
+  if (hi - lo <= max) {
+    const { start, end } = fragment(clean, lo, max);
+    return (start > 0 ? '…' : '') + clean.slice(start, end).trim() + (end < clean.length ? '…' : '');
   }
-  if (at < 0) return clean.slice(0, max).trimEnd() + '…';
-  // A third of the window before the match reads better than centring it: the
-  // words after a term are usually the ones that explain it.
-  const start = Math.max(0, at - Math.floor(max / 3));
-  const end = Math.min(clean.length, start + max);
-  return (start > 0 ? '…' : '') + clean.slice(start, end).trim() + (end < clean.length ? '…' : '');
+
+  // Too far apart for one window. Take the rarest term, then the furthest
+  // term from it that is still missing, and show both halves.
+  const other = found.slice(1).find(f => Math.abs(f.first - anchor.first) > max / 2) ?? null;
+  const width = other ? Math.floor(max / 2) : max;
+  const spans = [fragment(clean, anchor.first, width)];
+  if (other) spans.push(fragment(clean, other.first, width));
+  spans.sort((a, b) => a.start - b.start);
+
+  return spans
+    .map((sp, i) => (i === 0 && sp.start > 0 ? '…' : '') + clean.slice(sp.start, sp.end).trim())
+    .join(' … ') + (spans[spans.length - 1]!.end < clean.length ? '…' : '');
+}
+
+/** Does this text actually contain what ripgrep matched?
+ *
+ *  Ripgrep searches the raw JSONL line, so a hit can land anywhere in the
+ *  row — a uuid, a file path in a tool result, an id in machinery nobody
+ *  wrote. When the message we would show does not contain the term, the match
+ *  was not in the conversation, and showing it is worse than showing nothing:
+ *  it reads as a wrong answer with a snippet to prove it. */
+export function containsPattern(text: string, pattern: string): boolean {
+  return text.toLowerCase().includes(pattern.toLowerCase());
 }
 
 /** Does this haystack contain every term? */
@@ -130,9 +195,9 @@ export function matchFacts(
     // question back or explaining why it did not do it.
     const recency = Math.max(0, 20 - i * 10);
     if (hasAll(turn.prompt, q.terms)) {
-      out.push({ source: 'turn', snippet: snippetAround(turn.prompt!, q.terms), score: WEIGHT.turn + 25 + recency });
+      out.push({ source: 'turn', snippet: snippetAround(turn.prompt!, q.terms), score: WEIGHT.turn + 25 + recency, at: turn.at });
     } else if (hasAll(turn.response, q.terms)) {
-      out.push({ source: 'turn', snippet: snippetAround(turn.response!, q.terms), score: WEIGHT.turn + recency });
+      out.push({ source: 'turn', snippet: snippetAround(turn.response!, q.terms), score: WEIGHT.turn + recency, at: turn.at });
     }
   });
 
@@ -156,7 +221,7 @@ export function transcriptScore(role: 'user' | 'assistant', count: number): numb
  *  carrying the whole skills preamble. Dropping them is not tidiness — a
  *  search for "skills" would otherwise match every Codex pane on a preamble
  *  nobody wrote. */
-export function transcriptLineText(line: string): { role: 'user' | 'assistant'; text: string } | null {
+export function transcriptLineText(line: string): { role: 'user' | 'assistant'; text: string; at?: number } | null {
   let row: any;
   try { row = JSON.parse(line); } catch { return null; }
   if (!row || typeof row !== 'object') return null;
@@ -171,7 +236,7 @@ export function transcriptLineText(line: string): { role: 'user' | 'assistant'; 
       : Array.isArray(content)
         ? content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
         : '';
-    return text.trim() ? { role: row.type, text: text.trim() } : null;
+    return text.trim() ? { role: row.type, text: text.trim(), at: rowTime(row) } : null;
   }
 
   // Codex: rollout rows, where the conversation lives in `response_item`.
@@ -181,10 +246,19 @@ export function transcriptLineText(line: string): { role: 'user' | 'assistant'; 
     const text = Array.isArray(row.payload.content)
       ? row.payload.content.filter((b: any) => typeof b?.text === 'string').map((b: any) => b.text).join('\n')
       : '';
-    return text.trim() ? { role, text: text.trim() } : null;
+    return text.trim() ? { role, text: text.trim(), at: rowTime(row) } : null;
   }
 
   return null;
+}
+
+/** When a transcript row was written. Both agents stamp every row with an ISO
+ *  `timestamp`, which is what puts "20m ago" beside a result — the pane's own
+ *  last activity would answer a different question, since a pane can be busy
+ *  now on something it discussed yesterday. */
+function rowTime(row: any): number | undefined {
+  const t = Date.parse(row?.timestamp ?? '');
+  return Number.isFinite(t) ? t : undefined;
 }
 
 /** Directories a transcript may live in. */

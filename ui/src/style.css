@@ -626,6 +626,13 @@
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--primary);
 }
+.flock-search-when {
+  color: var(--muted-foreground);
+  text-transform: none; letter-spacing: 0;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
 .flock-search-count {
   padding: 0 4px; border-radius: 6px;
   background: var(--primary-tint); color: var(--primary);
