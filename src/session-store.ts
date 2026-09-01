@@ -13,8 +13,12 @@ export interface StoredSession {
   modes?: number[];
   /** Last state the agent reported about itself, and when. */
   agent?: { state: string; source: string; at: number };
-  /** Last exchange the agent reported, used for naming. */
+  /** Last exchange the agent reported. Superseded by `turns`; still read on
+   *  restore so an upgrade does not lose the turn a running session was about
+   *  to be named from. */
   turn?: { prompt?: string; response?: string; at: number };
+  /** The last few exchanges, newest first, used for naming. */
+  turns?: { prompt?: string; response?: string; at: number }[];
   /** PR/issue references the agent's hooks reported, newest first. Persisted
    *  because a PR is mentioned once — when it is opened or checked out — and
    *  the pane has to keep showing it long after that turn ended. */

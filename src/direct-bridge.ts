@@ -59,6 +59,13 @@ const INPUT_PUBLISH_MS = 50;
 /** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
 const PERSIST_DEBOUNCE_MS = 1000;
 
+/** How many exchanges we keep per session for naming.
+ *
+ *  Three: enough that a follow-up ("now do the same for codex") is read
+ *  against what came before it, few enough that the namer's prompt stays
+ *  small and the JSON on disk stays a few KB. */
+const MAX_TURN_HISTORY = 3;
+
 /** How long an agent-reported "busy" is trusted before the session is assumed
  *  idle again.
  *
@@ -113,6 +120,33 @@ export interface AgentTurn {
 }
 
 export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
+
+/**
+ * Fold one half-reported exchange into a session's turn history, newest first.
+ *
+ * Each hook carries half a pair: the prompt when the turn starts
+ * (UserPromptSubmit), the response when it ends (Stop). So a prompt opens a
+ * new exchange at the front, and a response completes the one already open —
+ * unless nothing is open, which is how context injected by another plugin's
+ * SessionStart hook arrives, and it gets an entry of its own rather than being
+ * glued onto the previous user's question.
+ */
+export function appendAgentTurn(
+  history: readonly AgentTurn[], turn: { prompt?: string; response?: string }, at: number,
+): AgentTurn[] {
+  const next = history.map(t => ({ ...t }));
+  if (turn.prompt) {
+    next.unshift({ prompt: turn.prompt, response: turn.response, at });
+  } else if (turn.response !== undefined) {
+    if (next[0] && next[0].response === undefined) {
+      next[0].response = turn.response;
+      next[0].at = at;
+    } else {
+      next.unshift({ response: turn.response, at });
+    }
+  }
+  return next.slice(0, MAX_TURN_HISTORY);
+}
 
 /** A desktop notification an app asked the terminal to show. */
 export interface TerminalNotification {
@@ -792,8 +826,11 @@ export class DirectBridge {
    *  strongest signal we have: the agent says so, rather than us guessing from
    *  output. In memory only — a restart falls back to the heuristics. */
   private agentState = new Map<string, { state: AgentState; source: string; at: number }>();
-  /** Last prompt/response pair per session (see AgentTurn). */
-  private agentTurns = new Map<string, AgentTurn>();
+  /** The last few exchanges per session, newest first (see AgentTurn and
+   *  MAX_TURN_HISTORY). One was not enough to name a session by: the newest
+   *  turn is usually a follow-up ("now do the same for codex"), which reads as
+   *  a different task from the one the session is actually about. */
+  private agentTurns = new Map<string, AgentTurn[]>();
   /** PR/issue references the agent's hooks reported, newest first (see
    *  pr-refs.ts). Nothing here comes from terminal output. */
   private sessionRefs = new Map<string, PrRef[]>();
@@ -1026,20 +1063,17 @@ export class DirectBridge {
     // reaches us as a *response* with no prompt, so it cannot fake this.
     if (turn?.prompt) this.freshSessions.delete(sessionId);
 
-    // Merge rather than replace: the prompt arrives when the turn starts and
-    // the response when it ends, so each report carries only half the pair.
+    // Each report carries half a pair: the prompt arrives when the turn starts
+    // (UserPromptSubmit) and the response when it ends (Stop). A prompt opens
+    // a new exchange at the front of the history; a response completes the one
+    // already open, and only starts its own entry when there is nothing to
+    // complete — context injected by another plugin's SessionStart hook
+    // reaches us that way.
     if (turn?.prompt || turn?.response) {
-      const prev = this.agentTurns.get(sessionId);
-      this.agentTurns.set(sessionId, {
-        prompt: turn.prompt ?? prev?.prompt,
-        response: turn.response ?? prev?.response,
-        at: Date.now(),
-      });
-    }
-    // A new prompt starts a new exchange; the previous answer is stale.
-    if (turn?.prompt && !turn.response) {
-      const entry = this.agentTurns.get(sessionId);
-      if (entry) entry.response = undefined;
+      this.agentTurns.set(
+        sessionId,
+        appendAgentTurn(this.agentTurns.get(sessionId) ?? [], turn, Date.now()),
+      );
     }
 
     if (state === 'unknown') this.agentState.delete(sessionId);
@@ -1107,10 +1141,18 @@ export class DirectBridge {
     this.freshSessions.delete(sessionId);
   }
 
-  /** Last reported exchange, for naming. Undefined when the agent never
-   *  reported one — a plain shell, or an agent without the plugin. */
+  /** Last reported exchange. Undefined when the agent never reported one — a
+   *  plain shell, or an agent without the plugin. */
   getAgentTurn(sessionId: string): AgentTurn | undefined {
-    return this.agentTurns.get(sessionId);
+    return this.agentTurns.get(sessionId)?.[0];
+  }
+
+  /** The last few exchanges, newest first, for naming. Naming from one turn
+   *  alone named sessions after their latest step rather than their subject —
+   *  a session that spent an hour on the hook reporter got renamed the moment
+   *  someone asked it to check a log. */
+  getAgentTurns(sessionId: string): AgentTurn[] {
+    return this.agentTurns.get(sessionId) ?? [];
   }
 
   /** Is this session's agent working?
@@ -1751,13 +1793,15 @@ export class DirectBridge {
 
   private toStored(sess: DirectSession): StoredSession {
     const agent = this.agentState.get(sess.id);
-    const turn = this.agentTurns.get(sess.id);
+    const turns = this.agentTurns.get(sess.id);
     const refs = this.sessionRefs.get(sess.id);
     return {
       name: sess.name, path: sess.path, sessionType: sess.sessionType,
       isHeadless: sess.isHeadless,
       modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
-      agent, turn, refs: refs?.length ? refs : undefined,
+      agent,
+      turns: turns?.length ? turns : undefined,
+      refs: refs?.length ? refs : undefined,
     };
   }
 
@@ -1801,7 +1845,12 @@ export class DirectBridge {
           at: info.agent.at,
         });
       }
-      if (info.turn) this.agentTurns.set(id, info.turn);
+      // `turn` is the pre-history shape: one exchange, written by every build
+      // before turn history existed. Read as a one-entry history so an upgrade
+      // does not throw away the turn a running session is about to be named
+      // from.
+      if (info.turns?.length) this.agentTurns.set(id, info.turns.slice(0, MAX_TURN_HISTORY));
+      else if (info.turn) this.agentTurns.set(id, [info.turn]);
       // Unlike the agent's state this has no shelf life: a PR the session was
       // working on before the restart is still the PR it is working on.
       if (info.refs?.length) this.sessionRefs.set(id, info.refs);

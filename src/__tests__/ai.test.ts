@@ -111,6 +111,26 @@ describe('assigned-name shape', () => {
     expect(long).toBe('alpha bravo charlie delta echo')
   })
 
+  // A name is read a hundred times and written once, and an id in it says
+  // nothing about the work: the prompt asks the model not to produce one, and
+  // this is the half that does not depend on the model complying.
+  it('never stores an identifier in a name', () => {
+    expect(normalizeAssignedName('review pr #3672')).toBe('review')
+    expect(normalizeAssignedName('mirror pr 2207')).toBe('mirror')
+    expect(normalizeAssignedName('fix issue 88 in namer')).toBe('fix in namer')
+    expect(normalizeAssignedName('pull request 42 review')).toBe('review')
+    // Nothing left to name it after — better the old name than "3672".
+    expect(normalizeAssignedName('pr-3672')).toBeNull()
+    expect(normalizeAssignedName('#123')).toBeNull()
+  })
+
+  // The reader stays permissive on purpose: names written before that rule
+  // existed must still be claimable, or every one of them freezes its pane.
+  it('still claims back the names it wrote before ids were stripped', () => {
+    expect(looksLikeAssignedName('mirror pr 2207')).toBe(true)
+    expect(looksLikeAssignedName('compare 0.9.1 pr regression')).toBe(true)
+  })
+
   // The invariant. If this fails, the writer can once again store a name the
   // reader will disown, and a pane freezes.
   it('always produces something it will claim back', () => {
@@ -119,6 +139,7 @@ describe('assigned-name shape', () => {
       '`pytest`', '**bold name**', 'feat/document-transfer-knowledge-base',
       'one two three four five six seven eight', 'x'.repeat(200),
       'UPPER CASE NAME', 'trailing   spaces   ', 'émoji café run',
+      'review pr #3672', 'mirror pr 2207', 'issue 88 in the namer',
       CLEARED_SESSION_NAME,
     ]
     for (const raw of raws) {

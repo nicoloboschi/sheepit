@@ -333,7 +333,31 @@ alone on screen there is no neighbour to keep it off.
   file-type colours in `FilesPane` keep their language colours. Those are other
   people's brands, not ours.
 
-## Session names — the writer and the reader are one definition
+## Session names
+
+A name is written once and read a hundred times, at a glance, in a list of
+twenty panes. Two things follow, and both are enforced in `ai.ts`.
+
+**It is named after the subject, from the last three exchanges.** The bridge
+keeps `MAX_TURN_HISTORY` exchanges per session (`appendAgentTurn`, persisted as
+`turns`) and the namer sends all of them, oldest first, older ones trimmed
+harder. One turn was not enough: the newest is usually a follow-up — "now do
+the same for codex", "check that log" — which on its own reads as a different
+task, so a session that spent an hour on one subject got renamed after
+whatever was asked last.
+
+**It never contains an identifier.** No PR or issue numbers, no `#123`, no
+ticket keys. A number says nothing about the work and the bar already shows the
+PR. The prompt asks for this, `normalizeAssignedName` enforces it (stripping
+the labelled form first, so `review pr #3672` becomes `review` and not `review
+pr`), and the PR number is no longer passed in the session context at all —
+it carried no topic and its only effect on a name was to end up inside it.
+
+Only the **writer** strips ids. `looksLikeAssignedName` stays permissive, or
+every name written before that rule freezes its pane — which is the whole
+subject of the section below.
+
+### The writer and the reader are one definition
 
 Ownership of an AI-assigned name lives only in memory, so after a restart the
 namer works out which names are its own from their *shape*

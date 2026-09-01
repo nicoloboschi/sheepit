@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -337,5 +337,43 @@ describe('shEscape (moved out of the PTY proxy with the pool)', () => {
 
   it('leaves $ and backticks inert inside single quotes', () => {
     expect(shEscape('/tmp/$HOME/`id`')).toBe("'/tmp/$HOME/`id`'")
+  })
+})
+
+describe('appendAgentTurn (the history a session is named from)', () => {
+  it('opens a new exchange on a prompt and completes it on the response', () => {
+    let h = appendAgentTurn([], { prompt: 'fix the namer' }, 1)
+    h = appendAgentTurn(h, { response: 'done' }, 2)
+    expect(h).toEqual([{ prompt: 'fix the namer', response: 'done', at: 2 }])
+  })
+
+  it('keeps the previous exchange when the next prompt arrives', () => {
+    let h = appendAgentTurn([], { prompt: 'first' }, 1)
+    h = appendAgentTurn(h, { response: 'one' }, 2)
+    h = appendAgentTurn(h, { prompt: 'now the same for codex' }, 3)
+    expect(h.map(t => t.prompt)).toEqual(['now the same for codex', 'first'])
+  })
+
+  // Another plugin's SessionStart hook injects context, the agent answers it,
+  // and Stop carries that answer to us with no prompt of its own. It must not
+  // be glued onto the last thing the user actually asked.
+  it('gives an unprompted response its own entry', () => {
+    let h = appendAgentTurn([], { prompt: 'first' }, 1)
+    h = appendAgentTurn(h, { response: 'one' }, 2)
+    h = appendAgentTurn(h, { response: 'injected context' }, 3)
+    expect(h).toHaveLength(2)
+    expect(h[0]).toEqual({ response: 'injected context', at: 3 })
+  })
+
+  it('keeps only the last three, newest first', () => {
+    let h: ReturnType<typeof appendAgentTurn> = []
+    for (const n of ['a', 'b', 'c', 'd']) h = appendAgentTurn(h, { prompt: n }, 1)
+    expect(h.map(t => t.prompt)).toEqual(['d', 'c', 'b'])
+  })
+
+  it('does not mutate the history it was given', () => {
+    const before = appendAgentTurn([], { prompt: 'first' }, 1)
+    appendAgentTurn(before, { response: 'one' }, 2)
+    expect(before[0]!.response).toBeUndefined()
   })
 })

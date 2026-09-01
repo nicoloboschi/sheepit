@@ -20,7 +20,10 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs = 30
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
     child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
     child.on('error', reject);
-    child.on('close', (code) => {
+    // The signal is in the message on purpose: a code of `null` means the
+    // child was killed rather than that it failed, and "exited with code null"
+    // on its own sends you looking at the CLI instead of at whoever killed it.
+    child.on('close', (code, signal) => {
       if (code === 0) {
         if (!stdout.trim() && stderr.trim()) {
           reject(new Error(`${cmd} returned empty stdout, stderr: ${stderr.slice(0, 300)}`));
@@ -28,13 +31,24 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs = 30
           resolve(stdout);
         }
       }
-      else reject(new Error(`${cmd} exited with code ${code}: ${stderr.slice(0, 300)}`));
+      else reject(new Error(`${cmd} exited with code ${code}${signal ? ` (signal ${signal})` : ''}: ${stderr.slice(0, 300)}`));
     });
     child.stdin.write(input);
     child.stdin.end();
   });
 }
 /** Fast non-crypto hash for content change detection */
+/** Trim a turn to `max` characters on a word boundary. Half a sentence reads
+ *  as a bug to whatever is asked to summarise it; a short one just reads as
+ *  short. */
+function clip(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd() + '…';
+}
+
 function simpleHash(s: string): string {
   let h = 0;
   for (let i = 0; i < s.length; i++) {
@@ -171,6 +185,18 @@ export function looksLikeAssignedName(raw: string): boolean {
  *  they are usually part of an identifier the user would recognise. */
 export function normalizeAssignedName(raw: string): string | null {
   let name = stripNameDecoration(raw).toLowerCase()
+    // Identifiers out, before the charset pass turns `#3672` into a bare
+    // `3672` that no later rule could tell from a version number. The prompt
+    // asks for this too; a name is read a hundred times and written once, so
+    // it is worth enforcing on the way in rather than hoping.
+    //
+    // Only the reader stays permissive: looksLikeAssignedName must keep
+    // claiming names we wrote before this rule existed, or every one of them
+    // freezes its pane — the exact failure this whole contract exists for.
+    // The labelled form first: it takes the word with the number, so
+    // "review pr #3672" loses both and reads "review" rather than "review pr".
+    .replace(/\b(prs?|pull(?:\s+request)?s?|issues?|tickets?)\b[\s#:_-]*\d+/g, ' ')
+    .replace(/#\d+/g, ' ')
     .replace(/[^a-z0-9 ._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -203,6 +229,9 @@ export class AIService {
   /** Track which sessions were recently named to avoid hammering the LLM */
   private lastNamed = new Map<string, number>();
   /** Hash of terminal content used for the last naming — skip if unchanged */
+  /** Hash of the exchanges + context a session was last named from, so an
+   *  unchanged session does not pay for an LLM call every sweep. Named for a
+   *  terminal snapshot it has not hashed since naming moved to the hooks. */
   private lastContentHash = new Map<string, string>();
   private inFlight = new Set<string>();
   /**
@@ -367,7 +396,7 @@ export class AIService {
 
   private async _nameSession(sessionId: string, provider: AIProvider): Promise<void> {
     try {
-      // Name from the actual exchange, reported by the agent's own hooks.
+      // Name from the actual exchanges, reported by the agent's own hooks.
       //
       // This used to scrape 3000 characters of terminal output, which for a
       // TUI agent is mostly spinners, footers and redraws — most of the prompt
@@ -375,18 +404,36 @@ export class AIService {
       // What the user asked and what the agent answered is the thing we
       // actually wanted all along.
       //
+      // The last THREE exchanges, not just the latest: a session is named
+      // after its subject, and the newest turn is usually a follow-up ("now
+      // check the log", "same for codex") that reads as a different subject
+      // on its own. Oldest first, so the model sees the arc of the work rather
+      // than a single step out of context.
+      //
       // No turn means no name: a plain shell, or an agent without the plugin.
       // Guessing from raw output is what produced the bad names, so declining
       // is the better answer.
-      const turn = this.bridge!.getAgentTurn(sessionId);
-      if (!turn?.prompt && !turn?.response) {
+      const turns = this.bridge!.getAgentTurns(sessionId)
+        .filter(t => t.prompt || t.response);
+      if (turns.length === 0) {
         logger.debug(`AI naming ${sessionId}: no reported turn, skipping`);
         return;
       }
-      const snippet = [
-        turn.prompt ? `User asked:\n${turn.prompt}` : null,
-        turn.response ? `Agent answered:\n${turn.response}` : null,
-      ].filter(Boolean).join('\n\n');
+      const ordered = [...turns].reverse();
+      const snippet = ordered.map((t, i) => {
+        const label = ordered.length === 1 ? 'Exchange'
+          : i === ordered.length - 1 ? `Exchange ${i + 1} (most recent)`
+          : `Exchange ${i + 1}`;
+        // Older turns are trimmed harder than the newest one: they are there
+        // for the subject, not for their detail, and the whole prompt has to
+        // stay small enough that naming is never the slow part of a sweep.
+        const cap = i === ordered.length - 1 ? 2000 : 700;
+        return [
+          `${label}:`,
+          t.prompt ? `User asked:\n${clip(t.prompt, cap)}` : null,
+          t.response ? `Agent answered:\n${clip(t.response, cap)}` : null,
+        ].filter(Boolean).join('\n');
+      }).join('\n\n');
 
       // Pull structured context (project, git branch, PR) from the session
       // itself — this is a much more reliable signal than the TUI snapshot
@@ -401,17 +448,21 @@ export class AIService {
           const project = s.path?.split('/').filter(Boolean).pop();
           if (project) parts.push(`Project: ${project}`);
           if (s.gitBranch) parts.push(`Branch: ${s.gitBranch}`);
-          if (s.prNum) parts.push(`PR: #${s.prNum}${s.prState ? ` (${s.prState})` : ''}`);
+          // The PR number used to be handed over here. It carries no topic —
+          // a number cannot say what the change is about — and its only effect
+          // on a name was to end up inside it. The bar shows the PR; the name
+          // says what the work is.
+
           if (s.isClaudeCode) parts.push(`Running: claude code`);
           else if (s.isCodex) parts.push(`Running: codex`);
           if (parts.length > 0) sessionCtx = parts.join('\n');
         }
       } catch { /* best-effort — skip if listSessions fails */ }
 
-      // Skip if terminal content hasn't changed since last naming. Key the
-      // hash on the snippet AND the structured context, so that e.g. a git
-      // branch change triggers a re-name even when the visible terminal
-      // hasn't scrolled.
+      // Skip when nothing has changed since the last naming. Keyed on the
+      // exchanges AND the structured context, so a branch change re-names even
+      // though the conversation has not moved on. (Nothing here reads the
+      // screen; this used to hash a terminal snapshot, and the name stuck.)
       const contentHash = simpleHash(snippet + '|' + (sessionCtx ?? ''));
       if (this.lastContentHash.get(sessionId) === contentHash) {
         logger.debug(`AI naming ${sessionId}: content unchanged, skipping`);
@@ -424,7 +475,7 @@ export class AIService {
       // a timeout — would mean it is never named again.
       this.lastContentHash.set(sessionId, contentHash);
 
-      const prompt = `Name this coding session after the task being worked on. Produce a concise name (2-5 words, lowercase, no emojis, no quotes, no punctuation).
+      const prompt = `Name this coding session after the SUBJECT of the work. Produce a concise name (2-5 words, lowercase, no emojis, no quotes, no punctuation).
 
 Examples of good names:
 - nextjs dev server
@@ -433,11 +484,21 @@ Examples of good names:
 - refactor auth middleware
 - debug memory leak
 
-Base the name on the task itself, not on pleasantries, tool names, or how the
-agent phrased its reply. If the exchange describes no identifiable task, output
-exactly: idle
-${sessionCtx ? `\nSession context:\n${sessionCtx}\n` : ''}
-Last exchange:
+Rules:
+- Name the topic, not the current step or its status. The session is read at a
+  glance in a list of twenty; it should still be right in ten minutes.
+  "flaky auth tests" — not "running test 3 again", "fixing the last error",
+  "waiting for ci" or "done".
+- Never put an identifier in the name: no PR or issue numbers, no #123, no
+  ticket keys, no commit hashes. Say what the change is about instead.
+  "mirror deletion fix" — not "pr 3672" or "review #88".
+- Several exchanges are given below when they exist. Name the thread that runs
+  through them, not whatever the most recent message happens to ask; a
+  follow-up like "now do the same for codex" is part of the same subject.
+- Base it on the work itself, not on pleasantries, tool names, or how the agent
+  phrased its reply.
+- If the exchanges describe no identifiable task, output exactly: idle
+${sessionCtx ? `\nSession context (background — do not name the session after it):\n${sessionCtx}\n` : ''}
 ${snippet}
 
 Session name:`;
