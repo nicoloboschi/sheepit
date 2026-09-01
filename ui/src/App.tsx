@@ -29,6 +29,7 @@ import MobileKeybar from './components/MobileKeybar';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
 import CommandsDialog, { loadCommands } from './components/CommandsDialog';
+import FlockSearch from './components/FlockSearch';
 import SessionList from './components/SessionList';
 import { WorkspaceCardPreview, PaneCardPreview } from './components/SessionItem';
 import { DndEnabledContext } from './dndEnabled';
@@ -39,7 +40,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, ImagePlus, BookOpen,
+  Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
@@ -132,6 +133,10 @@ export default function App() {
   // context switch — toggled from the status bar.
   const knowledgeOpen = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen = useStore(s => s.setKnowledgeOpen);
+  // Search is an overlay over whatever you are looking at, like Knowledge —
+  // so it lives in the store and any surface can raise it.
+  const searchOpen = useStore(s => s.searchOpen);
+  const setSearchOpen = useStore(s => s.setSearchOpen);
   // Sanitize stale state: older builds used '__notes__' as a pseudo-workspace.
   useEffect(() => {
     if (useStore.getState().currentSessionId === NOTES_SESSION_ID) useStore.getState().setCurrentSessionId(null);
@@ -320,6 +325,12 @@ export default function App() {
             useStore.getState().setActivePane(next.workspaceId, next.paneIndex);
           }
         }
+        return;
+      }
+      if (e.key === 'k') {
+        // Find the sheep working on something — see FlockSearch.
+        e.preventDefault();
+        useStore.getState().setSearchOpen(!useStore.getState().searchOpen);
         return;
       }
       if (e.key === 'n') {
@@ -602,6 +613,15 @@ export default function App() {
         </div>
 
         <ConfirmDialog />
+        {searchOpen && (
+          <FlockSearch
+            onClose={() => setSearchOpen(false)}
+            onJump={(workspaceId, paneIndex) => {
+              connectSession(workspaceId);
+              useStore.getState().setActivePane(workspaceId, paneIndex);
+            }}
+          />
+        )}
         {knowledgeOpen && (
           <Suspense fallback={null}>
             <KnowledgeDialog onClose={() => setKnowledgeOpen(false)} />
@@ -863,6 +883,9 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
                 <span className="font-mono text-primary">v{version ?? '\u2026'}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => useStore.getState().setSearchOpen(true)}>
+                <Search size={14} /> Search the flock
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => useStore.getState().setKnowledgeOpen(true)}>
                 <BookOpen size={14} /> Knowledge
               </DropdownMenuItem>

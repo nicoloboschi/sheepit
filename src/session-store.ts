@@ -23,6 +23,11 @@ export interface StoredSession {
    *  because a PR is mentioned once — when it is opened or checked out — and
    *  the pane has to keep showing it long after that turn ended. */
   refs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
+  /** Where the pane's agent keeps its transcript, for search. Persisted so a
+   *  restart does not have to wait for the agent's next turn to find it
+   *  again — and, for Codex, so the directory walk that resolved it is paid
+   *  once rather than on every server start. */
+  agentSession?: { transcriptPath?: string; agentSessionId?: string; source?: string };
 }
 
 const LEGACY_FILE = join(configDir(), 'direct-sessions.json');

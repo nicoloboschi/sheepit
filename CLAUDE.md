@@ -524,6 +524,55 @@ those decorations are painted only when its number and the reference agree.
 That split is the whole point: a session on `main`, or on a local checkout of
 someone else's PR, has no branch PR at all and used to show nothing.
 
+### Searching the flock
+
+`⌘K` asks one question — *which sheep is working on this?* — and `src/search.ts`
+answers it in two halves.
+
+The **facts** come from memory and cost nothing: the pane's name, cwd, branch,
+the PR references its hooks reported, and its last few exchanges. This is what
+makes the motivating case work. A pane called "check PR 1251 CI", sitting on a
+branch named `retain-extraction-mode-docs`, is the pane working on PR 3993 —
+nothing in its name or its branch says so, and `prRefs` does.
+
+The **transcripts** come from ripgrep over the agents' own JSONL: Claude's
+`~/.claude/projects/<slug>/<uuid>.jsonl` and Codex's
+`~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`. One run over every pane's
+file rather than one per pane — measured at 30–90 ms for 102 MB across 24 panes,
+which is what makes searching on every keystroke reasonable.
+
+Rules that are easy to get wrong:
+
+- **The terminal is still not read.** Scrollback is bytes to render; this reads
+  what the agents recorded. Adding the ring buffer here would undo the section
+  above.
+- **Only conversation counts.** `transcriptLineText` keeps `user` and
+  `assistant` rows and drops everything else — Claude's `attachment`, `system`
+  and tool-result rows, Codex's `developer` rows carrying the skills preamble.
+  Without that, a search for "skills" matches every Codex pane on a preamble
+  nobody wrote. Sidechain rows are dropped too: a subagent's exchange belongs
+  to the subagent.
+- **Per-file cap, not per-run** (`-m 25`). Most matched lines are the ones just
+  described, so a small cap would let discarded lines hide the real match
+  further down the file.
+- **The transcript path is untrusted.** It arrives from a hook, on an endpoint
+  anything local can post to, and ends up being opened — so
+  `isSearchableTranscript` resolves it and requires it under one of the two
+  roots. Codex reports no path at all, only a session id; its rollout filename
+  ends in that id, which is how `findCodexRollout` finds it, and the answer is
+  cached back onto the session so the directory walk is paid once.
+- **One row per pane**, carrying its best reason. The question is which sheep,
+  so a pane matching four ways is one answer, not four.
+- A snippet is only ever returned **for an explicit query**. That is the
+  difference from the hook trace, which shows that a turn carried a prompt and
+  never what the prompt said.
+
+Ranking: an exact PR reference beats the name, which beats the branch and cwd,
+which beat turn text, which beats a transcript hit. Within the conversation, a
+**user** message outranks an assistant one — what you asked describes the work,
+while the agent may be quoting the question back or explaining why it did not
+do it.
+
 ### The unread signal
 
 There is no `preview` message any more. The server used to decode 8 KB of

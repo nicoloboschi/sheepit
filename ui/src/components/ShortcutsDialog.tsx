@@ -8,6 +8,7 @@ interface Shortcut {
 const SHORTCUTS: Shortcut[] = [
   { keys: ['\u2318', '\u2191 / \u2193'], desc: 'Navigate between sessions' },
   { keys: ['\u2318', '\u2190 / \u2192'], desc: 'Cycle views (Terminal \u00B7 Git Diff \u00B7 Files)' },
+  { keys: ['\u2318', 'K'],      desc: 'Search the flock \u2014 find the sheep working on something' },
   { keys: ['\u2318', 'N'],      desc: 'New session in current directory' },
   { keys: ['\u2318', 'W'],      desc: 'Close current session' },
 ];

@@ -14,7 +14,7 @@ import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
 import { config } from './config.js';
 import type { BridgeMessage, Session } from './protocol.js';
-import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -22,6 +22,7 @@ import os from 'os';
 import { configDir, ringBuffersDir } from './paths.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 import { mergePrRefs, type PrRef } from './pr-refs.js';
+import { isSearchableTranscript } from './search.js';
 import { logger } from './server.js';
 
 const execAsync = promisify(exec);
@@ -117,6 +118,38 @@ export interface AgentTurn {
   prompt?: string;
   response?: string;
   at: number;
+}
+
+/** Where a pane's agent keeps its own record of the conversation. */
+export interface AgentSessionRef {
+  /** Absolute path to the transcript, once known. */
+  transcriptPath?: string;
+  /** The agent's own session id. Codex's rollout filename ends in it, which is
+   *  how its transcript is found. */
+  agentSessionId?: string;
+  /** Which agent reported it: `claude`, `codex`. */
+  source?: string;
+}
+
+/** Find a Codex rollout by session id: `rollout-<timestamp>-<id>.jsonl`, filed
+ *  under `<root>/YYYY/MM/DD/`. Walked newest-first, since a live session's
+ *  rollout was written today or yesterday, and stopped at the first hit. */
+export function findCodexRollout(root: string, agentSessionId: string): string | null {
+  if (!/^[A-Za-z0-9-]{6,}$/.test(agentSessionId)) return null;   // never a path fragment
+  const desc = (dir: string): string[] => {
+    try { return readdirSync(dir).sort().reverse(); } catch { return []; }
+  };
+  for (const y of desc(root)) {
+    for (const m of desc(join(root, y))) {
+      for (const d of desc(join(root, y, m))) {
+        const dir = join(root, y, m, d);
+        for (const f of desc(dir)) {
+          if (f.endsWith(`${agentSessionId}.jsonl`)) return join(dir, f);
+        }
+      }
+    }
+  }
+  return null;
 }
 
 export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
@@ -834,6 +867,9 @@ export class DirectBridge {
   /** PR/issue references the agent's hooks reported, newest first (see
    *  pr-refs.ts). Nothing here comes from terminal output. */
   private sessionRefs = new Map<string, PrRef[]>();
+  /** Where each pane's agent keeps its own transcript, as the agent reported
+   *  it (see setAgentSession). Search reads these; nothing else does. */
+  private agentSessions = new Map<string, AgentSessionRef>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -1153,6 +1189,61 @@ export class DirectBridge {
    *  someone asked it to check a log. */
   getAgentTurns(sessionId: string): AgentTurn[] {
     return this.agentTurns.get(sessionId) ?? [];
+  }
+
+  /**
+   * Remember where a pane's agent keeps its transcript.
+   *
+   * Claude Code hands the path to every hook, so it arrives exact. Codex hands
+   * a session id instead, and its rollout file is named after that id — so the
+   * id is stored and the path resolved on first use (resolveAgentTranscript),
+   * which is a directory scan we would rather not do on the agent's critical
+   * path.
+   *
+   * The path is checked against the two directories transcripts live in before
+   * it is stored: this endpoint is reachable by anything local, and the value
+   * ends up being opened for reading.
+   */
+  setAgentSession(sessionId: string, ref: { transcriptPath?: string; agentSessionId?: string; source?: string }): void {
+    if (!this.sessions.has(sessionId)) return;
+    const prev = this.agentSessions.get(sessionId);
+    const transcriptPath = ref.transcriptPath && isSearchableTranscript(ref.transcriptPath)
+      ? ref.transcriptPath : prev?.transcriptPath;
+    const agentSessionId = ref.agentSessionId ?? prev?.agentSessionId;
+    if (prev && prev.transcriptPath === transcriptPath && prev.agentSessionId === agentSessionId) return;
+    // A new agent session id means a different conversation, so a path
+    // resolved for the old one is stale.
+    const next: AgentSessionRef = { transcriptPath, agentSessionId, source: ref.source ?? prev?.source };
+    this.agentSessions.set(sessionId, next);
+    this.persistSession(sessionId);
+  }
+
+  getAgentSession(sessionId: string): AgentSessionRef | undefined {
+    return this.agentSessions.get(sessionId);
+  }
+
+  /**
+   * The transcript file for a pane, or null when there is nothing to read.
+   *
+   * Claude's path is stored directly. Codex reports only a session id, and its
+   * rollouts are filed by date — `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`
+   * — so the id is matched against the filenames, newest day first. The answer
+   * is cached back onto the session: a session id maps to one file for its
+   * whole life, and a search should not re-walk the directory per keystroke.
+   */
+  resolveAgentTranscript(sessionId: string): string | null {
+    const ref = this.agentSessions.get(sessionId);
+    if (!ref) return null;
+    if (ref.transcriptPath && existsSync(ref.transcriptPath)) return ref.transcriptPath;
+    if (!ref.agentSessionId) return null;
+
+    const root = join(os.homedir(), '.codex', 'sessions');
+    const found = findCodexRollout(root, ref.agentSessionId);
+    if (found) {
+      ref.transcriptPath = found;
+      this.persistSession(sessionId);
+    }
+    return found;
   }
 
   /** Is this session's agent working?
@@ -1802,6 +1893,7 @@ export class DirectBridge {
       agent,
       turns: turns?.length ? turns : undefined,
       refs: refs?.length ? refs : undefined,
+      agentSession: this.agentSessions.get(sess.id),
     };
   }
 
@@ -1854,6 +1946,9 @@ export class DirectBridge {
       // Unlike the agent's state this has no shelf life: a PR the session was
       // working on before the restart is still the PR it is working on.
       if (info.refs?.length) this.sessionRefs.set(id, info.refs);
+      // Same reasoning: the pane's agent is still the same conversation it was
+      // before the restart, and its transcript is still on disk.
+      if (info.agentSession) this.agentSessions.set(id, info.agentSession);
 
       const ring = new RingBuffer(RING_SIZE);
       ring.loadFrom(join(RING_DIR, `${id}.buf`));

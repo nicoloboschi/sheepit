@@ -181,6 +181,10 @@ export interface StoreState {
   setWorkspaceFilter: (filter: 'all' | 'active' | 'favourites') => void;
   setSheetOpen: (open: boolean) => void;
   setKnowledgeOpen: (open: boolean) => void;
+  /** The flock-wide search palette (⌘K). In the store rather than in App so
+   *  the toolbar, the mobile sheet and the shortcut all raise the same one. */
+  searchOpen: boolean;
+  setSearchOpen: (open: boolean) => void;
   renderSessions: (sessions: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
   setOpenPaneMap: (panes: (string | null)[]) => void;
@@ -492,6 +496,7 @@ const useStore = create<StoreState>((set, get) => ({
   wsStatus: 'connecting',
   sheetOpen: false,
   knowledgeOpen: false,
+  searchOpen: false,
   workspaceFilter: loadWorkspaceFilter(),
   confirm: null,
 
@@ -510,6 +515,10 @@ const useStore = create<StoreState>((set, get) => ({
 
   setKnowledgeOpen(open: boolean) {
     set({ knowledgeOpen: open });
+  },
+
+  setSearchOpen(open: boolean) {
+    set({ searchOpen: open });
   },
 
   renderSessions(sessions: Session[]) {

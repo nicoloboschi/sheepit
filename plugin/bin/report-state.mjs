@@ -167,9 +167,21 @@ async function run(raw) {
           ? lastAssistantText(payload.transcript_path)
           : undefined;
 
+    // Where this agent keeps its own record of the conversation, so sheepit's
+    // search can answer "which pane is working on X" from what was actually
+    // said rather than from what is still on screen. Claude Code hands the
+    // path to every hook; Codex hands none, but its rollout file is named
+    // after the session id above, which is how the server finds it.
+    const transcriptPath = typeof payload.transcript_path === 'string' && payload.transcript_path
+      ? payload.transcript_path.slice(0, 1024)
+      : undefined;
+
     await post(
       `${base}/api/sessions/${encodeURIComponent(sessionId)}/agent-state`,
-      { state: STATE, source: SOURCE, event: payload.hook_event_name, agentSessionId: payload.session_id, prompt, response },
+      {
+        state: STATE, source: SOURCE, event: payload.hook_event_name,
+        agentSessionId: payload.session_id, transcriptPath, prompt, response,
+      },
       controller.signal,
     );
   } catch {

@@ -11,6 +11,7 @@ import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
+import { parseQuery, matchFacts, snippetAround, transcriptLineText, transcriptScore, transcriptPattern } from './search.js';
 import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
@@ -419,8 +420,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    */
   router.post('/sessions/:id/agent-state', (req, res) => {
     try {
-      const { state, source, event, prompt, response, refs } = req.body as
-        { state?: string; source?: string; event?: string; prompt?: string; response?: string; refs?: unknown };
+      const { state, source, event, prompt, response, refs, transcriptPath, agentSessionId } = req.body as
+        { state?: string; source?: string; event?: string; prompt?: string; response?: string; refs?: unknown;
+          transcriptPath?: string; agentSessionId?: string };
       // Traced from here, before anything can reject it: a report that never
       // lands is precisely the case the trace exists for, and by the time the
       // bridge would log it that outcome is already gone.
@@ -484,6 +486,17 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         if (found.length) {
           trace.refs = found.slice(0, 3).map(r => `${r.kind}#${r.num}`).join(' ');
           bridge.addPrRefs(req.params.id, found);
+        }
+
+        // Where this agent's transcript lives, for search. Bounded, and the
+        // path is allow-listed inside setAgentSession before anything opens
+        // it — this endpoint is reachable by anything local.
+        if (typeof transcriptPath === 'string' || typeof agentSessionId === 'string') {
+          bridge.setAgentSession(req.params.id, {
+            transcriptPath: typeof transcriptPath === 'string' ? transcriptPath.slice(0, 1024) : undefined,
+            agentSessionId: typeof agentSessionId === 'string' ? agentSessionId.slice(0, 128) : undefined,
+            source: typeof source === 'string' ? source.slice(0, 32) : undefined,
+          });
         }
       }
 
@@ -1101,6 +1114,123 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           return a.name.localeCompare(b.name);
         });
       res.json({ cwd, dir, entries: result });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /**
+   * Search the open panes: which one is working on this?
+   *
+   * Two halves. The facts — name, cwd, branch, the PR references the hooks
+   * reported, the last few exchanges — are already in memory and are matched
+   * without touching the disk. The other half is each agent's own transcript,
+   * searched with the same bundled ripgrep the file search uses.
+   *
+   * What is NOT searched is the terminal. Scrollback is bytes to render, not a
+   * source of facts (see "Nothing reads the terminal as text" in CLAUDE.md);
+   * this reads what the agents recorded about the conversation.
+   *
+   * One row per pane, with the single best reason it matched — the palette
+   * asks "which pane", so a pane that matches four ways is one answer.
+   */
+  router.get('/search', async (req, res) => {
+    try {
+      const query = parseQuery((req.query.q as string | undefined) ?? '');
+      if (query.terms.length === 0) return res.json({ results: [] });
+
+      // The cached list, not listSessions(): that one does a machine-wide `ps`
+      // whenever its TTL has lapsed, and a keystroke is the last place to pay
+      // for that — a blocked event loop is a keystroke that has not reached
+      // the PTY yet. The cache is refreshed every 2s by discoverSessions, and
+      // two-second-old names and branches are fine for a search. It is empty
+      // only in the first seconds after a server start, where the real list is
+      // worth the one call.
+      const sessions = bridge.getCachedSessions().length
+        ? bridge.getCachedSessions()
+        : await bridge.listSessions();
+      const hits = new Map<string, { sessionId: string; source: string; snippet: string; score: number; matchCount: number }>();
+
+      // 1. The facts. Free, and the answer for most queries.
+      for (const s of sessions) {
+        const m = matchFacts(
+          { id: s.id, name: s.name, path: s.path, gitBranch: s.gitBranch, prRefs: s.prRefs },
+          bridge.getAgentTurns(s.id).map(t => ({ prompt: t.prompt, response: t.response })),
+          query,
+        );
+        if (m) hits.set(s.id, { sessionId: s.id, source: m.source, snippet: m.snippet, score: m.score, matchCount: 1 });
+      }
+
+      // 2. The transcripts. One ripgrep over every pane's file rather than one
+      //    per pane: 24 of them, ~100 MB, is 30-90ms as a single run.
+      const files = new Map<string, string>();   // path -> sessionId
+      for (const s of sessions) {
+        const path = bridge.resolveAgentTranscript(s.id);
+        // Two panes cannot share a transcript, but a stale record could point
+        // two at one file; first writer wins and the other keeps its facts.
+        if (path && !files.has(path)) files.set(path, s.id);
+      }
+
+      if (files.size > 0) {
+        // Per-file cap, not per-run: most matched lines are tool results and
+        // attachments that transcriptLineText drops, so a small cap would let
+        // discarded lines hide the real one further down the file.
+        const args = [
+          '--json', '--smart-case', '-F', '--max-filesize', '64M', '-m', '25',
+          '--', transcriptPattern(query), ...files.keys(),
+        ];
+        const perFile = new Map<string, { role: 'user' | 'assistant'; text: string; count: number }>();
+        await new Promise<void>((resolve) => {
+          const child = spawn(rgPath, args);
+          let buf = '';
+          let done = false;
+          const finish = () => { if (!done) { done = true; try { child.kill(); } catch {} resolve(); } };
+          // Short on purpose: this runs on every keystroke, and a search that
+          // arrives after you have typed the next letter is not an answer.
+          const timer = setTimeout(finish, 2000);
+          child.stdout.on('data', (chunk: Buffer) => {
+            buf += chunk.toString('utf8');
+            let nl: number;
+            while ((nl = buf.indexOf('\n')) !== -1) {
+              const line = buf.slice(0, nl);
+              buf = buf.slice(nl + 1);
+              if (!line) continue;
+              try {
+                const ev = JSON.parse(line);
+                if (ev.type !== 'match') continue;
+                const file = ev.data.path?.text ?? '';
+                const said = transcriptLineText(ev.data.lines?.text ?? '');
+                if (!said) continue;
+                const prev = perFile.get(file);
+                // Keep the first thing the *user* said over anything the agent
+                // said, however many times the agent said it.
+                if (!prev) perFile.set(file, { ...said, count: 1 });
+                else {
+                  prev.count++;
+                  if (prev.role === 'assistant' && said.role === 'user') { prev.role = 'user'; prev.text = said.text; }
+                }
+              } catch { /* not a line we can read */ }
+            }
+          });
+          child.on('error', finish);
+          child.on('close', () => { clearTimeout(timer); finish(); });
+        });
+
+        for (const [file, said] of perFile) {
+          const sessionId = files.get(file);
+          if (!sessionId) continue;
+          const score = transcriptScore(said.role, said.count);
+          const snippet = snippetAround(said.text, query.terms.length ? query.terms : [query.raw.toLowerCase()]);
+          const prev = hits.get(sessionId);
+          // A transcript hit never outranks a fact, but it does add its count
+          // to a pane that matched on both.
+          if (!prev) hits.set(sessionId, { sessionId, source: 'transcript', snippet, score, matchCount: said.count });
+          else hits.set(sessionId, { ...prev, matchCount: prev.matchCount + said.count });
+        }
+      }
+
+      const results = [...hits.values()].sort((a, b) => b.score - a.score).slice(0, 40);
+      res.json({ results });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

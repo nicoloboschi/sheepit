@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import type { Layout } from './TerminalGrid';
@@ -232,6 +232,23 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     </span>
   );
 
+  // Find the sheep working on something. Same weight as Knowledge beside it:
+  // both open an overlay over the pen you are already looking at.
+  const searchButton = (
+    <button
+      onClick={() => useStore.getState().setSearchOpen(true)}
+      title="Search the flock (\u2318K)"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        fontSize: 11, padding: '3px 8px', borderRadius: 6,
+        border: '1px solid var(--border)', background: 'none',
+        color: 'var(--muted-foreground)', cursor: 'pointer',
+      }}
+    >
+      <Search size={13} />Search
+    </button>
+  );
+
   const knowledgeButton = (
     <button
       onClick={() => setKnowledgeOpen(!knowledgeOpen)}
@@ -282,6 +299,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       {nameControl}
       {penCounts}
       <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
+      {searchButton}
       {knowledgeButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />
