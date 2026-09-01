@@ -232,61 +232,52 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     </span>
   );
 
-  // Find the sheep working on something. Same weight as Knowledge beside it:
-  // both open an overlay over the pen you are already looking at.
-  const searchButton = (
+  /**
+   * The toolbar's actions: an icon each, with the name in the tooltip.
+   *
+   * They carried their labels beside them, which spent most of the bar's width
+   * on five words that never change — and the bar's job is to say which pen you
+   * are in, which is the one thing on it that does. The icons are the same
+   * ones the menus use, and `title` still names them for anyone who needs it.
+   */
+  const action = (
+    key: string, icon: React.ReactNode, label: string,
+    onClick: () => void, on = false,
+  ) => (
     <button
-      onClick={() => useStore.getState().setSearchOpen(true)}
-      title="Search the flock (\u2318K)"
+      key={key}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="stats-action"
+      // Selection is a background, never a size: a toolbar that reflowed when
+      // you opened a panel would move the next button out from under the
+      // cursor.
       style={{
-        display: 'flex', alignItems: 'center', gap: 4,
-        fontSize: 11, padding: '3px 8px', borderRadius: 6,
-        border: '1px solid var(--border)', background: 'none',
-        color: 'var(--muted-foreground)', cursor: 'pointer',
+        background: on ? 'var(--accent)' : 'none',
+        color: on ? 'var(--foreground)' : 'var(--muted-foreground)',
       }}
     >
-      <Search size={13} />Search
+      {icon}
     </button>
   );
 
-  const knowledgeButton = (
-    <button
-      onClick={() => setKnowledgeOpen(!knowledgeOpen)}
-      title="Knowledge"
-      style={{
-        display: 'flex', alignItems: 'center', gap: 4,
-        fontSize: 11, padding: '3px 8px', borderRadius: 6,
-        border: '1px solid var(--border)',
-        background: knowledgeOpen ? 'var(--accent)' : 'none',
-        color: knowledgeOpen ? 'var(--foreground)' : 'var(--muted-foreground)',
-        cursor: 'pointer',
-      }}
-    >
-      <BookOpen size={13} />Knowledge
-    </button>
+  const searchButton = action(
+    'search', <Search size={14} />, 'Search the flock (\u2318K)',
+    () => useStore.getState().setSearchOpen(true),
   );
+
+  const knowledgeButton = action(
+    'knowledge', <BookOpen size={14} />, 'Knowledge',
+    () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
+  );
+
   const newSessionButtons = onCreateSession && <>
-    <button
-      onClick={() => onCreateSession(false)}
-      title="New session"
-      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
-    >
-      <SquarePlus size={13} />New
-    </button>
-    <button
-      onClick={() => onCreateSession(true)}
-      title={hasHeadlessSession ? 'Open headless session' : 'New headless session'}
-      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
-    >
-      <TerminalSquare size={13} />{hasHeadlessSession ? 'Open headless' : 'Headless'}
-    </button>
-    <button
-      onClick={() => setSettingsOpen(true)}
-      title="Settings"
-      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--muted-foreground)', cursor: 'pointer' }}
-    >
-      <Settings size={13} />Settings
-    </button>
+    {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
+    {action('headless', <TerminalSquare size={14} />,
+      hasHeadlessSession ? 'Open headless session' : 'New headless session',
+      () => onCreateSession(true))}
+    {action('settings', <Settings size={14} />, 'Settings', () => setSettingsOpen(true))}
   </>;
 
   // Desktop only (hidden on mobile, where splits/zoom aren't shown).

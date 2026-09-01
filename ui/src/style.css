@@ -565,6 +565,21 @@
 }
 
 /* ── Full-screen config dialogs ────────────────────────────────────────────── */
+/* The workspace toolbar's actions: an icon each, named in the tooltip. They
+   used to carry their labels, which spent most of the bar's width on five
+   words that never change — while the one thing the bar is for, which pen you
+   are in, had to fight for room. Square, so a row of them reads as a row. */
+.stats-action {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.stats-action:hover { color: var(--foreground); background: var(--accent); }
+
 /* ── Search the flock ──────────────────────────────────────────────────────
    A palette, not a page: it opens over the grid, answers one question (which
    sheep is working on this) and gets out of the way. Sized narrower and
