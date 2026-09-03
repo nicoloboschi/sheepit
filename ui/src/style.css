@@ -719,8 +719,15 @@
 /* ── Preview (a browser in the pane) ───────────────────────────────────────
    An address bar, the ports this pane is listening on, and an iframe. Chrome
    kept to two thin rows: the point of the tab is the page, not the browser. */
+/* A flex child of the split's column, NOT an overlay. This was
+   `position: absolute; inset: 0`, copied from the git view — but that one is a
+   full-pane overlay on the positioned pane body, while this sits in a column
+   that has no `position` of its own. So `inset: 0` resolved against the row
+   instead: the bar landed roughly where it belonged, everything under it did
+   not, and the terminal showed through at the seam. */
 .preview-pane {
-  position: absolute; inset: 0;
+  position: relative;
+  flex: 1; min-height: 0; min-width: 0;
   display: flex; flex-direction: column;
   background: var(--background);
 }
@@ -782,7 +789,7 @@
   color: var(--primary);
 }
 .preview-port-name { opacity: 0.6; font-size: 9px; }
-.preview-body { position: relative; flex: 1; min-height: 0; }
+.preview-body { position: relative; flex: 1; min-height: 0; background: var(--background); }
 
 /* ── A narrow preview ──────────────────────────────────────────────────────
    Keyed off the pane, not the window: half a screen, or a quad on a large

@@ -972,8 +972,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   }, [isActive]);
 
   // Switching this pane back to the terminal view un-hides the xterm container,
-  // which had zero size while git/files was showing — refit + refocus so cols/
-  // rows match the pane and the PTY is told the new size.
+  // which had zero size while git was showing — refit + refocus so cols/rows
+  // match the pane and the PTY is told the new size.
+  //
+  // `stacked` is in the deps for the same reason: flipping a split from columns
+  // to rows changes the terminal's box without changing the view, and an
+  // unfitted xterm draws more columns than it has room for, so the right of
+  // every line is simply not there.
   useEffect(() => {
     if (!showsTerminal(view)) return;
     const id = setTimeout(() => {
@@ -983,9 +988,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
     }, 60);
     return () => clearTimeout(id);
-  }, [view, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, isActive, stacked]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Drag the divider between the terminal and the files panel (split mode).
+  // Drag the divider between the terminal and the other half of a split.
   const startSplitDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
     const body = paneBodyRef.current;
