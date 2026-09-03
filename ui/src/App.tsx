@@ -74,18 +74,32 @@ export default function App() {
   // the session list arrives, and the link's target would be lost.
   const initialHashRef = useRef(window.location.hash);
 
-  /** Build the hash fragment from workspace + zen state.
-   *  Format: `#workspaceId` or `#workspaceId/zen:sessionId` */
-  const buildHash = useCallback((wsId: string, zenId?: string | null) => {
-    return zenId ? `#${wsId}/zen:${zenId}` : `#${wsId}`;
+  /** Build the hash fragment from workspace + zen + field.
+   *  Format: `#workspaceId[/zen:sessionId][/f:fieldId]`
+   *
+   *  The field rides in the URL rather than in localStorage on purpose: two
+   *  tabs standing in two different fields is the point, and one shared key
+   *  would have the second tab drag the first. A refresh keeps each where it
+   *  was, and a link carries the field with it. */
+  const buildHash = useCallback((wsId: string, zenId?: string | null, fieldId?: string | null) => {
+    return `#${wsId}`
+      + (zenId ? `/zen:${zenId}` : '')
+      + (fieldId ? `/f:${encodeURIComponent(fieldId)}` : '');
   }, []);
 
-  /** Parse hash → { workspaceId, zenSessionId } */
-  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null } | null => {
+  /** Parse hash → { workspaceId, zenSessionId, fieldId } */
+  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null; fieldId: string | null } | null => {
     const raw = hash.replace(/^#/, '');
     if (!raw) return null;
-    const [wsId, zenPart] = raw.split('/zen:');
-    return { workspaceId: wsId!, zenSessionId: zenPart ?? null };
+    // Field ids contain ':' (`fld:default`) but never '/', so the segments are
+    // safe to split apart and identify by prefix.
+    const [head, ...segments] = raw.split('/');
+    const fieldSegment = segments.find(x => x.startsWith('f:'));
+    const fieldId = fieldSegment ? decodeURIComponent(fieldSegment.slice(2)) : null;
+    const zenSegment = segments.find(x => x.startsWith('zen:'));
+    const wsId = head;
+    const zenPart = zenSegment?.slice(4);
+    return { workspaceId: wsId!, zenSessionId: zenPart ?? null, fieldId };
   }, []);
 
   /** Resolve a hash into a workspace that actually exists right now, plus the
@@ -105,7 +119,10 @@ export default function App() {
     if (!workspaceId) return null;
     const cells = workspaces[workspaceId]!.cells;
     const zenSessionId = parsed.zenSessionId && cells.includes(parsed.zenSessionId) ? parsed.zenSessionId : null;
-    return { workspaceId, zenSessionId };
+    // A field from another browser's URL may not exist here; dropping it
+    // leaves the sidebar on whatever it was showing rather than empty.
+    const fieldId = parsed.fieldId && useStore.getState().fields[parsed.fieldId] ? parsed.fieldId : null;
+    return { workspaceId, zenSessionId, fieldId };
   }, [parseHash]);
 
   /** Push current workspace + zen state into the URL hash. */
@@ -113,9 +130,9 @@ export default function App() {
     if (fromPopstateRef.current) return;
     // Don't overwrite the opened link before we've had a chance to honour it.
     if (!initialHashAppliedRef.current && initialHashRef.current) return;
-    const { currentSessionId: wsId, zenSessionId } = useStore.getState();
+    const { currentSessionId: wsId, zenSessionId, selectedFieldId } = useStore.getState();
     if (!wsId) return;
-    const next = buildHash(wsId, zenSessionId);
+    const next = buildHash(wsId, zenSessionId, selectedFieldId);
     if (window.location.hash !== next) {
       history.pushState(null, '', next);
     }
@@ -142,9 +159,10 @@ export default function App() {
     if (useStore.getState().currentSessionId === NOTES_SESSION_ID) useStore.getState().setCurrentSessionId(null);
   }, []);
 
-  // Sync hash whenever zen mode changes.
+  // Sync the hash whenever zen mode or the shown field changes.
   const zenSessionId = useStore(s => s.zenSessionId);
-  useEffect(() => { syncHash(); }, [zenSessionId, syncHash]);
+  const selectedFieldId = useStore(s => s.selectedFieldId);
+  useEffect(() => { syncHash(); }, [zenSessionId, selectedFieldId, syncHash]);
 
   // Browser back/forward: read workspace + zen state from hash.
   useEffect(() => {
@@ -154,6 +172,12 @@ export default function App() {
       const store = useStore.getState();
       fromPopstateRef.current = true;
       store.setCurrentSessionId(target.workspaceId);
+      // The field LAST. setCurrentSessionId pulls the sidebar to the field of
+      // the pen it selects, which is what stops a jump landing you on a pane
+      // the list is not showing — but here the URL is authoritative for both,
+      // and browsing one field while a pen in another stays active is a state
+      // worth restoring rather than one to correct.
+      if (target.fieldId) store.setSelectedField(target.fieldId);
       preferences.setItem('sheepit-last-session', target.workspaceId);
       // Restore or clear zen mode
       if (target.zenSessionId && store.zenSessionId !== target.zenSessionId) {
@@ -191,6 +215,10 @@ export default function App() {
           const hashTarget = resolveHashTarget(initialHashRef.current);
           if (hashTarget) {
             connectSession(hashTarget.workspaceId);
+            // After the connect, for the reason above: it would otherwise pull
+            // the sidebar to the active pen's field and lose the one the URL
+            // asked for.
+            if (hashTarget.fieldId) useStore.getState().setSelectedField(hashTarget.fieldId);
             if (hashTarget.zenSessionId && useStore.getState().zenSessionId !== hashTarget.zenSessionId) {
               useStore.getState().toggleZen(hashTarget.zenSessionId);
             }

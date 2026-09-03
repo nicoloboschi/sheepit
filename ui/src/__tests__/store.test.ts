@@ -349,6 +349,16 @@ describe('fields', () => {
       expect(useStore.getState().selectedFieldId).toBe('f1')
     })
 
+    // The URL carries the field (see buildHash in App.tsx), so two tabs can
+    // stand in two fields at once. A localStorage key could not say that — the
+    // second tab would drag the first.
+    it('does not persist the shown field itself', () => {
+      useStore.getState().setSelectedField('f2')
+      expect(useStore.getState().selectedFieldId).toBe('f2')
+      // Nothing written: the URL is the only home for this.
+      expect(localStorage.getItem('sheepit:selected-field')).toBeNull()
+    })
+
     // ⌘↑/↓ has to walk the screen, not the store's own order.
     it('navigates in field order, not workspace order', () => {
       useStore.setState({ currentSessionId: 'c' })

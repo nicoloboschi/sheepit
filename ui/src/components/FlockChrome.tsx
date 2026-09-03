@@ -6,7 +6,8 @@
  * flock looks and reports the same wherever you open it.
  */
 import { useCallback } from 'react';
-import { useFlockCounts, plural, sheepCount } from '../flock';
+import { useFlockCounts } from '../flock';
+import FieldSelector from './FieldSelector';
 import useStore from '../store';
 import FlockGrass from './FlockGrass';
 import FlockSheep from './FlockSheep';
@@ -28,16 +29,19 @@ function useSheepSelect(onConnect?: (workspaceId: string) => void) {
   }, [onConnect]);
 }
 
-/** The band above the pen list: what the column is, and how big the flock is
- *  right now. */
+/** The band above the pen list: which field you are standing in, and what is
+ *  in it.
+ *
+ *  It used to be a title ("The flock") with the flock's totals beside it, and
+ *  the field selector sat on a second row directly underneath saying almost
+ *  the same thing. Two rows of chrome above a list is one too many in a
+ *  sidebar whose whole job is the list, so they are one row: the selector
+ *  names the field, the counts describe what stands in it, and the footer
+ *  still totals the whole flock. */
 export function FlockBand(): React.ReactElement {
-  const { sheep, pens } = useFlockCounts();
   return (
     <div className="flock-band">
-      <span className="flock-band-title">The&nbsp;flock</span>
-      <span className="flock-band-count">
-        {sheepCount(sheep)}<span className="flock-sep">&middot;</span>{plural(pens, 'pen')}
-      </span>
+      <FieldSelector />
     </div>
   );
 }

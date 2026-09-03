@@ -319,7 +319,6 @@ export const MAX_FONT_SIZE = 32;
 const WORKSPACES_KEY      = 'sheepit:workspaces';
 const WORKSPACE_ZOOM_KEY  = 'sheepit:workspace-zoom';
 const LAST_WORKSPACE_KEY  = 'sheepit-last-workspace';
-const SELECTED_FIELD_KEY  = 'sheepit:selected-field';
 // Old (legacy) keys — read-only, used for one-shot migration:
 const LEGACY_GRID_KEY     = 'sheepit:term-grid';
 const LEGACY_ZOOM_KEY     = 'sheepit:session-zoom';
@@ -568,10 +567,6 @@ function saveFontSize(size: number): void {
   try { preferences.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
 }
 
-function loadSelectedField(): string | null {
-  try { return preferences.getItem(SELECTED_FIELD_KEY); } catch { return null; }
-}
-
 function loadLastWorkspaceId(): string | null {
   try { return preferences.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
 }
@@ -627,7 +622,7 @@ const useStore = create<StoreState>((set, get) => ({
   workspaceOrder: _initialWorkspaces.order,
   fields: _initialWorkspaces.fields ?? {},
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
-  selectedFieldId: loadSelectedField(),
+  selectedFieldId: null,
   zenSessionId: null,
   fontSize: loadFontSize(),
   terminalFontFamily: readTerminalFont(),
@@ -752,6 +747,11 @@ const useStore = create<StoreState>((set, get) => ({
     const nextFieldOrder = placed.fieldOrder;
     Object.assign(nextWorkspaces, placed.workspaces);
 
+    // The sidebar always stands in a real field. Null on a cold start (the URL
+    // has not been read yet) or pointing at one that has since been deleted.
+    const selected = get().selectedFieldId;
+    const nextSelected = selected && nextFields[selected] ? selected : nextFieldOrder[0] ?? null;
+
     const prev = get();
     const fieldsUnchanged = nextFields === prev.fields && nextFieldOrder === prev.fieldOrder;
     const workspacesUnchanged =
@@ -790,7 +790,9 @@ const useStore = create<StoreState>((set, get) => ({
       (seededBusy ??= { ...prev.sessionBusy })[s.id] = s.busy;
     }
 
-    if (workspacesUnchanged && fieldsUnchanged && sessionsUnchanged && !seededBusy && nextCurrentId === prev.currentSessionId) return;
+    const selectionUnchanged = nextSelected === prev.selectedFieldId;
+    if (workspacesUnchanged && fieldsUnchanged && selectionUnchanged && sessionsUnchanged
+        && !seededBusy && nextCurrentId === prev.currentSessionId) return;
 
     if (!workspacesUnchanged || !fieldsUnchanged) {
       saveWorkspaces(nextWorkspaces, nextWorkspaceOrder, nextFields, nextFieldOrder);
@@ -798,6 +800,7 @@ const useStore = create<StoreState>((set, get) => ({
     set({
       ...(seededBusy ? { sessionBusy: seededBusy } : {}),
       ...(fieldsUnchanged ? {} : { fields: nextFields, fieldOrder: nextFieldOrder }),
+      ...(selectionUnchanged ? {} : { selectedFieldId: nextSelected }),
       sessions: allSorted,
       sessionMap,
       sessionOrder,
@@ -1322,12 +1325,12 @@ const useStore = create<StoreState>((set, get) => ({
     return true;
   },
 
+  /** Show this field. Deliberately not persisted here: the URL carries it (see
+   *  buildHash in App.tsx), so two tabs can stand in two different fields and
+   *  a refresh keeps each where it was. A single localStorage key cannot say
+   *  that — the second tab would drag the first. */
   setSelectedField(fieldId: string | null) {
     if (get().selectedFieldId === fieldId) return;
-    try {
-      if (fieldId) preferences.setItem(SELECTED_FIELD_KEY, fieldId);
-      else preferences.removeItem(SELECTED_FIELD_KEY);
-    } catch { /* quota */ }
     set({ selectedFieldId: fieldId });
   },
 

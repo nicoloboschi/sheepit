@@ -7,7 +7,6 @@ import {
 import { useDroppable, useDndMonitor } from '@dnd-kit/core';
 import useStore, { pensInField, type Workspace } from '../store';
 import SessionItem from './SessionItem';
-import FieldSelector from './FieldSelector';
 import { ScrollArea } from './ui/scroll-area';
 import { useDndEnabled } from '../dndEnabled';
 
@@ -116,7 +115,6 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
 
   return (
     <ScrollArea id={id} className="session-list flex-1" style={{ paddingTop: 4 }}>
-      <FieldSelector />
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         {visible.map(ws => (
           <SessionItem

@@ -22,8 +22,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { ChevronDown, Check, Pencil, Trash2, FolderPlus } from 'lucide-react';
-import useStore, { pensInField, DEFAULT_FIELD_ID } from '../store';
-import { useFlockCounts, plural } from '../flock';
+import useStore, { pensInField, DEFAULT_FIELD_ID, DEFAULT_FIELD_NAME } from '../store';
+import { useFlockCounts, plural, sheepCount } from '../flock';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator,
@@ -97,8 +97,10 @@ export default function FieldSelector(): React.ReactElement | null {
           <DropdownMenuTrigger asChild>
             <button className="field-pick" title="Which field the sidebar is showing">
               <ChevronDown size={12} />
-              <span className="field-pick-current">{current?.name ?? 'All pens'}</span>
-              <span className="field-pick-count">{plural(counts.pens, 'pen')}</span>
+              <span className="field-pick-current">{current?.name ?? DEFAULT_FIELD_NAME}</span>
+              <span className="field-pick-count">
+                {sheepCount(counts.sheep)}<span className="flock-sep">&middot;</span>{plural(counts.pens, 'pen')}
+              </span>
               {bleatingElsewhere > 0 && (
                 <span
                   className="field-elsewhere"

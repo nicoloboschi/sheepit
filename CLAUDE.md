@@ -174,7 +174,19 @@ A **field** is a group of pens, and grouping is **manual**. Three rules:
   pens; a field's pens are `pensInField()`, filtered out of it. There is no
   second ordering to drift.
 
-The sidebar shows **one field at a time**, chosen in `FieldSelector`. This is
+The sidebar shows **one field at a time**, chosen in `FieldSelector` — which
+*is* the band above the list (`FlockBand`), not a second row under it: two rows
+of chrome above a list is one too many in a sidebar whose whole job is the
+list.
+
+**The shown field lives in the URL**, not in preferences:
+`#<workspaceId>[/zen:<sessionId>][/f:<fieldId>]`. Two tabs standing in two
+different fields is the point, and one shared storage key would have the second
+tab drag the first; a refresh keeps each tab where it was, and a link carries
+the field with it. On restore the field is applied *after* the workspace —
+`setCurrentSessionId` pulls the sidebar to the active pen's field, which is
+right for a jump and wrong for a restore, where the URL is authoritative for
+both. This is
 not the All/Active/Favourites toggle coming back: that hid pens by a rule you
 had to remember, while the selector names the field on screen, carries the
 bleating count of every *other* field beside it, and `setCurrentSessionId`

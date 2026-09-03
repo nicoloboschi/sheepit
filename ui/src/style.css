@@ -305,25 +305,14 @@
    The band names the column and reports the flock's size; the footer says
    which sheep want you, and stands the whole thing on a line of grass. */
 .flock-band {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  padding: 9px 13px 8px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 9px 5px;
   font-size: 9.5px; line-height: 1.2;
   color: var(--muted-foreground);
   user-select: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
 }
 :root[data-theme='light'] .flock-band { border-bottom-color: rgba(34, 41, 31, 0.08); }
-/* Deliberately not the brand green: the band is a label, and colouring it
-   makes it compete with the pen cards it is introducing. */
-.flock-band-title {
-  font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-.flock-band-count {
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-  opacity: 0.8;
-}
-.flock-band-count .flock-sep { opacity: 0.5; padding: 0 1px; }
 
 .flock-footer {
   position: relative;
@@ -732,15 +721,12 @@
    with eight repositories open the answer to "where am I" has to survive a
    scroll. Deliberately quiet: it is a label on the ground, not a thing you
    work in. */
-.field-selector {
-  position: sticky; top: 0; z-index: 2;
-  padding: 2px 6px 4px;
-  background: var(--sidebar-field, #181c16);
-}
+/* The selector IS the band (see FlockBand): one row above the list, not two. */
+.field-selector { flex: 1; min-width: 0; }
 .field-pick {
   display: flex; align-items: center; gap: 5px;
   width: 100%;
-  padding: 4px 6px;
+  padding: 2px 4px;
   border: 1px solid transparent; border-radius: 6px;
   background: none; cursor: pointer;
   color: var(--muted-foreground);
@@ -754,8 +740,10 @@
 }
 .field-pick-count {
   margin-left: auto; flex-shrink: 0;
-  font-size: 9.5px; opacity: 0.7; font-variant-numeric: tabular-nums;
+  font-size: 9.5px; opacity: 0.7;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+.field-pick-count .flock-sep { opacity: 0.5; padding: 0 2px; }
 /* A sheep bleating in a field you are not looking at is the one thing this
    list must never swallow, so its count rides on the selector itself. */
 .field-elsewhere {
