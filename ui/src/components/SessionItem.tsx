@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, Star, GripHorizontal, Pencil } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -39,7 +39,6 @@ import AntigravityIcon from './AntigravityIcon';
 import GitHubCopilotIcon from './GitHubCopilotIcon';
 import GrokIcon from './GrokIcon';
 import CursorIcon from './CursorIcon';
-import { preferences } from '../preferences';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from './ui/dropdown-menu';
@@ -49,25 +48,6 @@ const PR_STATE_COLORS: Record<string, string> = {
   OPEN: 'var(--primary)', MERGED: '#B79CCA', CLOSED: 'var(--destructive)',
 };
 
-// ── Favourites persistence ───────────────────────────────────────────────────
-const FAV_KEY = 'sheepit:favourite-sessions';
-
-export function loadFavourites(): Set<string> {
-  try { return new Set(JSON.parse(preferences.getItem(FAV_KEY) || '[]')); }
-  catch { return new Set(); }
-}
-
-export function saveFavourites(favs: Set<string>) {
-  try { preferences.setItem(FAV_KEY, JSON.stringify([...favs])); } catch { /* quota */ }
-}
-
-export function toggleFavourite(sessionId: string): Set<string> {
-  const favs = loadFavourites();
-  if (favs.has(sessionId)) favs.delete(sessionId); else favs.add(sessionId);
-  saveFavourites(favs);
-  return favs;
-}
-
 interface SessionItemProps {
   /** The workspace this sidebar row represents. */
   workspace: Workspace;
@@ -75,8 +55,6 @@ interface SessionItemProps {
   /** Called with the workspace id when the user clicks to select it. */
   onConnect: (workspaceId: string) => void;
   send: (msg: Record<string, unknown>) => void;
-  isFavourite?: boolean;
-  onToggleFavourite?: () => void;
 }
 
 // ── Pane layout icons ───────────────────────────────────────────────────────
@@ -458,7 +436,7 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
 }
 
 
-export default function SessionItem({ workspace, isActive, onConnect, send, isFavourite, onToggleFavourite }: SessionItemProps) {
+export default function SessionItem({ workspace, isActive, onConnect, send }: SessionItemProps) {
   const showConfirm = useStore(s => s.showConfirm);
   const renameWorkspace = useStore(s => s.renameWorkspace);
   const dndEnabled = useDndEnabled();
@@ -641,15 +619,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
         ) : (
           <div className="workspace-title-row">
             <span className="workspace-title" title={displayName}>{displayName}</span>
-            {onToggleFavourite && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleFavourite(); }}
-                className={`session-fav-btn${isFavourite ? ' is-fav' : ''}`}
-                title={isFavourite ? 'Remove from favourites' : 'Add to favourites'}
-              >
-                <Star size={12} style={isFavourite ? { fill: 'var(--warning)' } : undefined} />
-              </button>
-            )}
           </div>
         )}
         <div className="pen-body">
@@ -695,15 +664,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send, isFa
             <Pencil size={13} />
             Rename
           </DropdownMenuItem>
-          {onToggleFavourite && (
-            <DropdownMenuItem
-              onClick={(e) => { e.stopPropagation(); onToggleFavourite(); }}
-              style={{ fontSize: 12, cursor: 'pointer' }}
-            >
-              <Star size={13} style={isFavourite ? { fill: 'var(--warning)', color: 'var(--warning)' } : {}} />
-              {isFavourite ? 'Unfavourite' : 'Favourite'}
-            </DropdownMenuItem>
-          )}
           <DropdownMenuItem
             onClick={handleDelete}
             className="text-destructive focus:text-destructive"

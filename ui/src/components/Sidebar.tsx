@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PanelLeftClose, List, Activity, Star } from 'lucide-react';
-import useStore from '../store';
+import { PanelLeftClose } from 'lucide-react';
 import SessionList from './SessionList';
 import { FlockBand, FlockFooter } from './FlockChrome';
 import { preferences } from '../preferences';
@@ -11,8 +10,6 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onConnect, send }: SidebarProps) {
-  const workspaceFilter = useStore(s => s.workspaceFilter);
-  const setWorkspaceFilter = useStore(s => s.setWorkspaceFilter);
   const [collapsed, setCollapsed] = useState(() => {
     try { return preferences.getItem('sheepit:sidebar-collapsed') === '1'; } catch { return false; }
   });
@@ -97,23 +94,6 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
       <div className="sidebar-header flex items-center justify-between px-4 py-3.5">
         <span className="logo"><span className="logo-sheep" aria-hidden>🐑</span> <span>sheepit</span></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {/* Workspace list filter — All / Active / Favourites. */}
-          <div className="ws-filter-toggle">
-            {([
-              { id: 'all' as const,        icon: <List size={12} />,     title: 'The whole flock' },
-              { id: 'active' as const,     icon: <Activity size={12} />, title: 'Stirring only (current, grazing, bleating, or new output)' },
-              { id: 'favourites' as const, icon: <Star size={12} />,     title: 'Favourites only' },
-            ]).map(({ id, icon, title }) => (
-              <button
-                key={id}
-                title={title}
-                onClick={() => setWorkspaceFilter(id)}
-                className={workspaceFilter === id ? 'active' : ''}
-              >
-                {icon}
-              </button>
-            ))}
-          </div>
           <button
             onClick={toggleCollapse}
             title="Collapse sidebar"

@@ -174,11 +174,9 @@ export interface StoreState {
    *  rather than replacing it. */
   knowledgeOpen: boolean;
   /** Sidebar workspace list filter (Slack-style). */
-  workspaceFilter: 'all' | 'active' | 'favourites';
   confirm: ConfirmState | null;
 
   setWsStatus: (status: WsStatus) => void;
-  setWorkspaceFilter: (filter: 'all' | 'active' | 'favourites') => void;
   setSheetOpen: (open: boolean) => void;
   setKnowledgeOpen: (open: boolean) => void;
   /** The flock-wide search palette (⌘K). In the store rather than in App so
@@ -344,22 +342,6 @@ function migrateLegacyWorkspaces(): {
     if (last) lastWorkspaceId = sidToWsId.get(last) ?? null;
   } catch { /* ignore */ }
 
-  // Favourites were keyed by the root session id. Re-key them to the new
-  // synthetic workspace ids so the user's starred list survives the migration.
-  try {
-    const FAV_KEY = 'sheepit:favourite-sessions';
-    const rawFavs = preferences.getItem(FAV_KEY);
-    if (rawFavs) {
-      const oldFavs = JSON.parse(rawFavs) as string[];
-      if (Array.isArray(oldFavs)) {
-        const newFavs = oldFavs
-          .map(sid => sidToWsId.get(sid))
-          .filter((x): x is string => !!x);
-        preferences.setItem(FAV_KEY, JSON.stringify(newFavs));
-      }
-    }
-  } catch { /* ignore */ }
-
   return { workspaces, order, zooms, lastWorkspaceId };
 }
 
@@ -427,14 +409,6 @@ function saveFontSize(size: number): void {
   try { preferences.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
 }
 
-function loadWorkspaceFilter(): 'all' | 'active' | 'favourites' {
-  try {
-    const v = preferences.getItem('sheepit:ws-filter');
-    if (v === 'active' || v === 'favourites') return v;
-  } catch { /* fall through */ }
-  return 'all';
-}
-
 function loadLastWorkspaceId(): string | null {
   try { return preferences.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
 }
@@ -497,16 +471,10 @@ const useStore = create<StoreState>((set, get) => ({
   sheetOpen: false,
   knowledgeOpen: false,
   searchOpen: false,
-  workspaceFilter: loadWorkspaceFilter(),
   confirm: null,
 
   setWsStatus(status: WsStatus) {
     set({ wsStatus: status });
-  },
-
-  setWorkspaceFilter(filter: 'all' | 'active' | 'favourites') {
-    try { preferences.setItem('sheepit:ws-filter', filter); } catch { /* quota */ }
-    set({ workspaceFilter: filter });
   },
 
   setSheetOpen(open: boolean) {

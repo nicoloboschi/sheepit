@@ -6,7 +6,7 @@ import {
 } from '@dnd-kit/sortable';
 import { useDroppable, useDndMonitor } from '@dnd-kit/core';
 import useStore, { type Workspace } from '../store';
-import SessionItem, { loadFavourites, toggleFavourite } from './SessionItem';
+import SessionItem from './SessionItem';
 import { ScrollArea } from './ui/scroll-area';
 import { useDndEnabled } from '../dndEnabled';
 
@@ -62,25 +62,7 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
   const workspaces = useStore(s => s.workspaces);
   const workspaceOrder = useStore(s => s.workspaceOrder);
   const currentSessionId = useStore(s => s.currentSessionId);
-  const hasUnseen = useStore(s => s.sessionHasUnseen);
-  const busy = useStore(s => s.sessionBusy);
-  const [favourites, setFavourites] = useState(loadFavourites);
   const dndEnabled = useDndEnabled();
-
-  // Slack-style filter (All / Active / Favourites). Lives in the store so the
-  // toggle can render up in the sidebar header.
-  const filter = useStore(s => s.workspaceFilter);
-
-  // "Active" = the current workspace (blue), or any pane with unseen output
-  // (yellow) or a running/busy command. Reactive: when sessionBusy/unseen
-  // change in the store, this list re-renders and the filter re-applies, so a
-  // newly-active workspace appears automatically.
-  const isWsActive = (ws: Workspace) =>
-    currentSessionId === ws.id || ws.cells.some(c => hasUnseen[c] || busy[c]);
-  const applyFilter = (list: Workspace[]) =>
-    filter === 'active' ? list.filter(isWsActive)
-      : filter === 'favourites' ? list.filter(w => favourites.has(w.id))
-      : list;
 
   // Track whether a *pane* drag is currently in flight in the global
   // DndContext so the gap zones can light up only when relevant. We use
@@ -110,30 +92,25 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
     );
   }
 
-  // One filtered list, in workspaceOrder. The All/Active/Favourites toggle now
-  // lives in the sidebar header (so no section band eating vertical space).
-  const visible = applyFilter(allWs);
+  // Every pen, in workspaceOrder. There is no filter: a three-way toggle sat
+  // above this list, and a sidebar that hides pens is a sidebar you have to
+  // remember the state of — you go looking for a pen that is right there and
+  // conclude it closed. The dot on each pen already says which are stirring,
+  // and ⌘K finds one by what it is doing.
+  const visible = allWs;
   const sortableIds = visible.map(w => w.id);
   const lastWsId = allWs[allWs.length - 1]?.id ?? null;
 
   return (
     <ScrollArea id={id} className="session-list flex-1" style={{ paddingTop: 4 }}>
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-        {visible.length === 0 ? (
-          <div className="empty-state" style={{ padding: '12px', fontSize: 12 }}>
-            {filter === 'favourites'
-              ? 'No favourites yet — hover a pen and tap the star'
-              : 'No pens are stirring'}
-          </div>
-        ) : visible.map(ws => (
+        {visible.map(ws => (
           <SessionItem
             key={ws.id}
             workspace={ws}
             isActive={currentSessionId === ws.id}
             onConnect={onConnect}
             send={send}
-            isFavourite={favourites.has(ws.id)}
-            onToggleFavourite={() => setFavourites(toggleFavourite(ws.id))}
           />
         ))}
       </SortableContext>

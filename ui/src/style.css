@@ -713,41 +713,6 @@
   user-select: none;
 }
 
-/* Workspace list filter toggle (All / Active / Favourites) — lives in the
-   sidebar header next to the collapse button. */
-.ws-filter-toggle {
-  display: flex;
-  gap: 1px;
-  border-radius: 7px;
-  flex-shrink: 0;
-}
-.ws-filter-toggle button {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  background: none; border: none; cursor: pointer;
-  color: var(--muted-foreground);
-  transition: background 0.12s, color 0.12s;
-}
-.ws-filter-toggle button:hover:not(.active) { background: rgba(255,255,255,0.06); color: var(--foreground); }
-.ws-filter-toggle button.active {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
-  color: var(--primary);
-}
-
-/* Quick-favourite star on each workspace row — revealed on hover, pinned when
-   favourited. */
-.session-fav-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 4px;
-  background: none; border: none; cursor: pointer;
-  color: var(--muted-foreground); flex-shrink: 0; align-self: flex-start;
-  opacity: 0; transition: opacity 0.15s, color 0.15s;
-}
-.session-item:hover .session-fav-btn { opacity: 0.7; }
-.session-fav-btn:hover { opacity: 1 !important; color: var(--warning); }
-.session-fav-btn.is-fav { opacity: 1; color: var(--warning); }
-
 .session-group-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 6px 4px 12px;
@@ -1878,8 +1843,8 @@
 }
 .session-item.active .session-name-inline { opacity: 1; color: var(--foreground); }
 
-/* Name row: always-visible workspace name + an inline favourite star that
-   sits right after the name and doesn't take width from the pane boxes below. */
+/* Name row: the pen's name, above the fence rather than inside it — a name in
+   the enclosure cost a row of pen the sheep needed. */
 .workspace-title-row {
   display: flex; align-items: center; gap: 2px;
   min-width: 0; margin-bottom: 3px;
@@ -1888,16 +1853,12 @@
   padding-left: 6px;
 }
 .workspace-title {
-  /* Takes the slack so the favourite star stays at the right edge. The pane
-     tally used to hold that position with margin-left:auto; without it the
-     star would otherwise sit right up against the name. */
   flex: 1; min-width: 0;
   font-size: 11px; font-weight: 500; color: var(--muted-foreground);
   padding: 0 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex-shrink: 1; min-width: 0;
 }
-.workspace-title-row .session-fav-btn { width: 16px; height: 16px; }
 .session-item.active .workspace-title { color: var(--foreground); }
 
 
