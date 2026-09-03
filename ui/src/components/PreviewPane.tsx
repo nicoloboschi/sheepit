@@ -132,9 +132,10 @@ export default function PreviewPane({ sessionId, initialUrl }: {
           placeholder="localhost:3000, or any URL"
           spellCheck={false}
         />
-        {/* Which way the page came. Never hidden: a proxied page is a
-            different thing from the real one — no cookies, no login — and you
-            should not have to wonder which you are looking at. */}
+        {/* Which way the page came. The pill never leaves, however narrow the
+            pane gets — a proxied page is a different thing from the real one,
+            no cookies and no login, and you should not have to wonder which
+            you are looking at. Only its word goes; the icon says it too. */}
         <button
           className={`preview-route${route === 'proxy' ? ' preview-route-on' : ''}`}
           title={route === 'proxy'
