@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, CLEARED_SESSION_NAME } from '../ai.js';
+import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, clearedSessionName, CLEARED_SESSION_NAME } from '../ai.js';
 
 describe('AI naming CLI isolation', () => {
   it('runs Claude Code in safe mode without slash commands', () => {
@@ -49,6 +49,37 @@ describe('rename eligibility', () => {
     expect(isRenameable(CLEARED_SESSION_NAME, path, CLEARED_SESSION_NAME)).toBe(true);
   });
 });
+
+// Every cleared pane used to get the same name, and a sidebar with nine rows
+// reading "freshly shorn" says nothing about any of them.
+describe('the name a clear leaves behind', () => {
+  it('is the directory the pane is in', () => {
+    expect(clearedSessionName('/Users/x/dev/memlake4')).toBe('memlake4')
+    expect(clearedSessionName('/Users/x/dev/hindsight-wt9/')).toBe('hindsight-wt9')
+  })
+
+  it('is normalised, so it cannot freeze the pane it names', () => {
+    const name = clearedSessionName('/Users/x/My Project')
+    expect(name).toBe('my project')
+    expect(looksLikeAssignedName(name)).toBe(true)
+  })
+
+  it('falls back when the directory yields nothing usable', () => {
+    expect(clearedSessionName(undefined)).toBe(CLEARED_SESSION_NAME)
+    expect(clearedSessionName('/')).toBe(CLEARED_SESSION_NAME)
+    expect(clearedSessionName('/Users/x/123')).toBe(CLEARED_SESSION_NAME)
+  })
+
+  // Whichever of the two it is, the namer has to be able to rename it later:
+  // a default name qualifies on its own, and anything else only because the
+  // service claimed it.
+  it('leaves the pane renameable', () => {
+    const path = '/Users/x/dev/memlake4'
+    const name = clearedSessionName(path)
+    expect(isRenameable(name, path, undefined)).toBe(true)
+    expect(isRenameable(CLEARED_SESSION_NAME, '/', CLEARED_SESSION_NAME)).toBe(true)
+  })
+})
 
 describe('name decoration', () => {
   it('peels what a model wraps a short answer in', () => {

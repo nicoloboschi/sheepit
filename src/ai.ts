@@ -6,6 +6,19 @@ import { configDir } from './paths.js';
 import { logger } from './server.js';
 import type { DirectBridge } from './direct-bridge.js';
 
+/** The namer's CLI was killed rather than having failed.
+ *
+ *  Worth its own type because it is worth retrying and an ordinary failure is
+ *  not: the CLI dying by signal 50ms after spawn, with no output, is the
+ *  machine refusing to start it — on a box deep in swap, macOS kills a fresh
+ *  ~150MB process at exec. Seconds later there is usually room. */
+export class CliKilled extends Error {
+  constructor(public readonly signal: string, message: string) {
+    super(message);
+    this.name = 'CliKilled';
+  }
+}
+
 /** Run a CLI command with stdin input, return stdout. */
 function runWithStdin(cmd: string, args: string[], input: string, timeoutMs = 30_000, cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -31,7 +44,8 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs = 30
           resolve(stdout);
         }
       }
-      else reject(new Error(`${cmd} exited with code ${code}${signal ? ` (signal ${signal})` : ''}: ${stderr.slice(0, 300)}`));
+      else if (signal) reject(new CliKilled(signal, `${cmd} was killed (signal ${signal}): ${stderr.slice(0, 300)}`));
+      else reject(new Error(`${cmd} exited with code ${code}: ${stderr.slice(0, 300)}`));
     });
     child.stdin.write(input);
     child.stdin.end();
@@ -85,6 +99,14 @@ export interface AIConfig {
   claudeCommand: string;
 }
 
+/** How long to wait before trying a killed namer again.
+ *
+ *  One retry, not a loop: if the machine is out of memory this is not going to
+ *  be solved by asking harder, and the sweep comes back in 30s anyway. Long
+ *  enough for the pages of whatever was just killed to be reclaimed —
+ *  measured, the very next spawn dies and one a few seconds later does not. */
+const KILLED_RETRY_MS = 4000;
+
 const AI_DEFAULTS: AIConfig = {
   aiEnabled: false,
   aiProvider: 'claude-code',
@@ -93,12 +115,30 @@ const AI_DEFAULTS: AIConfig = {
   autoNamingIntervalSecs: 30,
 };
 
-/** What a session is called after `/clear` wiped its context.
- *
- *  `/clear` shears the session: everything it knew is gone. Leaving the old
- *  AI-generated name on it is actively misleading — the pen card would still
- *  advertise work the agent can no longer remember doing. */
+/** Last resort for a cleared session whose directory yields no usable name. */
 export const CLEARED_SESSION_NAME = 'freshly shorn';
+
+/**
+ * What a session is called after `/clear` wiped its context.
+ *
+ * `/clear` shears the session: everything it knew is gone, so leaving the old
+ * AI-generated name on it is actively misleading — the pen card would still
+ * advertise work the agent can no longer remember doing.
+ *
+ * But every cleared session used to get the *same* name, and a sidebar with
+ * nine rows called "freshly shorn" tells you nothing about any of them. It
+ * takes the name a new pane in that directory would have instead: the pane
+ * has no work to be named after, and its project is the honest answer until
+ * someone asks it something. That it has nothing in it yet is already said by
+ * `fresh` — see `.pane-card-fresh` — so the name does not have to say it too.
+ *
+ * Normalised, so the writer still cannot store a name the reader would
+ * disown, and so a directory called `My Project` does not freeze its pane.
+ */
+export function clearedSessionName(path: string | undefined): string {
+  const basename = path?.split('/').filter(Boolean).pop();
+  return (basename && normalizeAssignedName(basename)) || CLEARED_SESSION_NAME;
+}
 
 /** May the namer (re)name this session?
  *
@@ -106,10 +146,10 @@ export const CLEARED_SESSION_NAME = 'freshly shorn';
  *  service assigned the current name itself — but never when a human named it,
  *  which is the whole point of the ownership check.
  *
- *  Pulled out of the sweep because the `/clear` reset depends on it in a way
- *  that is easy to get wrong: CLEARED_SESSION_NAME is not a default, so a
- *  cleared session is only renameable again because noteSessionCleared() also
- *  claims ownership of it. */
+ *  Pulled out of the sweep because the `/clear` reset depends on it: a
+ *  cleared session is renameable again either because its new name is the
+ *  directory's (a default), or because noteSessionCleared() claimed whatever
+ *  it was given. Both paths have to keep working. */
 /** Strip the decoration a model wraps a short answer in.
  *
  *  Asked for a name, a model will sometimes answer with a markdown code span
@@ -303,6 +343,20 @@ export class AIService {
       if (looksLikeAssignedName(s.name)) {
         this.aiAssignedName.set(s.id, s.name);
       }
+      // Panes cleared before a clear left the directory's name behind are
+      // still sharing one name between them. They cannot be named from their
+      // own history — a clear is what threw it away — so they would sit there
+      // identical until someone typed in each of them. Give them the name the
+      // clear would give them today. Idempotent: it renames only the literal
+      // old constant, and only where the namer is allowed to.
+      if (s.name === CLEARED_SESSION_NAME) {
+        const renamed = clearedSessionName(s.path);
+        if (renamed !== CLEARED_SESSION_NAME) {
+          this.aiAssignedName.set(s.id, renamed);
+          await this.bridge.renameSession(s.id, renamed);
+          logger.info(`AI naming: cleared pane ${s.id} → "${renamed}"`);
+        }
+      }
     }
     if (this.aiAssignedName.size > 0) {
       logger.debug(`AI naming: seeded ${this.aiAssignedName.size} tracked session name(s) for rescue`);
@@ -376,20 +430,20 @@ export class AIService {
     }
   }
 
-  /** `/clear` happened: forget everything we knew about naming this session.
-   *
-   *  Ownership matters more than it looks. The sweep only renames a session
-   *  whose name is a default OR one this service already assigned — so simply
-   *  renaming to CLEARED_SESSION_NAME would freeze it there forever, since
-   *  "freshly shorn" is neither. Claiming it here is what lets the next real
-   *  turn rename it again. */
   /** The name this service last assigned to a session, if any. */
   assignedName(sessionId: string): string | undefined {
     return this.aiAssignedName.get(sessionId);
   }
 
-  noteSessionCleared(sessionId: string): void {
-    this.aiAssignedName.set(sessionId, CLEARED_SESSION_NAME);
+  /** `/clear` happened: forget everything we knew about naming this session.
+   *
+   *  Ownership matters more than it looks. The sweep only renames a session
+   *  whose name is a default OR one this service already assigned, so the name
+   *  a clear leaves behind has to be one of those or the pane freezes there
+   *  forever. Claiming whatever it was given makes that true without this
+   *  having to know which of the two it is. */
+  noteSessionCleared(sessionId: string, name: string): void {
+    this.aiAssignedName.set(sessionId, name);
     // The pre-clear exchange must not be what the next name is derived from.
     this.lastContentHash.delete(sessionId);
   }
@@ -509,19 +563,31 @@ Session name:`;
       logger.debug(`AI naming ${sessionId}: calling isolated ${cli} (${snippet.length} chars of exchange)`);
       const t0 = Date.now();
 
+      // Run from a dedicated temp cwd so Claude Code doesn't log these one-shot
+      // naming prompts into the user's real project history.
+      //
+      // Retried once when the CLI is *killed*, which on a machine deep in swap
+      // is most attempts: the process dies ~50ms after spawn, before it prints
+      // anything, and a second try a few seconds later usually lands. Without
+      // it a pane waits out two or three sweeps for a name it could have had,
+      // which is indistinguishable from naming being broken. An ordinary
+      // failure is not retried — that one is not going to go better.
+      const invoke = async (): Promise<string> => {
+        try {
+          return await runWithStdin(invocation.command, invocation.args, '', 30_000, this._namerCwd);
+        } catch (e) {
+          if (!(e instanceof CliKilled)) throw e;
+          logger.debug(`AI naming ${sessionId}: ${cli} killed (${e.signal}), retrying once`);
+          await new Promise(r => setTimeout(r, KILLED_RETRY_MS));
+          return runWithStdin(invocation.command, invocation.args, '', 30_000, this._namerCwd);
+        }
+      };
+
       let name: string;
       if (cli === 'claude') {
         // Use --verbose --output-format json to get the full message array,
         // then extract the assistant text. Plain -p returns empty result field.
-        // Run from a dedicated temp cwd so Claude Code doesn't log these
-        // one-shot naming prompts into the user's real project history.
-        const raw = await runWithStdin(
-          invocation.command,
-          invocation.args,
-          '',
-          30_000,
-          this._namerCwd,
-        );
+        const raw = await invoke();
         name = '';
         try {
           const events = JSON.parse(raw);
@@ -542,7 +608,7 @@ Session name:`;
           name = raw.trim();
         }
       } else {
-        name = (await runWithStdin(invocation.command, invocation.args, '', 30_000, this._namerCwd)).trim();
+        name = (await invoke()).trim();
       }
 
       logger.debug(`AI naming ${sessionId}: got "${name}" in ${Date.now() - t0}ms`);

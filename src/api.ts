@@ -16,7 +16,7 @@ import {
   transcriptScore, transcriptPattern, containsPattern, speakerOf,
   type MatchGroup, type Speaker,
 } from './search.js';
-import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
+import { clearedSessionName, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -582,11 +582,14 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // Never rename over a name a human chose — `/clear` wipes the agent's
       // context, not the user's intent for what this pane is called.
       const renamed = isRenameable(session.name, session.path, ai.assignedName(id));
+      // The directory's name, not one every cleared pane shares: nine rows
+      // reading "freshly shorn" say nothing about any of them.
+      const cleared = clearedSessionName(session.path);
       if (renamed) {
-        ai.noteSessionCleared(id);
-        await bridge.renameSession(id, CLEARED_SESSION_NAME);
+        ai.noteSessionCleared(id, cleared);
+        await bridge.renameSession(id, cleared);
       }
-      res.json({ ok: true, renamed, name: renamed ? CLEARED_SESSION_NAME : session.name });
+      res.json({ ok: true, renamed, name: renamed ? cleared : session.name });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
