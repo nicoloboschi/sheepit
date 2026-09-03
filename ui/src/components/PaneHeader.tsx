@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, Maximize2, Minimize2, FolderOpen, Columns2, RotateCcw } from 'lucide-react';
+import { SquareTerminal, X, Maximize2, Minimize2, Globe, GitCompare, Columns2, RotateCcw } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
+import { showsTerminal, type PaneView } from './TerminalCell';
 import StatChips from './StatChips';
 import VoiceInputButton from './VoiceInputButton';
 import * as sharedWs from '../sharedWs';
@@ -32,8 +33,8 @@ interface PaneHeaderProps {
   onClose: () => void;
   /** Per-pane view switch. When provided, the header shows a terminal/git/files
    *  toggle that controls what this pane renders below its status bar. */
-  view?: 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview';
-  onViewChange?: (view: 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview') => void;
+  view?: PaneView;
+  onViewChange?: (view: PaneView) => void;
 }
 
 
@@ -221,27 +222,36 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Four states, and the two that show files or the browser both keep
+                the terminal: reading a file or watching a dev server is
+                something you do WHILE working, and a pane that gave its whole
+                width to a file tree had hidden the thing the pane is for. Git
+                is the exception and takes the pane — a diff is wide, and
+                reading one is its own activity rather than an accompaniment
+                to typing. */}
             {([
               { id: 'terminal', icon: <SquareTerminal size={12} />, title: 'Terminal', active: view === 'terminal' },
-              { id: 'split',    icon: <Columns2 size={12} />,       title: 'Terminal + Files', active: view === 'split' },
-              { id: 'git',      icon: <FolderOpen size={12} />,     title: 'Files / Git', active: view !== 'terminal' && view !== 'split' },
+              { id: 'split',    icon: <Columns2 size={12} />,       title: 'Terminal + files', active: view === 'split' },
+              { id: 'browser',  icon: <Globe size={12} />,          title: 'Terminal + browser', active: view === 'split-preview' },
+              { id: 'git',      icon: <GitCompare size={12} />,     title: 'Git — working tree and log', active: !!view && !showsTerminal(view) },
             ] as const).map(({ id, icon, title, active }) => (
               <button
                 key={id}
                 title={title}
-                // Terminal/Split map directly; the Git button opens the working
-                // tree, or keeps the current git sub-view if one is showing.
+                // The first three map straight through; Git opens the working
+                // tree, or keeps whichever git sub-view is already showing.
                 onClick={(e) => {
                   e.stopPropagation();
                   onViewChange(
                     id === 'terminal' ? 'terminal'
                       : id === 'split' ? 'split'
-                      : (view && view !== 'terminal' && view !== 'split' ? view : 'working'),
+                      : id === 'browser' ? 'split-preview'
+                      : (view && !showsTerminal(view) ? view : 'working'),
                   );
                 }}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 26, height: 22,
+                  width: 24, height: 22,
                   background: active ? 'color-mix(in srgb, var(--primary) 22%, transparent)' : 'none',
                   border: 'none',
                   borderRight: id !== 'git' ? '1px solid var(--border)' : 'none',

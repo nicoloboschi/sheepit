@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, FolderOpen, ScrollText, Globe } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, ScrollText } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
@@ -90,16 +90,38 @@ interface WebglLike { dispose(): void }
 /** Per-pane view — each pane independently shows its terminal, git diff, or
  *  file browser, all scoped to that pane's own session/cwd. Persisted so a
  *  pane reopens on the view you left it on. */
-// Unified per-pane view: terminal, the working-tree diff, the file browser, or
-// the git log. ('working' replaces the old 'diff'; 'branch'/'commits' are gone.)
-// 'split' = terminal on the left + the file browser on the right (resizable).
-export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview';
+/**
+ * What one pane is showing.
+ *
+ *   terminal      the terminal, alone
+ *   split         terminal + the file browser, resizable
+ *   split-preview terminal + the embedded browser, resizable
+ *   working       the working-tree diff, full pane
+ *   log           the git log, full pane
+ *
+ * **Files and the browser are never shown alone**, which is why there is no
+ * 'files' or 'preview' in this union any more. Reading a file or watching a dev
+ * server is something you do *while* working in the terminal — a pane that
+ * gave the whole width to a file tree had hidden the thing the pane is for. Git
+ * is the exception and takes the pane: a diff is wide, and reading one is its
+ * own activity rather than an accompaniment to typing.
+ */
+export type PaneView = 'terminal' | 'split' | 'split-preview' | 'working' | 'log';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
+/** Views that keep the terminal on screen — the ones where xterm has a size
+ *  and has to be refitted when the pane comes back to it. */
+export function showsTerminal(view: PaneView): boolean {
+  return view === 'terminal' || view === 'split' || view === 'split-preview';
+}
 function readPaneView(sid: string): PaneView | undefined {
   try {
     const raw = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}')[sid];
-    if (raw === 'diff') return 'working'; // migrate legacy persisted value
-    return (['terminal', 'split', 'working', 'files', 'log', 'preview'] as const).includes(raw) ? raw : undefined;
+    if (raw === 'diff') return 'working';           // legacy persisted value
+    // The two views that used to take the whole pane now only exist beside the
+    // terminal, so a pane persisted in one of them opens in the split it means.
+    if (raw === 'files') return 'split';
+    if (raw === 'preview') return 'split-preview';
+    return (['terminal', 'split', 'split-preview', 'working', 'log'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 function savePaneView(sid: string, view: PaneView): void {
@@ -244,9 +266,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // saved preference reopen on whatever view they were left on.
   const [view, setView] = useState<PaneView>(() => readPaneView(sessionId) ?? 'split');
   const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
-  /** Set when the preview is opened from the file tree; null when it is opened
-   *  from the tab, where the address bar starts empty. */
+  /** Set when the browser is opened on a file from the tree; null when it is
+   *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** The terminal is sharing the pane with something — files or the browser. */
+  const isSplit = view === 'split' || view === 'split-preview';
   const openFileRef = useRef<((path: string) => void) | null>(null);
   // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
   // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
@@ -277,7 +301,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     if (!isActive) return;
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
-        const order: PaneView[] = ['terminal', 'split', 'working', 'files', 'log', 'preview'];
+        const order: PaneView[] = ['terminal', 'split', 'split-preview', 'working', 'log'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
@@ -924,7 +948,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // which had zero size while git/files was showing — refit + refocus so cols/
   // rows match the pane and the PTY is told the new size.
   useEffect(() => {
-    if (view !== 'terminal' && view !== 'split') return;
+    if (!showsTerminal(view)) return;
     const id = setTimeout(() => {
       safeFit();
       if (isActive) termRef.current?.focus();
@@ -1365,9 +1389,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       {/* Terminal view — kept mounted (display toggled) so xterm preserves its
           scrollback while git/files is showing. In 'split' it shares the row
           with the file browser on the right, separated by a resizable handle. */}
-      <div style={{ position: 'absolute', inset: 0, display: (view === 'terminal' || view === 'split') ? 'flex' : 'none', flexDirection: 'row' }}>
+      <div style={{ position: 'absolute', inset: 0, display: showsTerminal(view) ? 'flex' : 'none', flexDirection: 'row' }}>
       {/* Terminal column — full width normally, fixed % in split. */}
-      <div style={{ position: 'relative', minWidth: 0, overflow: 'hidden', ...(view === 'split' ? { width: `${termPct}%`, flexShrink: 0 } : { flex: 1 }) }}>
+      <div style={{ position: 'relative', minWidth: 0, overflow: 'hidden', ...(isSplit ? { width: `${termPct}%`, flexShrink: 0 } : { flex: 1 }) }}>
       <div
         ref={containerRef}
         className="terminal-pane"
@@ -1456,8 +1480,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       )}
       </div>{/* /terminal column */}
 
-      {/* Split mode: resizable divider + the file browser on the right. */}
-      {view === 'split' && (
+      {/* The other half of a split: the file browser, or the embedded browser.
+          One divider and one stored width for both, because it is the same
+          question — how much of the pane is not the terminal. */}
+      {isSplit && (
         <>
           <div
             onMouseDown={startSplitDrag}
@@ -1465,22 +1491,32 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
           />
           <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
-            <FilesPane
-              sessionId={sessionId}
-              openFileRef={openFileRef}
-              onFileSelect={() => setFilesHighlightLine(null)}
-              highlightLine={filesHighlightLine}
-            />
+            {view === 'split' ? (
+              <FilesPane
+                sessionId={sessionId}
+                openFileRef={openFileRef}
+                onFileSelect={() => setFilesHighlightLine(null)}
+                highlightLine={filesHighlightLine}
+                onPreviewFile={(path: string) => {
+                  setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                  setView('split-preview');
+                }}
+              />
+            ) : (
+              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} />
+            )}
           </div>
         </>
       )}
       </div>{/* /terminal+split row */}
 
-      {/* Unified Git view — Working tree / Files / Git log, sharing one sub-
-          switcher. Scoped to this pane's session; mounted on demand. */}
-      {view !== 'terminal' && view !== 'split' && (
+      {/* Git takes the whole pane: a diff is wide, and reading one is its own
+          activity rather than something you do while typing. Files and the
+          browser used to live in this group too and no longer do — they are
+          only ever shown beside the terminal. */}
+      {!showsTerminal(view) && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--card)' }}>
-          {/* Sub-switcher — the grouped Working / Files / Git Log tabs, full width. */}
+          {/* Sub-switcher — working tree and log, full width. */}
           <div
             style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid var(--border)', background: 'var(--secondary)', flexShrink: 0 }}
             onClick={(e) => e.stopPropagation()}
@@ -1488,9 +1524,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
             <div style={{ display: 'flex', width: '100%', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
               {([
                 { id: 'working', icon: <Diff size={11} />,       label: 'Working tree' },
-                { id: 'files',   icon: <FolderOpen size={11} />, label: 'Files' },
                 { id: 'log',     icon: <ScrollText size={11} />, label: 'Git log' },
-                { id: 'preview', icon: <Globe size={11} />,      label: 'Preview' },
               ] as const).map(({ id, icon, label }) => (
                 <button
                   key={id}
@@ -1500,7 +1534,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
                     flex: 1, fontSize: 11, padding: '4px 9px',
                     background: view === id ? 'var(--primary)' : 'none',
                     color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
-                    border: 'none', borderRight: id !== 'preview' ? '1px solid var(--border)' : 'none',
+                    border: 'none', borderRight: id !== 'log' ? '1px solid var(--border)' : 'none',
                     cursor: 'pointer',
                   }}
                 >
@@ -1516,24 +1550,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
               <GitDiffPane
                 sessionId={sessionId}
                 mode={view === 'log' ? 'log' : 'head'}
-                onOpenFile={(path: string) => { setView('files'); setTimeout(() => openFileRef.current?.(path), 60); }}
+                onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
               />
             )}
-            {view === 'files' && (
-              <FilesPane
-                sessionId={sessionId}
-                openFileRef={openFileRef}
-                onFileSelect={() => setFilesHighlightLine(null)}
-                highlightLine={filesHighlightLine}
-                onPreviewFile={(path: string) => {
-                  setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
-                  setView('preview');
-                }}
-              />
-            )}
-            {view === 'preview' && (
-              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} />
-            )}
+
           </div>
         </div>
       )}

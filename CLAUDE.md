@@ -671,11 +671,38 @@ prints something.** Unread now means an agent finished a turn, or the app rang
 the bell. A pane with no reporter in it is quiet, which is the same trade the
 busy flag already made (see `isSessionBusy`).
 
-## A browser in the pane
+## What a pane can show
 
-The **Preview** tab sits beside Working tree / Files / Git log and shows what
-the work produces: a dev server, or an `.html` file from the tree. Not a real
-browser and not pretending to be — no tabs, no history, no cookies, no login.
+Four states, and the switcher only offers those four:
+
+| state | shows |
+|---|---|
+| `terminal` | the terminal, alone |
+| `split` | terminal **+ files** |
+| `split-preview` | terminal **+ the browser** |
+| `working` / `log` | git, full pane |
+
+**Files and the browser are never shown alone.** Reading a file or watching a
+dev server is something you do *while* working in the terminal, and a pane that
+gave its whole width to a file tree had hidden the thing the pane is for. Git is
+the deliberate exception and takes the pane: a diff is wide, and reading one is
+its own activity rather than an accompaniment to typing.
+
+So there is no `files` or `preview` in `PaneView`. A pane persisted in either
+(they existed before this) opens in the split it means — see `readPaneView`,
+which is also where the older `diff` → `working` migration lives. `showsTerminal()`
+is the single predicate for "xterm has a size right now"; three separate
+`view !== 'terminal' && view !== 'split'` tests drifting apart is exactly how a
+terminal ends up unfitted with its last row clipped.
+
+Both splits share one divider and one stored width, because it is one question:
+how much of the pane is not the terminal.
+
+### The browser half
+
+It shows what the work produces: a dev server, or an `.html` file from the
+tree. Not a real browser and not pretending to be — no tabs, no history, no
+cookies, no login.
 
 A page arrives one of two ways, and the difference is worth keeping straight:
 
