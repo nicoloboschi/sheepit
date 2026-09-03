@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import useStore from '../store'
-import type { Session } from '../store'
+import useStore, { assignFields, pensInField, UNSORTED_FIELD_ID } from '../store'
+import type { Session, Workspace } from '../store'
 
-const makeSession = (id: string, name: string, path = '/tmp'): Session => ({
+const makeSession = (id: string, name: string, path = '/tmp', gitRoot?: string): Session => ({
   id,
   name,
   path,
+  gitRoot,
   username: 'test',
   last_activity: Date.now(),
 })
@@ -25,6 +26,9 @@ describe('useStore', () => {
       sessionCurrentInput: {},
       workspaces: {},
       workspaceOrder: [],
+      fields: {},
+      fieldOrder: [],
+      selectedFieldId: null,
       workspaceZooms: {},
       wsStatus: 'connecting',
       sheetOpen: false,
@@ -225,6 +229,150 @@ describe('useStore', () => {
       expect(useStore.getState().workspaces).toBe(before)
     })
   })
+
+// A field is the ground several pens share — one level above a pen, one below
+// the flock. Membership lives on the pen, so there is exactly one list of pens
+// and no second ordering to drift out of step with it.
+describe('fields', () => {
+  const ws = (id: string, cells: string[], fieldId?: string): Workspace =>
+    ({ id, layout: 'single', cells, activeCell: 0, ...(fieldId ? { fieldId } : {}) })
+
+  describe('assignFields', () => {
+    it('puts a pen in the field of the repository it is in', () => {
+      const out = assignFields(
+        { a: ws('a', ['$0']) }, ['a'],
+        { $0: makeSession('$0', 'x', '/Users/x/dev/hindsight-wt1', '/Users/x/dev/hindsight') },
+        {}, [],
+      )
+      expect(out.workspaces.a!.fieldId).toBe('fld:/Users/x/dev/hindsight')
+      expect(out.fields['fld:/Users/x/dev/hindsight']!.name).toBe('hindsight')
+      expect(out.fieldOrder).toEqual(['fld:/Users/x/dev/hindsight'])
+    })
+
+    // The whole reason it keys on gitRoot: the server documents it as the git
+    // *common* dir, so worktrees of one repo share it.
+    it('gathers the worktrees of one repo into one field', () => {
+      const out = assignFields(
+        { a: ws('a', ['$0']), b: ws('b', ['$1']) }, ['a', 'b'],
+        {
+          $0: makeSession('$0', 'x', '/Users/x/dev/hindsight-wt1', '/Users/x/dev/hindsight'),
+          $1: makeSession('$1', 'y', '/Users/x/dev/hindsight-wt9', '/Users/x/dev/hindsight'),
+        },
+        {}, [],
+      )
+      expect(out.fieldOrder).toHaveLength(1)
+      expect(out.workspaces.a!.fieldId).toBe(out.workspaces.b!.fieldId)
+    })
+
+    it('falls back to the directory, then to Unsorted', () => {
+      const out = assignFields(
+        { a: ws('a', ['$0']), b: ws('b', ['$1']) }, ['a', 'b'],
+        { $0: makeSession('$0', 'x', '/Users/x/scratch'), $1: { ...makeSession('$1', 'y'), path: undefined } },
+        {}, [],
+      )
+      expect(out.fields[out.workspaces.a!.fieldId!]!.name).toBe('scratch')
+      expect(out.workspaces.b!.fieldId).toBe(UNSORTED_FIELD_ID)
+    })
+
+    // It runs every two seconds against every pen, so an unchanged sweep has
+    // to be free — the caller compares by identity and skips the write.
+    it('returns what it was given when there is nothing to place', () => {
+      const workspaces = { a: ws('a', ['$0'], 'fld:x') }
+      const fields = { 'fld:x': { id: 'fld:x', name: 'x' } }
+      const out = assignFields(workspaces, ['a'], {}, fields, ['fld:x'])
+      expect(out.workspaces).toBe(workspaces)
+      expect(out.fields).toBe(fields)
+    })
+
+    it('is the migration: a pen saved before fields existed just has none', () => {
+      const out = assignFields(
+        { a: ws('a', ['$0']) }, ['a'],
+        { $0: makeSession('$0', 'x', '/Users/x/dev/memlake', '/Users/x/dev/memlake') },
+        {}, [],
+      )
+      expect(out.workspaces.a!.fieldId).toBeTruthy()
+    })
+  })
+
+  describe('membership and order', () => {
+    beforeEach(() => {
+      useStore.setState({
+        workspaces: { a: ws('a', ['$0'], 'f1'), b: ws('b', ['$1'], 'f1'), c: ws('c', ['$2'], 'f2') },
+        workspaceOrder: ['a', 'b', 'c'],
+        fields: { f1: { id: 'f1', name: 'one' }, f2: { id: 'f2', name: 'two' } },
+        fieldOrder: ['f1', 'f2'],
+      })
+    })
+
+    it('reads the pens of a field off the one list of pens', () => {
+      const { workspaces, workspaceOrder } = useStore.getState()
+      expect(pensInField('f1', workspaces, workspaceOrder)).toEqual(['a', 'b'])
+      expect(pensInField('f2', workspaces, workspaceOrder)).toEqual(['c'])
+    })
+
+    // Membership and position are one move: a pen that changed field but not
+    // position would draw itself among pens it no longer belongs to.
+    it('moves a pen into a field and positions it there', () => {
+      useStore.getState().moveWorkspaceToField('a', 'f2')
+      const { workspaces, workspaceOrder } = useStore.getState()
+      expect(workspaces.a!.fieldId).toBe('f2')
+      expect(pensInField('f2', workspaces, workspaceOrder)).toEqual(['c', 'a'])
+      expect(pensInField('f1', workspaces, workspaceOrder)).toEqual(['b'])
+    })
+
+    it('drops a pen in front of the one it was dropped on', () => {
+      useStore.getState().moveWorkspaceToField('a', 'f2', 'c')
+      const { workspaces, workspaceOrder } = useStore.getState()
+      expect(pensInField('f2', workspaces, workspaceOrder)).toEqual(['a', 'c'])
+    })
+
+    // Deleting a field must never close a pen. Losing work to a tidy-up is
+    // the worst possible reading of "delete".
+    it('sends the pens of a deleted field to Unsorted', () => {
+      useStore.getState().deleteField('f1')
+      const { workspaces, workspaceOrder, fields, fieldOrder } = useStore.getState()
+      expect(fields.f1).toBeUndefined()
+      expect(fieldOrder).not.toContain('f1')
+      expect(Object.keys(workspaces).sort()).toEqual(['a', 'b', 'c'])
+      expect(pensInField(UNSORTED_FIELD_ID, workspaces, workspaceOrder)).toEqual(['a', 'b'])
+    })
+
+    it('renames and folds a field', () => {
+      useStore.getState().renameField('f1', '  hindsight  ')
+      expect(useStore.getState().fields.f1!.name).toBe('hindsight')
+
+      useStore.getState().toggleFieldCollapsed('f1')
+      expect(useStore.getState().fields.f1!.collapsed).toBe(true)
+    })
+
+    it('reorders fields', () => {
+      useStore.getState().reorderFields('f2', 0)
+      expect(useStore.getState().fieldOrder).toEqual(['f2', 'f1'])
+    })
+
+    // The sidebar shows one field, so the active pen must be in it: a jump
+    // from ⌘K or from a bleating sheep can cross fields, and landing on a pane
+    // the list is not showing is how you lose track of where you are.
+    it('pulls the sidebar to the field of the pen you select', () => {
+      useStore.getState().setSelectedField('f1')
+      useStore.getState().setCurrentSessionId('c')
+      expect(useStore.getState().selectedFieldId).toBe('f2')
+    })
+
+    it('leaves the selection alone when the pen is already in view', () => {
+      useStore.getState().setSelectedField('f1')
+      useStore.getState().setCurrentSessionId('b')
+      expect(useStore.getState().selectedFieldId).toBe('f1')
+    })
+
+    // ⌘↑/↓ has to walk the screen, not the store's own order.
+    it('navigates in field order, not workspace order', () => {
+      useStore.setState({ currentSessionId: 'c' })
+      useStore.getState().reorderFields('f2', 0)   // f2 (c) now above f1 (a, b)
+      expect(useStore.getState().navigateSession('down')).toMatchObject({ workspaceId: 'a' })
+    })
+  })
+})
 
   describe('unseen tracking', () => {
     it('marks and clears unseen', () => {

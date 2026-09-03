@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -42,6 +42,7 @@ import GrokIcon from './GrokIcon';
 import CursorIcon from './CursorIcon';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from './ui/dropdown-menu';
 
 
@@ -555,6 +556,8 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
   const cellCount = cellIds.length;
   const isFull = cellCount >= 4;
   const collapsed = !!workspace.collapsed;
+  const fields = useStore(s => s.fields);
+  const fieldOrder = useStore(s => s.fieldOrder);
 
   // Always-visible workspace name: the user-set title, else the last path
   // segment of the first pane's cwd, else its session name.
@@ -681,6 +684,29 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
             <Pencil size={13} />
             Rename
           </DropdownMenuItem>
+          {/* Moving a pen between fields lives here because the sidebar shows
+              one field at a time — there is no other field on screen to drag
+              it onto. */}
+          {fieldOrder.length > 1 && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger style={{ fontSize: 12, cursor: 'pointer' }}>
+                <FolderTree size={13} />
+                Move to field
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {fieldOrder.filter(fid => fields[fid]).map(fid => (
+                  <DropdownMenuItem
+                    key={fid}
+                    disabled={fid === workspace.fieldId}
+                    onClick={() => useStore.getState().moveWorkspaceToField(workspace.id, fid)}
+                    style={{ fontSize: 12, cursor: 'pointer' }}
+                  >
+                    {fields[fid]!.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
           <DropdownMenuItem
             onClick={handleDelete}
             className="text-destructive focus:text-destructive"

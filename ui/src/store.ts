@@ -96,7 +96,31 @@ export interface Workspace {
    *  display choice about the list, not about the pen: the workspace still
    *  opens in the main area exactly as before. */
   collapsed?: boolean;
+  /** The field this pen stands in. Every pen ends up in exactly one; a pen
+   *  without one is assigned its repository's field on the next render (see
+   *  assignFields). */
+  fieldId?: string;
 }
+
+/**
+ * A field: the ground several pens share.
+ *
+ * One level above a pen and one below the flock — with two dozen panes across
+ * eight repositories, "which project is this?" was a question the sidebar
+ * could not answer. Fields are ordered, nameable and foldable; membership
+ * lives on the pen (`Workspace.fieldId`) so there is exactly one list of pens
+ * in the store and no second ordering to keep in step with it.
+ */
+export interface Field {
+  id: string;
+  name: string;
+  /** Folded shut: the header alone, with the tally of what is inside. */
+  collapsed?: boolean;
+}
+
+/** The field a pen with no home lands in. Its id is fixed so it survives a
+ *  reload and never multiplies. */
+export const UNSORTED_FIELD_ID = 'fld:unsorted';
 
 // ── Layout helpers (grid up/downgrade) ──────────────────────────────────────
 
@@ -255,6 +279,24 @@ export interface StoreState {
   renameWorkspace: (workspaceId: string, title: string | undefined) => void;
   toggleWorkspaceCollapsed: (workspaceId: string) => void;
 
+  // ── Fields (groups of pens) ──────────────────────────────────────────────
+  fields: Record<string, Field>;
+  fieldOrder: string[];
+  /** The field the sidebar is showing. One at a time: the list stays as short
+   *  as it was before fields existed, and the selector says which ground you
+   *  are standing on. */
+  selectedFieldId: string | null;
+  setSelectedField: (fieldId: string | null) => void;
+  createField: (name: string) => string;
+  renameField: (fieldId: string, name: string) => void;
+  /** Delete a field. Its pens fall back to Unsorted — a field is a label on
+   *  the ground, and deleting one must never close what stands in it. */
+  deleteField: (fieldId: string) => void;
+  toggleFieldCollapsed: (fieldId: string) => void;
+  reorderFields: (fieldId: string, toIndex: number) => void;
+  /** Move a pen into a field, optionally at a position within it. */
+  moveWorkspaceToField: (workspaceId: string, fieldId: string, beforeWorkspaceId?: string | null) => void;
+
   toggleZen: (sessionId: string) => void;
   exitZen: () => void;
   navigateSession: (direction: 'up' | 'down') => { workspaceId: string; paneIndex?: number } | null;
@@ -276,10 +318,86 @@ export const MAX_FONT_SIZE = 32;
 const WORKSPACES_KEY      = 'sheepit:workspaces';
 const WORKSPACE_ZOOM_KEY  = 'sheepit:workspace-zoom';
 const LAST_WORKSPACE_KEY  = 'sheepit-last-workspace';
+const SELECTED_FIELD_KEY  = 'sheepit:selected-field';
 // Old (legacy) keys — read-only, used for one-shot migration:
 const LEGACY_GRID_KEY     = 'sheepit:term-grid';
 const LEGACY_ZOOM_KEY     = 'sheepit:session-zoom';
 const LEGACY_LAST_KEY     = 'sheepit-last-session';
+
+// ── Fields ──────────────────────────────────────────────────────────────────
+
+/**
+ * Which field a pen belongs to, from the repository it is in.
+ *
+ * `gitRoot` rather than the pane's cwd on purpose: the server documents it as
+ * the git *common* dir, shared across worktrees — so `hindsight-wt1`,
+ * `-wt3` and `-wt9` land in one **hindsight** field, which is the grouping
+ * worth having. A pane outside a repository falls back to its own directory,
+ * and one with neither goes to Unsorted.
+ *
+ * The key IS the id, which makes assignment idempotent: the same repository
+ * always resolves to the same field without a lookup table, across reloads
+ * and across machines.
+ */
+function fieldForSession(session: Session | undefined): { id: string; name: string } {
+  const root = session?.gitRoot || session?.path;
+  if (!root) return { id: UNSORTED_FIELD_ID, name: 'Unsorted' };
+  const name = root.replace(/\/+$/, '').split('/').pop() || 'Unsorted';
+  return { id: `fld:${root}`, name };
+}
+
+/**
+ * Give every pen a field, creating the fields it asks for.
+ *
+ * This runs inside renderSessions — every two seconds, against every pen — so
+ * it returns the objects it was given when nothing needs placing, and the
+ * caller can compare by identity and skip the write.
+ *
+ * It is also the migration: a payload written before fields existed simply has
+ * no `fieldId` on its pens, which is the same case as a pen created a moment
+ * ago, and takes the same path.
+ */
+export function assignFields(
+  workspaces: Record<string, Workspace>,
+  order: string[],
+  sessionMap: Record<string, Session>,
+  fields: Record<string, Field>,
+  fieldOrder: string[],
+): { workspaces: Record<string, Workspace>; fields: Record<string, Field>; fieldOrder: string[] } {
+  let nextWorkspaces = workspaces;
+  let nextFields = fields;
+  let nextOrder = fieldOrder;
+
+  for (const wsId of order) {
+    const ws = workspaces[wsId];
+    if (!ws || (ws.fieldId && (fields[ws.fieldId] || ws.fieldId === UNSORTED_FIELD_ID))) continue;
+
+    const { id, name } = fieldForSession(sessionMap[ws.cells[0] ?? '']);
+    if (nextWorkspaces === workspaces) nextWorkspaces = { ...workspaces };
+    nextWorkspaces[wsId] = { ...ws, fieldId: id };
+
+    if (!nextFields[id]) {
+      if (nextFields === fields) nextFields = { ...fields };
+      nextFields[id] = { id, name };
+    }
+    if (!nextOrder.includes(id)) {
+      if (nextOrder === fieldOrder) nextOrder = [...fieldOrder];
+      nextOrder.push(id);
+    }
+  }
+
+  return { workspaces: nextWorkspaces, fields: nextFields, fieldOrder: nextOrder };
+}
+
+/** The pens standing in a field, in sidebar order.
+ *
+ *  Derived rather than stored: `workspaceOrder` is the only list of pens, so
+ *  there is no second ordering that can drift out of step with it. */
+export function pensInField(
+  fieldId: string, workspaces: Record<string, Workspace>, order: string[],
+): string[] {
+  return order.filter(id => (workspaces[id]?.fieldId ?? UNSORTED_FIELD_ID) === fieldId);
+}
 
 // ── Workspace id generation ─────────────────────────────────────────────────
 function generateWorkspaceId(): string {
@@ -355,6 +473,10 @@ function migrateLegacyWorkspaces(): {
 interface PersistedWorkspaces {
   workspaces: Record<string, Workspace>;
   order: string[];
+  /** Absent in payloads written before fields existed — which is exactly the
+   *  signal assignFields uses to place those pens. */
+  fields?: Record<string, Field>;
+  fieldOrder?: string[];
 }
 
 function loadWorkspacesFromStorage(): PersistedWorkspaces {
@@ -380,9 +502,24 @@ function loadWorkspacesFromStorage(): PersistedWorkspaces {
   return { workspaces: {}, order: [] };
 }
 
-function saveWorkspaces(workspaces: Record<string, Workspace>, order: string[]): void {
+/** Write the sidebar's shape: pens, their order, and the fields they stand in.
+ *
+ *  Fields default to whatever the store currently holds, so the dozens of
+ *  existing `saveWorkspaces(ws, order)` call sites keep working unchanged and
+ *  cannot accidentally persist a stale field list. */
+function saveWorkspaces(
+  workspaces: Record<string, Workspace>,
+  order: string[],
+  fields?: Record<string, Field>,
+  fieldOrder?: string[],
+): void {
   try {
-    preferences.setItem(WORKSPACES_KEY, JSON.stringify({ workspaces, order }));
+    const s = useStore.getState();
+    preferences.setItem(WORKSPACES_KEY, JSON.stringify({
+      workspaces, order,
+      fields: fields ?? s.fields,
+      fieldOrder: fieldOrder ?? s.fieldOrder,
+    }));
   } catch { /* quota */ }
 }
 
@@ -412,6 +549,10 @@ function loadFontSize(): number {
 }
 function saveFontSize(size: number): void {
   try { preferences.setItem(FONT_SIZE_KEY, String(size)); } catch { /* quota */ }
+}
+
+function loadSelectedField(): string | null {
+  try { return preferences.getItem(SELECTED_FIELD_KEY); } catch { return null; }
 }
 
 function loadLastWorkspaceId(): string | null {
@@ -467,6 +608,9 @@ const useStore = create<StoreState>((set, get) => ({
   openPaneMap: {},
   workspaces: _initialWorkspaces.workspaces,
   workspaceOrder: _initialWorkspaces.order,
+  fields: _initialWorkspaces.fields ?? {},
+  fieldOrder: _initialWorkspaces.fieldOrder ?? [],
+  selectedFieldId: loadSelectedField(),
   zenSessionId: null,
   fontSize: loadFontSize(),
   terminalFontFamily: readTerminalFont(),
@@ -582,7 +726,17 @@ const useStore = create<StoreState>((set, get) => ({
     // and `set` invalidates the sidebar, every chip, and every mounted pane's
     // selectors. Measured in the browser, that combination produced periodic
     // 50–124 ms main-thread stalls with the app sitting completely idle.
+    // Every pen gets a field — the repository it is in, created on demand.
+    // Also the migration: a payload written before fields existed has no
+    // fieldId on its pens, which is the same case as a pen created a second
+    // ago and takes the same path.
+    const placed = assignFields(nextWorkspaces, nextWorkspaceOrder, sessionMap, get().fields, get().fieldOrder);
+    const nextFields = placed.fields;
+    const nextFieldOrder = placed.fieldOrder;
+    Object.assign(nextWorkspaces, placed.workspaces);
+
     const prev = get();
+    const fieldsUnchanged = nextFields === prev.fields && nextFieldOrder === prev.fieldOrder;
     const workspacesUnchanged =
       nextWorkspaceOrder.length === prev.workspaceOrder.length &&
       nextWorkspaceOrder.every((id, i) => prev.workspaceOrder[i] === id && prev.workspaces[id] === nextWorkspaces[id]);
@@ -619,11 +773,14 @@ const useStore = create<StoreState>((set, get) => ({
       (seededBusy ??= { ...prev.sessionBusy })[s.id] = s.busy;
     }
 
-    if (workspacesUnchanged && sessionsUnchanged && !seededBusy && nextCurrentId === prev.currentSessionId) return;
+    if (workspacesUnchanged && fieldsUnchanged && sessionsUnchanged && !seededBusy && nextCurrentId === prev.currentSessionId) return;
 
-    if (!workspacesUnchanged) saveWorkspaces(nextWorkspaces, nextWorkspaceOrder);
+    if (!workspacesUnchanged || !fieldsUnchanged) {
+      saveWorkspaces(nextWorkspaces, nextWorkspaceOrder, nextFields, nextFieldOrder);
+    }
     set({
       ...(seededBusy ? { sessionBusy: seededBusy } : {}),
+      ...(fieldsUnchanged ? {} : { fields: nextFields, fieldOrder: nextFieldOrder }),
       sessions: allSorted,
       sessionMap,
       sessionOrder,
@@ -635,6 +792,14 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   setCurrentSessionId(id: string | null) {
+    if (id) {
+      // The sidebar shows one field; the active pen must be in it. A jump from
+      // ⌘K search, from a bleating sheep in the pasture or from ⌘↑/↓ can cross
+      // fields, and landing in a pane the list does not show is how you lose
+      // track of where you are.
+      const field = get().workspaces[id]?.fieldId;
+      if (field && field !== get().selectedFieldId) get().setSelectedField(field);
+    }
     if (id) {
       try { preferences.setItem(LAST_WORKSPACE_KEY, id); } catch { /* quota */ }
       // Clear unseen for every pane in this workspace (plus the id itself as
@@ -1140,6 +1305,118 @@ const useStore = create<StoreState>((set, get) => ({
     return true;
   },
 
+  setSelectedField(fieldId: string | null) {
+    if (get().selectedFieldId === fieldId) return;
+    try {
+      if (fieldId) preferences.setItem(SELECTED_FIELD_KEY, fieldId);
+      else preferences.removeItem(SELECTED_FIELD_KEY);
+    } catch { /* quota */ }
+    set({ selectedFieldId: fieldId });
+  },
+
+  createField(name: string) {
+    const id = `fld:new:${Date.now().toString(36)}`;
+    const s = get();
+    const fields = { ...s.fields, [id]: { id, name: name.trim() || 'Field' } };
+    const fieldOrder = [...s.fieldOrder, id];
+    saveWorkspaces(s.workspaces, s.workspaceOrder, fields, fieldOrder);
+    set({ fields, fieldOrder });
+    return id;
+  },
+
+  renameField(fieldId: string, name: string) {
+    const s = get();
+    const field = s.fields[fieldId];
+    const clean = name.trim();
+    if (!field || !clean || field.name === clean) return;
+    const fields = { ...s.fields, [fieldId]: { ...field, name: clean } };
+    saveWorkspaces(s.workspaces, s.workspaceOrder, fields, s.fieldOrder);
+    set({ fields });
+  },
+
+  /** Delete a field; its pens fall back to Unsorted.
+   *
+   *  A field is a label on the ground, not a container that owns anything —
+   *  deleting one must never close a pen, and losing work to a tidy-up would
+   *  be the worst possible reading of "delete". */
+  deleteField(fieldId: string) {
+    const s = get();
+    if (!s.fields[fieldId] || fieldId === UNSORTED_FIELD_ID) return;
+
+    const fields = { ...s.fields };
+    delete fields[fieldId];
+    const fieldOrder = s.fieldOrder.filter(id => id !== fieldId);
+
+    const orphans = pensInField(fieldId, s.workspaces, s.workspaceOrder);
+    const workspaces = { ...s.workspaces };
+    if (orphans.length > 0) {
+      if (!fields[UNSORTED_FIELD_ID]) {
+        fields[UNSORTED_FIELD_ID] = { id: UNSORTED_FIELD_ID, name: 'Unsorted' };
+        fieldOrder.push(UNSORTED_FIELD_ID);
+      }
+      for (const wsId of orphans) {
+        workspaces[wsId] = { ...workspaces[wsId]!, fieldId: UNSORTED_FIELD_ID };
+      }
+    }
+    saveWorkspaces(workspaces, s.workspaceOrder, fields, fieldOrder);
+    set({ workspaces, fields, fieldOrder });
+  },
+
+  toggleFieldCollapsed(fieldId: string) {
+    const s = get();
+    const field = s.fields[fieldId];
+    if (!field) return;
+    const fields = { ...s.fields, [fieldId]: { ...field, collapsed: !field.collapsed } };
+    saveWorkspaces(s.workspaces, s.workspaceOrder, fields, s.fieldOrder);
+    set({ fields });
+  },
+
+  reorderFields(fieldId: string, toIndex: number) {
+    const s = get();
+    const from = s.fieldOrder.indexOf(fieldId);
+    if (from < 0) return;
+    const fieldOrder = [...s.fieldOrder];
+    fieldOrder.splice(from, 1);
+    fieldOrder.splice(Math.max(0, Math.min(toIndex > from ? toIndex - 1 : toIndex, fieldOrder.length)), 0, fieldId);
+    if (fieldOrder.every((id, i) => id === s.fieldOrder[i])) return;
+    saveWorkspaces(s.workspaces, s.workspaceOrder, s.fields, fieldOrder);
+    set({ fieldOrder });
+  },
+
+  /**
+   * Move a pen into a field.
+   *
+   * Membership and position are one move: `workspaceOrder` is the only list of
+   * pens, and a pen whose field changed but whose position did not would draw
+   * itself among the pens of a field it no longer belongs to. Dropping onto a
+   * field header (no `beforeWorkspaceId`) appends to that field.
+   */
+  moveWorkspaceToField(workspaceId: string, fieldId: string, beforeWorkspaceId?: string | null) {
+    const s = get();
+    const ws = s.workspaces[workspaceId];
+    if (!ws || !s.fields[fieldId]) return;
+
+    const workspaces = { ...s.workspaces, [workspaceId]: { ...ws, fieldId } };
+    const order = s.workspaceOrder.filter(id => id !== workspaceId);
+    const siblings = pensInField(fieldId, workspaces, order);
+    const anchor = beforeWorkspaceId && siblings.includes(beforeWorkspaceId)
+      ? beforeWorkspaceId
+      : siblings[siblings.length - 1] ?? null;
+
+    let at = order.length;
+    if (anchor) {
+      const i = order.indexOf(anchor);
+      // Dropped on a pen: land in front of it. Dropped on the header, or on a
+      // field with nothing in it: land after the last pen already there.
+      at = beforeWorkspaceId && siblings.includes(beforeWorkspaceId) ? i : i + 1;
+    }
+    order.splice(at, 0, workspaceId);
+
+    if (order.every((id, i) => id === s.workspaceOrder[i]) && ws.fieldId === fieldId) return;
+    saveWorkspaces(workspaces, order, s.fields, s.fieldOrder);
+    set({ workspaces, workspaceOrder: order });
+  },
+
   /** Fold a pen down to one line, or open it again. Persisted with the
    *  workspace, so a sidebar you have tidied stays tidy across a reload. */
   toggleWorkspaceCollapsed(workspaceId: string) {
@@ -1170,11 +1447,18 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   navigateSession(direction: 'up' | 'down') {
-    const { currentSessionId, workspaces, workspaceOrder } = get();
-    // Flat list: one entry per pane across all workspaces in sidebar order.
+    const { currentSessionId, workspaces, workspaceOrder, fieldOrder } = get();
+    // Flat list: one entry per pane, in the order the sidebar draws them —
+    // field by field, pens within each. ⌘↑/↓ is for reaching the next pane you
+    // can see, so it has to walk the screen and not the store's own order.
+    // Folded pens and folded fields still count: the shortcut reaches a pane,
+    // it does not tour the sidebar.
     type Entry = { workspaceId: string; paneIndex?: number };
     const flat: Entry[] = [];
-    for (const wsId of workspaceOrder) {
+    const visitOrder = fieldOrder.length
+      ? fieldOrder.flatMap(fid => pensInField(fid, workspaces, workspaceOrder))
+      : workspaceOrder;
+    for (const wsId of visitOrder) {
       const ws = workspaces[wsId];
       if (!ws) continue;
       if (ws.cells.length <= 1) {

@@ -5,8 +5,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { useDroppable, useDndMonitor } from '@dnd-kit/core';
-import useStore, { type Workspace } from '../store';
+import useStore, { pensInField, type Workspace } from '../store';
 import SessionItem from './SessionItem';
+import FieldSelector from './FieldSelector';
 import { ScrollArea } from './ui/scroll-area';
 import { useDndEnabled } from '../dndEnabled';
 
@@ -62,6 +63,8 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
   const workspaces = useStore(s => s.workspaces);
   const workspaceOrder = useStore(s => s.workspaceOrder);
   const currentSessionId = useStore(s => s.currentSessionId);
+  const fields = useStore(s => s.fields);
+  const selectedFieldId = useStore(s => s.selectedFieldId);
   const dndEnabled = useDndEnabled();
 
   // Track whether a *pane* drag is currently in flight in the global
@@ -92,17 +95,28 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
     );
   }
 
-  // Every pen, in workspaceOrder. There is no filter: a three-way toggle sat
-  // above this list, and a sidebar that hides pens is a sidebar you have to
-  // remember the state of — you go looking for a pen that is right there and
-  // conclude it closed. The dot on each pen already says which are stirring,
-  // and ⌘K finds one by what it is doing.
-  const visible = allWs;
+  // Every pen, grouped by the field it stands in. There is no filter: a
+  // three-way toggle sat above this list, and a sidebar that hides pens is a
+  // sidebar you have to remember the state of — you go looking for a pen that
+  // is right there and conclude it closed. Folding is the opposite: you did
+  // it, so you know it is folded, and the tally on the header says what is
+  // inside.
+  // Only the selected field's pens are shown — the sidebar stays the length it
+  // was before fields existed, and FieldSelector says which ground you are on.
+  // A pen whose field has gone missing is shown rather than swallowed: every
+  // pen must stay reachable, which outranks tidiness about where it is drawn.
+  const selected = selectedFieldId && fields[selectedFieldId] ? selectedFieldId : null;
+  const visible = selected
+    ? pensInField(selected, workspaces, workspaceOrder)
+        .map(pid => workspaces[pid])
+        .filter((w): w is Workspace => !!w)
+    : allWs;
   const sortableIds = visible.map(w => w.id);
-  const lastWsId = allWs[allWs.length - 1]?.id ?? null;
+  const lastWsId = visible[visible.length - 1]?.id ?? null;
 
   return (
     <ScrollArea id={id} className="session-list flex-1" style={{ paddingTop: 4 }}>
+      <FieldSelector />
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         {visible.map(ws => (
           <SessionItem

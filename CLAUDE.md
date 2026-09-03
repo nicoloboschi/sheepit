@@ -23,6 +23,7 @@ unless the surrounding code is already being rewritten.
 | **Session** | A backend PTY process. 1:1 with a pane. Identified by `sessionId`. Never use "session" to refer to a sidebar row. |
 | **Pane** | A single terminal rendered in the UI. Backed by exactly one session. Has a `paneIndex` (0-based within its workspace). `TerminalCell` renders one pane. |
 | **Workspace** | A sidebar row. A collection of 1–4 panes sharing a layout, name, and last-command. Identified by `workspaceId`, which equals the `sessionId` of the workspace's **root pane**. |
+| **Field** | A group of workspaces, one per repository. Identified by `fieldId`, which is `fld:<gitRoot>`. Membership lives on the workspace (`Workspace.fieldId`); the sidebar shows one field at a time. |
 | **Root pane** | The pane at `paneIndex === 0`. Its session id *is* the workspace id. Anchor: closing it closes the whole workspace; currently not movable between workspaces. Surfaced in code as `isGridRoot`. |
 | **Layout** | Shape of a workspace: `single` / `horizontal` / `vertical` / `three` / `quad`. Type alias: `GridLayout`. |
 | **Active pane** | The focused pane inside the active workspace. Drives the Git/Files/Search tabs. Stored as `gridStates[workspaceId].activeCell`. |
@@ -38,6 +39,7 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 |---|---|---|
 | **Sheep** | A pane — one terminal, backed by one session | `workspaces[id].cells[n]` |
 | **Pen** | A workspace — one sidebar row, holding 1–4 sheep | `workspaces[id]` |
+| **Field** | A group of pens — one repository's worth | `fields[id]` |
 | **The flock** | Every pen together (the sidebar heading) | `workspaceOrder` |
 | **Bleating** | A sheep waiting for your input | `sessionNeedsAttention[sessionId]` |
 | **Grazing** | A sheep with a command still running | `sessionBusy[sessionId]` |
@@ -79,6 +81,7 @@ explaining a UI string may use either, whichever makes the sentence clearer.
 - ❌ "session" to mean "sidebar row" → ✅ **workspace**
 - ❌ "sheeps" → ✅ **sheep** (its own plural)
 - ❌ "flock" for a single workspace → ✅ **pen** (the flock is all of them)
+- ❌ "flock" for a *group* of pens → ✅ **field** (still: the flock is all of them)
 - ❌ "vipershell" in anything a user reads → ✅ **sheepit**
 
 ### Legacy field names — don't rename, just document
@@ -139,6 +142,46 @@ the gradient fill itself is the light surface there.
 | `--destructive`            | `#E0907B`                                   | terracotta — errors, deletions   |
 | `--bleating`               | `#8EBFA2`                                   | **only** for "wants your input"  |
 | `--grazing`                | `#9CBC7F`                                   | running; also the grass strip    |
+
+### Folding, and the fields pens stand in
+
+A pen **folds** to one line — its name and one dot per sheep
+(`SheepDot.tsx`, `Workspace.collapsed`). The dots are not decoration: the
+reason to look at this list is to see that something wants you, and a fold
+that hid a bleating sheep to save four rows would have saved the wrong four.
+They read the same `sheepStateOf()` as the pane bar and the pasture, so the
+sidebar cannot disagree with the pane. `SheepStatus` is not reused at that
+size — it is a 44×38 animal whose posture and glyph are the whole point, and
+none of that survives at 6px.
+
+A **field** is a group of pens, one per repository. Three rules:
+
+- **Keyed on `gitRoot`, not the cwd.** The server documents `gitRoot` as the
+  git *common* dir, shared across worktrees — so `hindsight-wt1`, `-wt3` and
+  `-wt9` land in one **hindsight** field, which is the grouping worth having.
+  The key *is* the id (`fld:<gitRoot>`), which makes assignment idempotent
+  without a lookup table.
+- **Assignment is the migration.** `assignFields` runs inside
+  `renderSessions`: any pen without a `fieldId` gets one. A pen saved before
+  fields existed is the same case as a pen created a second ago, so there is
+  no migration step to get wrong. It runs every two seconds against every pen,
+  so it returns the objects it was given when there is nothing to place, and
+  the caller skips the write.
+- **Membership lives on the pen.** `workspaceOrder` stays the only list of
+  pens; a field's pens are `pensInField()`, filtered out of it. There is no
+  second ordering to drift.
+
+The sidebar shows **one field at a time**, chosen in `FieldSelector`. This is
+not the All/Active/Favourites toggle coming back: that hid pens by a rule you
+had to remember, while the selector names the field on screen, carries the
+bleating count of every *other* field beside it, and `setCurrentSessionId`
+pulls the sidebar to the field of whatever you select — so a ⌘K jump can never
+land you on a pane the list is not showing. Moving a pen between fields is in
+the pen's own menu, because with one field on screen there is no other field
+to drag it onto.
+
+Deleting a field never closes a pen: its pens fall back to Unsorted. A field
+is a label on the ground.
 
 ### The pasture (sidebar footer)
 
