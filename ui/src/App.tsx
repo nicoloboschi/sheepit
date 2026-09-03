@@ -40,7 +40,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search,
+  Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search, Check,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
@@ -705,6 +705,9 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const sessions         = useStore(s => s.sessions);
   const workspaces       = useStore(s => s.workspaces);
   const workspaceOrder   = useStore(s => s.workspaceOrder);
+  const fields           = useStore(s => s.fields);
+  const fieldOrder       = useStore(s => s.fieldOrder);
+  const selectedFieldId  = useStore(s => s.selectedFieldId);
   const workspaceIdx     = currentSessionId ? workspaceOrder.indexOf(currentSessionId) : -1;
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
 
@@ -911,6 +914,27 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
                 <span className="font-mono text-primary">v{version ?? '\u2026'}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {/* Fields live here as well as in the Pens sheet. The sheet's own
+                  selector is a dropdown inside a dismissible overlay, and on
+                  touch the tap that opens it can land on the backdrop and take
+                  the sheet with it — so on a phone there has to be a way to
+                  change field that does not sit inside something that closes.
+                  Only when there is more than one: a menu offering a choice of
+                  one is a row that does nothing. */}
+              {fieldOrder.filter(id => fields[id]).length > 1 && (
+                <>
+                  {fieldOrder.filter(id => fields[id]).map(id => (
+                    <DropdownMenuItem
+                      key={id}
+                      onClick={() => useStore.getState().setSelectedField(id)}
+                    >
+                      <Check size={14} style={{ opacity: id === selectedFieldId ? 1 : 0 }} />
+                      {fields[id]!.name}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => useStore.getState().setSearchOpen(true)}>
                 <Search size={14} /> Search the flock
               </DropdownMenuItem>
