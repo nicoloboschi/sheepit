@@ -143,7 +143,9 @@ export default function PreviewPane({ sessionId, initialUrl }: {
           onClick={() => { if (target) void load(target, route === 'proxy' ? 'direct' : 'proxy'); }}
         >
           {route === 'proxy' ? <ServerCog size={12} /> : <Globe size={12} />}
-          {route === 'proxy' ? 'via sheepit' : 'direct'}
+          {/* The word goes first when the pane is narrow; the icon carries the
+              same meaning and the tooltip carries the rest. */}
+          <span className="preview-route-label">{route === 'proxy' ? 'via sheepit' : 'direct'}</span>
         </button>
         <a
           className="preview-btn"

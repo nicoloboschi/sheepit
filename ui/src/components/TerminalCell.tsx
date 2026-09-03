@@ -284,6 +284,33 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // Split mode: terminal occupies this % of the pane width, files takes the rest.
   const [termPct, setTermPct] = useState(() => readSplitPct(sessionId) ?? 60);
   const paneBodyRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Which way a split runs. Side by side while there is room for two columns;
+   * stacked below that.
+   *
+   * Half a screen leaves a pane about 460px, and a 60/40 split of that is a
+   * 270px terminal beside a 180px file tree — two things too narrow to read
+   * instead of one you could. Stacked, both halves keep the full width and
+   * give up height, which a terminal minds far less than columns: 80 columns
+   * is a hard floor for wrapped output, while ten rows is merely short.
+   *
+   * Keyed off the PANE, not the window: a quad on a large display is as narrow
+   * as a single pane on a phone, which is the same rule the pane bar's
+   * container queries follow.
+   */
+  const [paneW, setPaneW] = useState(0);
+  useEffect(() => {
+    const el = paneBodyRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setPaneW(el.getBoundingClientRect().width));
+    ro.observe(el);
+    setPaneW(el.getBoundingClientRect().width);
+    return () => ro.disconnect();
+  }, []);
+  /** Below this a split stops being two columns. 560px is where a 60/40 split
+   *  still leaves the narrow half ~220px — about the least a file tree or an
+   *  address bar can use — and the terminal its 80 columns at a small font. */
+  const stacked = paneW > 0 && paneW < 560;
   useEffect(() => { savePaneView(sessionId, view); }, [view, sessionId]);
   // Mirrored into a ref so the create-once terminal effect can read the live
   // theme when answering OSC colour queries.
@@ -963,9 +990,15 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     e.preventDefault(); e.stopPropagation();
     const body = paneBodyRef.current;
     if (!body) return;
+    // One stored percentage for both orientations: it answers one question —
+    // how much of the pane is the terminal — and a stacked split that forgot
+    // the width you set would re-ask it every time the window changed.
+    const vertical = body.getBoundingClientRect().width < 560;
     const onMove = (ev: MouseEvent) => {
       const rect = body.getBoundingClientRect();
-      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      const pct = vertical
+        ? ((ev.clientY - rect.top) / rect.height) * 100
+        : ((ev.clientX - rect.left) / rect.width) * 100;
       setTermPct(Math.min(80, Math.max(20, pct)));
     };
     const onUp = () => {
@@ -978,7 +1011,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       // Persist once on release (not during the drag) to avoid localStorage churn.
       setTermPct(pct => { saveSplitPct(sessionId, pct); return pct; });
     };
-    document.body.style.cursor = 'col-resize';
+    document.body.style.cursor = vertical ? 'row-resize' : 'col-resize';
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }, [sessionId]);
@@ -1389,9 +1422,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
       {/* Terminal view — kept mounted (display toggled) so xterm preserves its
           scrollback while git/files is showing. In 'split' it shares the row
           with the file browser on the right, separated by a resizable handle. */}
-      <div style={{ position: 'absolute', inset: 0, display: showsTerminal(view) ? 'flex' : 'none', flexDirection: 'row' }}>
+      <div style={{ position: 'absolute', inset: 0, display: showsTerminal(view) ? 'flex' : 'none', flexDirection: stacked ? 'column' : 'row' }}>
       {/* Terminal column — full width normally, fixed % in split. */}
-      <div style={{ position: 'relative', minWidth: 0, overflow: 'hidden', ...(isSplit ? { width: `${termPct}%`, flexShrink: 0 } : { flex: 1 }) }}>
+      <div style={{
+        position: 'relative', minWidth: 0, minHeight: 0, overflow: 'hidden',
+        ...(isSplit
+          ? (stacked
+            ? { height: `${termPct}%`, flexShrink: 0 }
+            : { width: `${termPct}%`, flexShrink: 0 })
+          : { flex: 1 }),
+      }}>
       <div
         ref={containerRef}
         className="terminal-pane"
@@ -1487,10 +1527,12 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
         <>
           <div
             onMouseDown={startSplitDrag}
-            className="terminal-resize-handle terminal-resize-handle-horizontal"
-            style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
+            className={`terminal-resize-handle terminal-resize-handle-${stacked ? 'vertical' : 'horizontal'}`}
+            style={stacked
+              ? { height: 6, flexShrink: 0, cursor: 'row-resize', background: 'var(--border)' }
+              : { width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
           />
-          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
             {view === 'split' ? (
               <FilesPane
                 sessionId={sessionId}

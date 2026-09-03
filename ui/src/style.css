@@ -783,6 +783,23 @@
 }
 .preview-port-name { opacity: 0.6; font-size: 9px; }
 .preview-body { position: relative; flex: 1; min-height: 0; }
+
+/* ── A narrow preview ──────────────────────────────────────────────────────
+   Keyed off the pane, not the window: half a screen, or a quad on a large
+   display, leaves the same ~460px — and beside a terminal that is ~200px of
+   browser chrome. Text goes before controls do, and nothing that changes what
+   is loaded ever leaves. */
+.preview-pane { container-type: inline-size; }
+@container (max-width: 340px) {
+  /* The icon says the same thing, and the tooltip says the rest. */
+  .preview-route-label { display: none; }
+  .preview-route { padding: 3px 5px; }
+}
+@container (max-width: 260px) {
+  /* The port chips are the fastest way to load anything here, so they stay and
+     scroll; their process names are what go. */
+  .preview-port-name { display: none; }
+}
 .preview-frame { width: 100%; height: 100%; border: none; background: #fff; }
 .preview-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
