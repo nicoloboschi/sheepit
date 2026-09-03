@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -31,6 +31,7 @@ function compactRelativeTime(ts: number | null | undefined): string {
   return `${Math.floor(h / 24)}d`;
 }
 import SheepStatus, { type SheepState } from './SheepStatus';
+import SheepDots from './SheepDot';
 import PenFence from './PenFence';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
@@ -553,6 +554,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
   const cellIds = workspace.cells;
   const cellCount = cellIds.length;
   const isFull = cellCount >= 4;
+  const collapsed = !!workspace.collapsed;
 
   // Always-visible workspace name: the user-set title, else the last path
   // segment of the first pane's cwd, else its session name.
@@ -618,9 +620,23 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
           />
         ) : (
           <div className="workspace-title-row">
+            <button
+              className="pen-fold"
+              // The chevron folds the pen; the row behind it still selects it.
+              onClick={(e) => { e.stopPropagation(); useStore.getState().toggleWorkspaceCollapsed(workspace.id); }}
+              title={collapsed ? 'Open this pen' : 'Fold this pen'}
+              aria-label={collapsed ? 'Open this pen' : 'Fold this pen'}
+              aria-expanded={!collapsed}
+            >
+              {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            </button>
             <span className="workspace-title" title={displayName}>{displayName}</span>
+            {/* A folded pen gives up its grid, never its state: the reason to
+                look at this list is to see that something wants you. */}
+            {collapsed && <SheepDots cellIds={cellIds} />}
           </div>
         )}
+        {!collapsed && (
         <div className="pen-body">
           <PenFence seed={fenceSeed} active={isActive} />
           <PaneGrid
@@ -637,6 +653,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
           }}
           />
         </div>
+        )}
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

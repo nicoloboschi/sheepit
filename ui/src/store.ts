@@ -92,6 +92,10 @@ export interface Workspace {
   activeCell: number;
   /** User-assigned title for the workspace, shown in the sidebar. */
   title?: string;
+  /** Folded down to one line in the sidebar (name + a dot per sheep). A
+   *  display choice about the list, not about the pen: the workspace still
+   *  opens in the main area exactly as before. */
+  collapsed?: boolean;
 }
 
 // ── Layout helpers (grid up/downgrade) ──────────────────────────────────────
@@ -249,6 +253,7 @@ export interface StoreState {
   /** Set or clear the user-assigned title for a workspace. Pass empty string
    *  or undefined to clear the title. */
   renameWorkspace: (workspaceId: string, title: string | undefined) => void;
+  toggleWorkspaceCollapsed: (workspaceId: string) => void;
 
   toggleZen: (sessionId: string) => void;
   exitZen: () => void;
@@ -1133,6 +1138,17 @@ const useStore = create<StoreState>((set, get) => ({
     saveWorkspaces(s.workspaces, order);
     set({ workspaceOrder: order });
     return true;
+  },
+
+  /** Fold a pen down to one line, or open it again. Persisted with the
+   *  workspace, so a sidebar you have tidied stays tidy across a reload. */
+  toggleWorkspaceCollapsed(workspaceId: string) {
+    const s = get();
+    const ws = s.workspaces[workspaceId];
+    if (!ws) return;
+    const nextWorkspaces = { ...s.workspaces, [workspaceId]: { ...ws, collapsed: !ws.collapsed } };
+    saveWorkspaces(nextWorkspaces, s.workspaceOrder);
+    set({ workspaces: nextWorkspaces });
   },
 
   renameWorkspace(workspaceId: string, title: string | undefined) {

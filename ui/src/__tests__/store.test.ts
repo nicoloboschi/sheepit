@@ -183,6 +183,49 @@ describe('useStore', () => {
     })
   })
 
+  // Folding a pen is a display choice about the sidebar list, not about the
+  // workspace: it must not move, close or reorder anything.
+  describe('folding a pen', () => {
+    beforeEach(() => {
+      useStore.getState().renderSessions([makeSession('$0', 'a'), makeSession('$1', 'b')])
+    })
+
+    it('folds and opens the same pen', () => {
+      const id = useStore.getState().workspaceOrder[0]!
+      expect(useStore.getState().workspaces[id]!.collapsed).toBeFalsy()
+
+      useStore.getState().toggleWorkspaceCollapsed(id)
+      expect(useStore.getState().workspaces[id]!.collapsed).toBe(true)
+
+      useStore.getState().toggleWorkspaceCollapsed(id)
+      expect(useStore.getState().workspaces[id]!.collapsed).toBe(false)
+    })
+
+    it('leaves every other pen, and the order, alone', () => {
+      const [first, second] = useStore.getState().workspaceOrder
+      const before = useStore.getState().workspaces[second!]
+      const orderBefore = useStore.getState().workspaceOrder
+
+      useStore.getState().toggleWorkspaceCollapsed(first!)
+
+      expect(useStore.getState().workspaces[second!]).toBe(before)
+      expect(useStore.getState().workspaceOrder).toEqual(orderBefore)
+    })
+
+    it('keeps the panes and the layout — folding closes nothing', () => {
+      const id = useStore.getState().workspaceOrder[0]!
+      const { cells, layout, activeCell } = useStore.getState().workspaces[id]!
+      useStore.getState().toggleWorkspaceCollapsed(id)
+      expect(useStore.getState().workspaces[id]).toMatchObject({ cells, layout, activeCell })
+    })
+
+    it('does nothing for a workspace that does not exist', () => {
+      const before = useStore.getState().workspaces
+      useStore.getState().toggleWorkspaceCollapsed('nope')
+      expect(useStore.getState().workspaces).toBe(before)
+    })
+  })
+
   describe('unseen tracking', () => {
     it('marks and clears unseen', () => {
       useStore.getState().markUnseen('$0')

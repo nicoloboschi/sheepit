@@ -727,6 +727,53 @@
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 
+/* ── A folded pen ──────────────────────────────────────────────────────────
+   The chevron folds the pen down to its name and one dot per sheep. It keeps
+   the row's own height rather than shrinking it: a list whose rows change
+   height as you fold them is a list you cannot aim at. */
+.pen-fold {
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; flex-shrink: 0;
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--muted-foreground); opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.pen-fold:hover { opacity: 1; color: var(--foreground); }
+.session-item.active .pen-fold { opacity: 0.9; }
+
+/* One dot per sheep, in pane order. Four states, the same four the pane bar
+   and the pasture use — see the glossary's dot table. */
+.sheep-dots {
+  display: flex; align-items: center; gap: 3px;
+  margin-left: auto; padding-left: 6px; flex-shrink: 0;
+}
+.sheep-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  box-sizing: border-box;
+}
+.sheep-dot-bleating {
+  background: var(--bleating);
+  animation: sheep-dot-pulse 1.6s ease-in-out infinite;
+}
+.sheep-dot-grazing { background: var(--grazing); }
+.sheep-dot-unread {
+  background: var(--warning);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 60%, transparent);
+}
+/* Seen, and nothing running: present but empty, which is the whole point —
+   you can count the sheep without any of them asking for anything. */
+.sheep-dot-idle {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+}
+@keyframes sheep-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.82); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheep-dot-bleating { animation: none; }
+}
+
 .session-item {
   position: relative;
   display: flex; align-items: stretch;
