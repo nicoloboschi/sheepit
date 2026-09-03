@@ -3,7 +3,7 @@ import { usePoll } from '../hooks/usePoll';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
-  Search, X, Filter, Upload, FilePlus, FolderPlus,
+  Search, X, Filter, Upload, FilePlus, FolderPlus, Globe,
 } from 'lucide-react';
 // Deferred: the editor stack (CodeMirror + language packs + highlighter) is
 // the single biggest thing in the bundle, and it is not needed until you
@@ -595,9 +595,12 @@ interface FilesPaneProps {
   onFileSelect?: (path: string) => void;
   highlightQuery?: string | null;
   highlightLine?: number | null;
+  /** Hand an .html file to the Preview tab, which renders it instead of
+   *  showing its source. */
+  onPreviewFile?: (path: string) => void;
 }
 
-export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine }: FilesPaneProps) {
+export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile }: FilesPaneProps) {
   const [dir,          setDir]          = useState<string | null>(null);
   const [entries,      setEntries]      = useState<Entry[]>([]);
   const [cwd,          setCwd]          = useState<string | null>(null);
@@ -1041,6 +1044,18 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <button onClick={() => startCreate('folder')} title="New folder" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}>
             <FolderPlus size={15} />
           </button>
+          {/* An .html file has a rendered form, and reading its source is
+              rarely why you opened it. Only shown when there is one selected:
+              a button that does nothing to the current file is noise. */}
+          {onPreviewFile && selectedFile && /\.x?html?$/i.test(selectedFile) && (
+            <button
+              onClick={() => onPreviewFile(selectedFile)}
+              title="Render this file in the Preview tab"
+              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
+            >
+              <Globe size={13} />
+            </button>
+          )}
           <button onClick={() => browse(dir)} disabled={loading} title="Refresh" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--muted-foreground)' : 'var(--muted-foreground)', flexShrink: 0 }}>
             <RefreshCw size={11} />
           </button>

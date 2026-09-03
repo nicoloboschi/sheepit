@@ -1298,6 +1298,9 @@ export class DirectBridge {
   /** Told by index.ts once the real port is known, before start() — sessions
    *  restored during start() bake this into their environment. */
   setListenPort(port: number): void { this.listenPort = port; }
+  /** The port we are actually on. The preview proxy needs it to refuse
+   *  previewing sheepit through sheepit, which nests until something gives. */
+  getListenPort(): number { return this.listenPort; }
 
   getCachedSessions(): Session[] { return this.cachedSessions; }
 

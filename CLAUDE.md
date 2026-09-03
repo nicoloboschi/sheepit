@@ -671,6 +671,60 @@ prints something.** Unread now means an agent finished a turn, or the app rang
 the bell. A pane with no reporter in it is quiet, which is the same trade the
 busy flag already made (see `isSessionBusy`).
 
+## A browser in the pane
+
+The **Preview** tab sits beside Working tree / Files / Git log and shows what
+the work produces: a dev server, or an `.html` file from the tree. Not a real
+browser and not pretending to be — no tabs, no history, no cookies, no login.
+
+A page arrives one of two ways, and the difference is worth keeping straight:
+
+- **direct** — the URL goes into the iframe as-is, so the page keeps its own
+  origin, its cookies and its websockets, and hot reload still works. This is
+  the default and much the better one.
+- **through sheepit** — `/api/preview` fetches it and returns it without the
+  headers that refused the frame.
+
+Which one is **asked, not guessed**: `/api/preview/probe` reports whether
+`x-frame-options` or a CSP `frame-ancestors` would refuse. You cannot detect a
+refusal from inside the page — a blocked iframe still fires `load` — so
+probing is the only honest way to choose. Measured against the real thing:
+vite and `react.dev` frame directly; `google.com` (`SAMEORIGIN`) and
+`github.com` (`deny`) do not.
+
+**Sub-resources.** Proxied HTML gets a `<base href>` so images, CSS and scripts
+load **directly from the origin server** and only the top document is proxied —
+that one line is what makes a naive proxy render at all. A **loopback** target
+is the exception: its own paths are rewritten back through `/api/preview`,
+because the browser asking may be a phone, and a phone's `127.0.0.1` is the
+phone.
+
+### It is an open proxy, deliberately
+
+`/api/preview` will fetch any http(s) URL, so anything that can reach sheepit
+can browse through this machine, including hosts only this machine can see.
+That was a considered choice, not an oversight. Three things keep it bounded,
+and all three are load-bearing:
+
+- **Nothing is fetched that was not asked for.** Direct is tried first, and the
+  proxy is used only when the probe says framing is refused or the user clicks
+  "via sheepit". Nothing here follows links on its own.
+- **Proxied and local-file HTML is sandboxed** — `allow-scripts allow-forms
+  allow-popups allow-modals`, deliberately *without* `allow-same-origin`. This
+  is the one that matters. Proxied bytes are served from sheepit's own origin,
+  so without the sandbox a proxied page's scripts would sit inside that origin
+  and could call `/api/*`. An opaque origin removes it. A direct iframe needs
+  no sandbox — it is already cross-origin — and sandboxing it would break the
+  page for nothing.
+- **`parsePreviewUrl` refuses the rest**: anything that is not http(s) (`file:`
+  would read the disk through the server) and sheepit's own port, which would
+  nest the proxy inside itself until something gave up.
+
+`/api/fs/raw` gained `?as=html` for the same view, and it is narrow on purpose:
+only a `.html` extension, only with the flag, and only ever rendered in the
+sandboxed frame. Everything else still comes back as `text/plain`, which is
+what the file viewer wants.
+
 ## The PTY proxy — keep it empty
 
 `src/pty-daemon.ts` holds every session's PTY master fd. That single fact sets

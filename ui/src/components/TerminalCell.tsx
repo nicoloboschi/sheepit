@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, FolderOpen, ScrollText } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, FolderOpen, ScrollText, Globe } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
 import GitDiffPane from './GitDiffPane';
 import FilesPane from './FilesPane';
+import PreviewPane from './PreviewPane';
 import { TERMINAL_THEMES } from '../theme';
 import type { AppTheme } from '../theme';
 
@@ -92,13 +93,13 @@ interface WebglLike { dispose(): void }
 // Unified per-pane view: terminal, the working-tree diff, the file browser, or
 // the git log. ('working' replaces the old 'diff'; 'branch'/'commits' are gone.)
 // 'split' = terminal on the left + the file browser on the right (resizable).
-export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log';
+export type PaneView = 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 function readPaneView(sid: string): PaneView | undefined {
   try {
     const raw = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}')[sid];
     if (raw === 'diff') return 'working'; // migrate legacy persisted value
-    return (['terminal', 'split', 'working', 'files', 'log'] as const).includes(raw) ? raw : undefined;
+    return (['terminal', 'split', 'working', 'files', 'log', 'preview'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 function savePaneView(sid: string, view: PaneView): void {
@@ -243,6 +244,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   // saved preference reopen on whatever view they were left on.
   const [view, setView] = useState<PaneView>(() => readPaneView(sessionId) ?? 'split');
   const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
+  /** Set when the preview is opened from the file tree; null when it is opened
+   *  from the tab, where the address bar starts empty. */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const openFileRef = useRef<((path: string) => void) | null>(null);
   // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
   // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
@@ -273,7 +277,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
     if (!isActive) return;
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
-        const order: PaneView[] = ['terminal', 'split', 'working', 'files', 'log'];
+        const order: PaneView[] = ['terminal', 'split', 'working', 'files', 'log', 'preview'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
@@ -1486,6 +1490,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
                 { id: 'working', icon: <Diff size={11} />,       label: 'Working tree' },
                 { id: 'files',   icon: <FolderOpen size={11} />, label: 'Files' },
                 { id: 'log',     icon: <ScrollText size={11} />, label: 'Git log' },
+                { id: 'preview', icon: <Globe size={11} />,      label: 'Preview' },
               ] as const).map(({ id, icon, label }) => (
                 <button
                   key={id}
@@ -1495,7 +1500,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
                     flex: 1, fontSize: 11, padding: '4px 9px',
                     background: view === id ? 'var(--primary)' : 'none',
                     color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
-                    border: 'none', borderRight: id !== 'log' ? '1px solid var(--border)' : 'none',
+                    border: 'none', borderRight: id !== 'preview' ? '1px solid var(--border)' : 'none',
                     cursor: 'pointer',
                   }}
                 >
@@ -1520,7 +1525,14 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
                 openFileRef={openFileRef}
                 onFileSelect={() => setFilesHighlightLine(null)}
                 highlightLine={filesHighlightLine}
+                onPreviewFile={(path: string) => {
+                  setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                  setView('preview');
+                }}
               />
+            )}
+            {view === 'preview' && (
+              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} />
             )}
           </div>
         </div>

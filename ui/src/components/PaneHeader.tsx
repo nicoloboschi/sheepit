@@ -32,8 +32,8 @@ interface PaneHeaderProps {
   onClose: () => void;
   /** Per-pane view switch. When provided, the header shows a terminal/git/files
    *  toggle that controls what this pane renders below its status bar. */
-  view?: 'terminal' | 'split' | 'working' | 'files' | 'log';
-  onViewChange?: (view: 'terminal' | 'split' | 'working' | 'files' | 'log') => void;
+  view?: 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview';
+  onViewChange?: (view: 'terminal' | 'split' | 'working' | 'files' | 'log' | 'preview') => void;
 }
 
 
