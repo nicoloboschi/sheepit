@@ -71,6 +71,42 @@ interface GitStatusValue {
 }
 // Shorter than the client's 5s poll, so nothing is staler than it already was.
 const gitStatus = makeCoalescer<GitStatusValue | null>(2000);
+/** Does something on this port answer HTTP?
+ *
+ *  A machine has dozens of listeners and almost none of them are web servers —
+ *  sccache, adb, a database, the odd kubectl port-forward. Offering them as
+ *  chips is offering blanks: every one of them loads nothing.
+ *
+ *  The only reliable way to know is to ask, so this makes one bounded request
+ *  and keeps whatever answers. Any HTTP status counts, 401 and 404 included:
+ *  the question is whether something speaks HTTP, not whether it likes being
+ *  asked. Cached, because the panel re-asks whenever it is opened and a port
+ *  does not change what it is between two clicks.
+ *
+ *  It does send a GET to ports nobody asked about, which is the cost of
+ *  filtering them at all; a non-HTTP service reads it as junk and closes. */
+const httpPorts = makeCoalescer<boolean>(15_000);
+
+/** Long enough for a local server that is busy, short enough that a dozen of
+ *  them in parallel do not make the chips arrive late. A port that accepts the
+ *  connection and never answers is exactly what this bounds. */
+const PORT_PROBE_MS = 500;
+
+async function speaksHttp(port: number): Promise<boolean> {
+  return coalesced(httpPorts, String(port), async () => {
+    try {
+      await fetch(`http://127.0.0.1:${port}/`, {
+        signal: AbortSignal.timeout(PORT_PROBE_MS),
+        headers: { 'user-agent': 'sheepit-preview' },
+      });
+      return true;
+    } catch {
+      // Refused, timed out, or answered something that is not HTTP.
+      return false;
+    }
+  });
+}
+
 // `gh pr view` is a live GitHub API round-trip (~900ms) and burns rate limit.
 // Just under the client's 30s poll, so each cycle still refreshes once.
 const githubPr = makeCoalescer<unknown>(25_000);
@@ -1540,12 +1576,28 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           const key = `${pid}:${port}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          // Not sheepit's own port: previewing it nests the proxy inside
+          // itself, so parsePreviewUrl refuses it — and a chip that cannot
+          // load is the noise this list just finished removing.
+          if (port === bridge.getListenPort()) continue;
           (mine.has(pid) ? own : others).push({ port, pid, name });
         }
       } catch { /* lsof missing or refused — an empty list is the honest answer */ }
 
+      // Only what actually serves. Probed in parallel — a machine has dozens of
+      // listeners, and asking them one at a time would take longer than the
+      // panel is worth waiting for.
+      const web = new Set<number>();
+      await Promise.all(
+        [...new Set([...own, ...others].map(l => l.port))]
+          .map(async port => { if (await speaksHttp(port)) web.add(port); }),
+      );
+
       const byPort = (a: { port: number }, b: { port: number }) => a.port - b.port;
-      res.json({ own: own.sort(byPort), others: others.sort(byPort) });
+      res.json({
+        own: own.filter(l => web.has(l.port)).sort(byPort),
+        others: others.filter(l => web.has(l.port)).sort(byPort),
+      });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

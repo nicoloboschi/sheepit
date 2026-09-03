@@ -698,6 +698,25 @@ terminal ends up unfitted with its last row clipped.
 Both splits share one divider and one stored width, because it is one question:
 how much of the pane is not the terminal.
 
+### Only ports that answer
+
+`/fs/:sessionId/ports` lists what is listening — the pane's own descendants
+first, then the rest of the machine — and then **probes each one and keeps only
+what speaks HTTP**. A machine has dozens of listeners and almost none are web
+servers: on this one it is 58 down to 6, the rest being sccache, adb, kubectl
+port-forwards and a database. Offering those as chips is offering blanks.
+
+Any HTTP status counts, 401 and 404 included: the question is whether something
+speaks HTTP, not whether it likes being asked. The probes run in parallel with a
+500ms bound — a port that accepts a connection and never answers is exactly what
+that bounds — and the answers are cached for 15s, because the panel re-asks
+every time it opens and a port does not change what it is between two clicks.
+
+It does mean sending a GET to ports nobody asked about, which is the price of
+filtering them at all; a non-HTTP service reads it as junk and closes. Sheepit's
+own port is dropped from the list rather than probed: `parsePreviewUrl` refuses
+it, so a chip for it could never load.
+
 ### The browser half
 
 It shows what the work produces: a dev server, or an `.html` file from the
