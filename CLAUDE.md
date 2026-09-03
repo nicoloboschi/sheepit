@@ -23,7 +23,7 @@ unless the surrounding code is already being rewritten.
 | **Session** | A backend PTY process. 1:1 with a pane. Identified by `sessionId`. Never use "session" to refer to a sidebar row. |
 | **Pane** | A single terminal rendered in the UI. Backed by exactly one session. Has a `paneIndex` (0-based within its workspace). `TerminalCell` renders one pane. |
 | **Workspace** | A sidebar row. A collection of 1–4 panes sharing a layout, name, and last-command. Identified by `workspaceId`, which equals the `sessionId` of the workspace's **root pane**. |
-| **Field** | A group of workspaces, one per repository. Identified by `fieldId`, which is `fld:<gitRoot>`. Membership lives on the workspace (`Workspace.fieldId`); the sidebar shows one field at a time. |
+| **Field** | A user-made group of workspaces. Identified by `fieldId`. Membership lives on the workspace (`Workspace.fieldId`); every pen starts in the default field, and the sidebar shows one field at a time. |
 | **Root pane** | The pane at `paneIndex === 0`. Its session id *is* the workspace id. Anchor: closing it closes the whole workspace; currently not movable between workspaces. Surfaced in code as `isGridRoot`. |
 | **Layout** | Shape of a workspace: `single` / `horizontal` / `vertical` / `three` / `quad`. Type alias: `GridLayout`. |
 | **Active pane** | The focused pane inside the active workspace. Drives the Git/Files/Search tabs. Stored as `gridStates[workspaceId].activeCell`. |
@@ -39,7 +39,7 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 |---|---|---|
 | **Sheep** | A pane — one terminal, backed by one session | `workspaces[id].cells[n]` |
 | **Pen** | A workspace — one sidebar row, holding 1–4 sheep | `workspaces[id]` |
-| **Field** | A group of pens — one repository's worth | `fields[id]` |
+| **Field** | A group of pens you put together | `fields[id]` |
 | **The flock** | Every pen together (the sidebar heading) | `workspaceOrder` |
 | **Bleating** | A sheep waiting for your input | `sessionNeedsAttention[sessionId]` |
 | **Grazing** | A sheep with a command still running | `sessionBusy[sessionId]` |
@@ -154,15 +154,18 @@ sidebar cannot disagree with the pane. `SheepStatus` is not reused at that
 size — it is a 44×38 animal whose posture and glyph are the whole point, and
 none of that survives at 6px.
 
-A **field** is a group of pens, one per repository. Three rules:
+A **field** is a group of pens, and grouping is **manual**. Three rules:
 
-- **Keyed on `gitRoot`, not the cwd.** The server documents `gitRoot` as the
-  git *common* dir, shared across worktrees — so `hindsight-wt1`, `-wt3` and
-  `-wt9` land in one **hindsight** field, which is the grouping worth having.
-  The key *is* the id (`fld:<gitRoot>`), which makes assignment idempotent
-  without a lookup table.
+- **One field to begin with**, holding every pen (`DEFAULT_FIELD_ID`). You make
+  more from the selector and move pens across from a pen's own menu. An
+  earlier cut derived a field per repository from each pane's `gitRoot` —
+  clever, and wrong: a grouping nobody asked for is one you then have to undo,
+  and it named a field after whichever checkout happened to hold the git
+  common dir. `dropDerivedFields` clears those on load; the pens are untouched
+  and land in the default field.
 - **Assignment is the migration.** `assignFields` runs inside
-  `renderSessions`: any pen without a `fieldId` gets one. A pen saved before
+  `renderSessions`: any pen without a `fieldId` — never had one, or its field
+  was deleted out from under it — gets the default one. A pen saved before
   fields existed is the same case as a pen created a second ago, so there is
   no migration step to get wrong. It runs every two seconds against every pen,
   so it returns the objects it was given when there is nothing to place, and
@@ -180,8 +183,8 @@ land you on a pane the list is not showing. Moving a pen between fields is in
 the pen's own menu, because with one field on screen there is no other field
 to drag it onto.
 
-Deleting a field never closes a pen: its pens fall back to Unsorted. A field
-is a label on the ground.
+Deleting a field never closes a pen: its pens fall back to the default field.
+A field is a label on the ground.
 
 ### The pasture (sidebar footer)
 

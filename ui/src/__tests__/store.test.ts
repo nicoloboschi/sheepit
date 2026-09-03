@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import useStore, { assignFields, pensInField, UNSORTED_FIELD_ID } from '../store'
+import useStore, { assignFields, pensInField, DEFAULT_FIELD_ID } from '../store'
 import type { Session, Workspace } from '../store'
 
 const makeSession = (id: string, name: string, path = '/tmp', gitRoot?: string): Session => ({
@@ -238,58 +238,42 @@ describe('fields', () => {
     ({ id, layout: 'single', cells, activeCell: 0, ...(fieldId ? { fieldId } : {}) })
 
   describe('assignFields', () => {
-    it('puts a pen in the field of the repository it is in', () => {
-      const out = assignFields(
-        { a: ws('a', ['$0']) }, ['a'],
-        { $0: makeSession('$0', 'x', '/Users/x/dev/hindsight-wt1', '/Users/x/dev/hindsight') },
-        {}, [],
-      )
-      expect(out.workspaces.a!.fieldId).toBe('fld:/Users/x/dev/hindsight')
-      expect(out.fields['fld:/Users/x/dev/hindsight']!.name).toBe('hindsight')
-      expect(out.fieldOrder).toEqual(['fld:/Users/x/dev/hindsight'])
+    // One field to begin with, holding everything. An earlier cut derived a
+    // field per repository from gitRoot; a grouping you did not ask for is one
+    // you then have to undo.
+    it('puts every pen in one field to start with', () => {
+      const out = assignFields({ a: ws('a', ['$0']), b: ws('b', ['$1']) }, ['a', 'b'], {}, [])
+      expect(out.workspaces.a!.fieldId).toBe(DEFAULT_FIELD_ID)
+      expect(out.workspaces.b!.fieldId).toBe(DEFAULT_FIELD_ID)
+      expect(out.fieldOrder).toEqual([DEFAULT_FIELD_ID])
     })
 
-    // The whole reason it keys on gitRoot: the server documents it as the git
-    // *common* dir, so worktrees of one repo share it.
-    it('gathers the worktrees of one repo into one field', () => {
-      const out = assignFields(
-        { a: ws('a', ['$0']), b: ws('b', ['$1']) }, ['a', 'b'],
-        {
-          $0: makeSession('$0', 'x', '/Users/x/dev/hindsight-wt1', '/Users/x/dev/hindsight'),
-          $1: makeSession('$1', 'y', '/Users/x/dev/hindsight-wt9', '/Users/x/dev/hindsight'),
-        },
-        {}, [],
-      )
-      expect(out.fieldOrder).toHaveLength(1)
-      expect(out.workspaces.a!.fieldId).toBe(out.workspaces.b!.fieldId)
+    it('leaves a pen that already has a field where it is', () => {
+      const fields = { f1: { id: 'f1', name: 'one' } }
+      const out = assignFields({ a: ws('a', ['$0'], 'f1') }, ['a'], fields, ['f1'])
+      expect(out.workspaces.a!.fieldId).toBe('f1')
+      expect(out.fieldOrder).toEqual(['f1'])
     })
 
-    it('falls back to the directory, then to Unsorted', () => {
-      const out = assignFields(
-        { a: ws('a', ['$0']), b: ws('b', ['$1']) }, ['a', 'b'],
-        { $0: makeSession('$0', 'x', '/Users/x/scratch'), $1: { ...makeSession('$1', 'y'), path: undefined } },
-        {}, [],
-      )
-      expect(out.fields[out.workspaces.a!.fieldId!]!.name).toBe('scratch')
-      expect(out.workspaces.b!.fieldId).toBe(UNSORTED_FIELD_ID)
+    // A pen whose field was deleted out from under it is homeless in exactly
+    // the same way as one that never had a field.
+    it('rehomes a pen whose field has gone', () => {
+      const out = assignFields({ a: ws('a', ['$0'], 'deleted') }, ['a'], {}, [])
+      expect(out.workspaces.a!.fieldId).toBe(DEFAULT_FIELD_ID)
     })
 
     // It runs every two seconds against every pen, so an unchanged sweep has
     // to be free — the caller compares by identity and skips the write.
     it('returns what it was given when there is nothing to place', () => {
-      const workspaces = { a: ws('a', ['$0'], 'fld:x') }
-      const fields = { 'fld:x': { id: 'fld:x', name: 'x' } }
-      const out = assignFields(workspaces, ['a'], {}, fields, ['fld:x'])
+      const workspaces = { a: ws('a', ['$0'], 'f1') }
+      const fields = { f1: { id: 'f1', name: 'x' } }
+      const out = assignFields(workspaces, ['a'], fields, ['f1'])
       expect(out.workspaces).toBe(workspaces)
       expect(out.fields).toBe(fields)
     })
 
     it('is the migration: a pen saved before fields existed just has none', () => {
-      const out = assignFields(
-        { a: ws('a', ['$0']) }, ['a'],
-        { $0: makeSession('$0', 'x', '/Users/x/dev/memlake', '/Users/x/dev/memlake') },
-        {}, [],
-      )
+      const out = assignFields({ a: ws('a', ['$0']) }, ['a'], {}, [])
       expect(out.workspaces.a!.fieldId).toBeTruthy()
     })
   })
@@ -328,13 +312,13 @@ describe('fields', () => {
 
     // Deleting a field must never close a pen. Losing work to a tidy-up is
     // the worst possible reading of "delete".
-    it('sends the pens of a deleted field to Unsorted', () => {
+    it('sends the pens of a deleted field to the default one', () => {
       useStore.getState().deleteField('f1')
       const { workspaces, workspaceOrder, fields, fieldOrder } = useStore.getState()
       expect(fields.f1).toBeUndefined()
       expect(fieldOrder).not.toContain('f1')
       expect(Object.keys(workspaces).sort()).toEqual(['a', 'b', 'c'])
-      expect(pensInField(UNSORTED_FIELD_ID, workspaces, workspaceOrder)).toEqual(['a', 'b'])
+      expect(pensInField(DEFAULT_FIELD_ID, workspaces, workspaceOrder)).toEqual(['a', 'b'])
     })
 
     it('renames and folds a field', () => {

@@ -1,10 +1,10 @@
 /**
- * Which field the sidebar is showing.
+ * Which field the sidebar is showing, and where fields are made.
  *
- * Fields group pens by the repository they are in, but stacking every field
- * with its own header just makes the same long list with bands in it. So the
- * sidebar shows **one field at a time** and this says which — the list stays
- * as short as it was before fields existed.
+ * There is one field to begin with, holding every pen. You make more from
+ * here and move pens across from a pen's own menu — nothing is grouped for
+ * you. The sidebar shows one field at a time, so the list stays as short as it
+ * was before fields existed and this says which ground you are on.
  *
  * Hiding pens is the risk, and it is the same one the old All/Active/Favourites
  * toggle failed at: a list that hides things is one you must remember the state
@@ -20,8 +20,9 @@
  * so a ⌘K jump can never land you on a pane the list is not showing.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { ChevronDown, Check, Pencil, Trash2, FolderPlus } from 'lucide-react';
-import useStore, { pensInField, UNSORTED_FIELD_ID } from '../store';
+import useStore, { pensInField, DEFAULT_FIELD_ID } from '../store';
 import { useFlockCounts, plural } from '../flock';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -32,7 +33,7 @@ import {
 function FieldRow({ fieldId, name, selected, onPick }: {
   fieldId: string; name: string; selected: boolean; onPick: () => void;
 }): React.ReactElement {
-  const penIds = useStore(s => pensInField(fieldId, s.workspaces, s.workspaceOrder));
+  const penIds = useStore(useShallow(s => pensInField(fieldId, s.workspaces, s.workspaceOrder)));
   const { pens, bleating } = useFlockCounts(penIds);
   return (
     <DropdownMenuItem onClick={onPick} style={{ fontSize: 12, gap: 8 }}>
@@ -50,9 +51,9 @@ export default function FieldSelector(): React.ReactElement | null {
   const fields = useStore(s => s.fields);
   const fieldOrder = useStore(s => s.fieldOrder);
   const selectedFieldId = useStore(s => s.selectedFieldId);
-  const penIds = useStore(s => (s.selectedFieldId
+  const penIds = useStore(useShallow(s => (s.selectedFieldId
     ? pensInField(s.selectedFieldId, s.workspaces, s.workspaceOrder)
-    : s.workspaceOrder));
+    : s.workspaceOrder)));
   const counts = useFlockCounts(penIds);
   const elsewhere = useFlockCounts();
 
@@ -64,9 +65,9 @@ export default function FieldSelector(): React.ReactElement | null {
   }, [renaming]);
 
   const shown = fieldOrder.filter(id => fields[id]);
-  // Nothing to choose between: one field is just the sidebar, and a selector
-  // that only ever says one thing is a row of pixels doing no work.
-  if (shown.length < 2 && !renaming) return null;
+  // Always shown, even with a single field: it is the only way to make a
+  // second one, and a control that appears once you no longer need it is not
+  // a control.
 
   const current = selectedFieldId ? fields[selectedFieldId] : undefined;
   // A sheep bleating in a field you are not looking at must not be silent.
@@ -138,7 +139,7 @@ export default function FieldSelector(): React.ReactElement | null {
                 <Pencil size={13} /> Rename &ldquo;{current.name}&rdquo;
               </DropdownMenuItem>
             )}
-            {current && current.id !== UNSORTED_FIELD_ID && (
+            {current && current.id !== DEFAULT_FIELD_ID && (
               <DropdownMenuItem
                 onClick={() => {
                   useStore.getState().deleteField(current.id);
@@ -147,8 +148,8 @@ export default function FieldSelector(): React.ReactElement | null {
                 className="text-destructive focus:text-destructive"
                 style={{ fontSize: 12 }}
               >
-                {/* The pens are not deleted with it — they fall back to
-                    Unsorted. A field is a label on the ground. */}
+                {/* The pens are not deleted with it — they fall back to the
+                    default field. A field is a label on the ground. */}
                 <Trash2 size={13} /> Delete field
               </DropdownMenuItem>
             )}

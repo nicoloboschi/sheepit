@@ -118,9 +118,10 @@ export interface Field {
   collapsed?: boolean;
 }
 
-/** The field a pen with no home lands in. Its id is fixed so it survives a
- *  reload and never multiplies. */
-export const UNSORTED_FIELD_ID = 'fld:unsorted';
+/** The field every pen starts in. Its id is fixed so it survives a reload and
+ *  never multiplies. */
+export const DEFAULT_FIELD_ID = 'fld:default';
+export const DEFAULT_FIELD_NAME = 'All pens';
 
 // ── Layout helpers (grid up/downgrade) ──────────────────────────────────────
 
@@ -327,27 +328,14 @@ const LEGACY_LAST_KEY     = 'sheepit-last-session';
 // ── Fields ──────────────────────────────────────────────────────────────────
 
 /**
- * Which field a pen belongs to, from the repository it is in.
+ * Give every pen a field.
  *
- * `gitRoot` rather than the pane's cwd on purpose: the server documents it as
- * the git *common* dir, shared across worktrees — so `hindsight-wt1`,
- * `-wt3` and `-wt9` land in one **hindsight** field, which is the grouping
- * worth having. A pane outside a repository falls back to its own directory,
- * and one with neither goes to Unsorted.
- *
- * The key IS the id, which makes assignment idempotent: the same repository
- * always resolves to the same field without a lookup table, across reloads
- * and across machines.
- */
-function fieldForSession(session: Session | undefined): { id: string; name: string } {
-  const root = session?.gitRoot || session?.path;
-  if (!root) return { id: UNSORTED_FIELD_ID, name: 'Unsorted' };
-  const name = root.replace(/\/+$/, '').split('/').pop() || 'Unsorted';
-  return { id: `fld:${root}`, name };
-}
-
-/**
- * Give every pen a field, creating the fields it asks for.
+ * There is one field to begin with and every pen is in it; you make more when
+ * you want them and move pens across yourself. An earlier cut derived fields
+ * from each pane's `gitRoot`, so worktrees of one repository grouped
+ * themselves — clever, and wrong: a grouping you did not ask for is one you
+ * then have to undo, and it named a field after whichever checkout happened
+ * to hold the git common dir.
  *
  * This runs inside renderSessions — every two seconds, against every pen — so
  * it returns the objects it was given when nothing needs placing, and the
@@ -360,7 +348,6 @@ function fieldForSession(session: Session | undefined): { id: string; name: stri
 export function assignFields(
   workspaces: Record<string, Workspace>,
   order: string[],
-  sessionMap: Record<string, Session>,
   fields: Record<string, Field>,
   fieldOrder: string[],
 ): { workspaces: Record<string, Workspace>; fields: Record<string, Field>; fieldOrder: string[] } {
@@ -368,22 +355,26 @@ export function assignFields(
   let nextFields = fields;
   let nextOrder = fieldOrder;
 
+  const place = (wsId: string, ws: Workspace) => {
+    if (nextWorkspaces === workspaces) nextWorkspaces = { ...workspaces };
+    nextWorkspaces[wsId] = { ...ws, fieldId: DEFAULT_FIELD_ID };
+    if (!nextFields[DEFAULT_FIELD_ID]) {
+      if (nextFields === fields) nextFields = { ...fields };
+      nextFields[DEFAULT_FIELD_ID] = { id: DEFAULT_FIELD_ID, name: DEFAULT_FIELD_NAME };
+    }
+    if (!nextOrder.includes(DEFAULT_FIELD_ID)) {
+      if (nextOrder === fieldOrder) nextOrder = [...fieldOrder];
+      nextOrder.unshift(DEFAULT_FIELD_ID);
+    }
+  };
+
   for (const wsId of order) {
     const ws = workspaces[wsId];
-    if (!ws || (ws.fieldId && (fields[ws.fieldId] || ws.fieldId === UNSORTED_FIELD_ID))) continue;
-
-    const { id, name } = fieldForSession(sessionMap[ws.cells[0] ?? '']);
-    if (nextWorkspaces === workspaces) nextWorkspaces = { ...workspaces };
-    nextWorkspaces[wsId] = { ...ws, fieldId: id };
-
-    if (!nextFields[id]) {
-      if (nextFields === fields) nextFields = { ...fields };
-      nextFields[id] = { id, name };
-    }
-    if (!nextOrder.includes(id)) {
-      if (nextOrder === fieldOrder) nextOrder = [...fieldOrder];
-      nextOrder.push(id);
-    }
+    if (!ws) continue;
+    // A pen whose field was deleted out from under it is homeless in exactly
+    // the same way as one that never had a field.
+    if (ws.fieldId && (fields[ws.fieldId] || ws.fieldId === DEFAULT_FIELD_ID)) continue;
+    place(wsId, ws);
   }
 
   return { workspaces: nextWorkspaces, fields: nextFields, fieldOrder: nextOrder };
@@ -396,7 +387,7 @@ export function assignFields(
 export function pensInField(
   fieldId: string, workspaces: Record<string, Workspace>, order: string[],
 ): string[] {
-  return order.filter(id => (workspaces[id]?.fieldId ?? UNSORTED_FIELD_ID) === fieldId);
+  return order.filter(id => (workspaces[id]?.fieldId ?? DEFAULT_FIELD_ID) === fieldId);
 }
 
 // ── Workspace id generation ─────────────────────────────────────────────────
@@ -479,13 +470,39 @@ interface PersistedWorkspaces {
   fieldOrder?: string[];
 }
 
+/**
+ * Drop fields that an earlier build derived from each pane's `gitRoot`.
+ *
+ * Those were never asked for — the feature that made them has been removed —
+ * and leaving them behind means opening the sidebar to a grouping you did not
+ * choose and have to undo by hand. Their pens are untouched: cleared of a
+ * field, they are placed in the default one by assignFields, which is the
+ * state a fresh install has.
+ */
+function dropDerivedFields(p: PersistedWorkspaces): PersistedWorkspaces {
+  const derived = Object.keys(p.fields ?? {}).filter(id => id.startsWith('fld:/') || id === 'fld:unsorted');
+  if (derived.length === 0) return p;
+
+  const fields = { ...(p.fields ?? {}) };
+  for (const id of derived) delete fields[id];
+  const gone = new Set(derived);
+  const workspaces = { ...p.workspaces };
+  for (const [wsId, ws] of Object.entries(workspaces)) {
+    if (ws.fieldId && gone.has(ws.fieldId)) workspaces[wsId] = { ...ws, fieldId: undefined };
+  }
+  return {
+    ...p, workspaces, fields,
+    fieldOrder: (p.fieldOrder ?? []).filter(id => !gone.has(id)),
+  };
+}
+
 function loadWorkspacesFromStorage(): PersistedWorkspaces {
   // Prefer the new key. If absent, run the one-shot legacy migration.
   try {
     const raw = preferences.getItem(WORKSPACES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as PersistedWorkspaces;
-      if (parsed?.workspaces && Array.isArray(parsed?.order)) return parsed;
+      if (parsed?.workspaces && Array.isArray(parsed?.order)) return dropDerivedFields(parsed);
     }
   } catch { /* fall through to migration */ }
 
@@ -726,11 +743,11 @@ const useStore = create<StoreState>((set, get) => ({
     // and `set` invalidates the sidebar, every chip, and every mounted pane's
     // selectors. Measured in the browser, that combination produced periodic
     // 50–124 ms main-thread stalls with the app sitting completely idle.
-    // Every pen gets a field — the repository it is in, created on demand.
-    // Also the migration: a payload written before fields existed has no
-    // fieldId on its pens, which is the same case as a pen created a second
-    // ago and takes the same path.
-    const placed = assignFields(nextWorkspaces, nextWorkspaceOrder, sessionMap, get().fields, get().fieldOrder);
+    // Every pen gets a field. One to begin with, holding all of them; you
+    // make more and move pens across yourself. Also the migration: a payload
+    // written before fields existed has no fieldId on its pens, which is the
+    // same case as a pen created a second ago and takes the same path.
+    const placed = assignFields(nextWorkspaces, nextWorkspaceOrder, get().fields, get().fieldOrder);
     const nextFields = placed.fields;
     const nextFieldOrder = placed.fieldOrder;
     Object.assign(nextWorkspaces, placed.workspaces);
@@ -1341,7 +1358,7 @@ const useStore = create<StoreState>((set, get) => ({
    *  be the worst possible reading of "delete". */
   deleteField(fieldId: string) {
     const s = get();
-    if (!s.fields[fieldId] || fieldId === UNSORTED_FIELD_ID) return;
+    if (!s.fields[fieldId] || fieldId === DEFAULT_FIELD_ID) return;
 
     const fields = { ...s.fields };
     delete fields[fieldId];
@@ -1350,12 +1367,12 @@ const useStore = create<StoreState>((set, get) => ({
     const orphans = pensInField(fieldId, s.workspaces, s.workspaceOrder);
     const workspaces = { ...s.workspaces };
     if (orphans.length > 0) {
-      if (!fields[UNSORTED_FIELD_ID]) {
-        fields[UNSORTED_FIELD_ID] = { id: UNSORTED_FIELD_ID, name: 'Unsorted' };
-        fieldOrder.push(UNSORTED_FIELD_ID);
+      if (!fields[DEFAULT_FIELD_ID]) {
+        fields[DEFAULT_FIELD_ID] = { id: DEFAULT_FIELD_ID, name: DEFAULT_FIELD_NAME };
+        fieldOrder.unshift(DEFAULT_FIELD_ID);
       }
       for (const wsId of orphans) {
-        workspaces[wsId] = { ...workspaces[wsId]!, fieldId: UNSORTED_FIELD_ID };
+        workspaces[wsId] = { ...workspaces[wsId]!, fieldId: DEFAULT_FIELD_ID };
       }
     }
     saveWorkspaces(workspaces, s.workspaceOrder, fields, fieldOrder);
