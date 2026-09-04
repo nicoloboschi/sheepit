@@ -396,7 +396,14 @@ alone on screen there is no neighbour to keep it off.
 A name is written once and read a hundred times, at a glance, in a list of
 twenty panes. Two things follow, and both are enforced in `ai.ts`.
 
-**The agent's own title comes first.** Claude Code writes an `ai-title` row
+A pane cleared with `/clear` is called `-` until its agent titles it again.
+Not the directory's name, which is what it used to be: the pane bar already
+carries the cwd under the title, so that said the same thing twice and read as
+a name someone had chosen. `looksLikeAssignedName` claims the dash explicitly —
+it cannot pass the charset, having no letter to lead with, and without the
+claim every cleared pane would freeze on it at the next restart.
+
+**The agent's own title is the name.** Claude Code writes an `ai-title` row
 into its transcript every turn, and it is a better name than anything we can
 derive: written by the agent doing the work, from the whole conversation rather
 than three exchanges, and free. It named a pane `Litellm-sdk bedrock support`
@@ -407,19 +414,22 @@ a transcript runs to hundreds of megabytes. **Codex writes no title at all**
 fall through to the namer below; a null here is the normal case for half the
 flock, not a failure.
 
+There is no model call here any more. There used to be one per pane per
+sweep — three exchanges, a prompt with six rules in it, a one-shot `claude -p`
+or `codex exec` — and it was paying a model to do worse what the transcript
+already said. The prompt, the provider setting and the CLI command went with
+it; what is left to configure is whether to take the title and how often to
+look.
+
 Its case is kept — the title is Sentence case on purpose — which is why
 `NAME_CHARSET` accepts capitals. That widening also un-freezes the pre-rule
 names (`check PR 1251 CI`), and its cost is deliberate: a short name typed by
 hand is now claimable too, so the namer may replace it. The shape test is the
 only ownership signal there is after a restart.
 
-**It is named after the subject, from the last three exchanges.** The bridge
-keeps `MAX_TURN_HISTORY` exchanges per session (`appendAgentTurn`, persisted as
-`turns`) and the namer sends all of them, oldest first, older ones trimmed
-harder. One turn was not enough: the newest is usually a follow-up — "now do
-the same for codex", "check that log" — which on its own reads as a different
-task, so a session that spent an hour on one subject got renamed after
-whatever was asked last.
+The reported turns (`appendAgentTurn`, persisted as `turns`) are still kept —
+⌘K searches them and the hook trace shows them — but nothing names a pane from
+them any more.
 
 **It never contains an identifier.** No PR or issue numbers, no `#123`, no
 ticket keys, no uuids or commit hashes — a uuid is 36 characters you cannot

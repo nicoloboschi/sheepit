@@ -199,6 +199,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         sessionId={sid}
         gridId={workspaceId}
         paneIndex={index}
+        isQuad={layout === 'quad'}
         isActive={activeCell === index}
         onActivate={() => setActiveCell(index)}
         onClose={() => closePane(index)}

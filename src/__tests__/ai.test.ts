@@ -1,28 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, readAgentTitle, clearedSessionName, CLEARED_SESSION_NAME } from '../ai.js';
+import { isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, readAgentTitle, CLEARED_SESSION_NAME } from '../ai.js';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-
-describe('AI naming CLI isolation', () => {
-  it('runs Claude Code in safe mode without slash commands', () => {
-    const invocation = buildNamerInvocation('claude-code', 'name this session');
-    expect(invocation.command).toBe('claude');
-    expect(invocation.args).toEqual([
-      '-p', '--safe-mode', '--disable-slash-commands', '--model', 'haiku',
-      '--verbose', '--output-format', 'json', 'name this session',
-    ]);
-  });
-
-  it('runs Codex ephemerally without user config or rules', () => {
-    const invocation = buildNamerInvocation('codex', 'name this session');
-    expect(invocation.command).toBe('codex');
-    expect(invocation.args).toEqual([
-      'exec', '--ephemeral', '--ignore-user-config', '--ignore-rules',
-      '--skip-git-repo-check', 'name this session',
-    ]);
-  });
-});
 
 describe('rename eligibility', () => {
   const path = '/Users/x/dev/memlake';
@@ -53,34 +33,20 @@ describe('rename eligibility', () => {
   });
 });
 
-// Every cleared pane used to get the same name, and a sidebar with nine rows
-// reading "freshly shorn" says nothing about any of them.
+// A cleared pane has no subject yet, and the pane bar already carries its
+// directory under the title — so it says the honest thing instead of saying
+// the directory twice.
 describe('the name a clear leaves behind', () => {
-  it('is the directory the pane is in', () => {
-    expect(clearedSessionName('/Users/x/dev/memlake4')).toBe('memlake4')
-    expect(clearedSessionName('/Users/x/dev/hindsight-wt9/')).toBe('hindsight-wt9')
+  it('is a dash', () => {
+    expect(CLEARED_SESSION_NAME).toBe('-')
   })
 
-  it('is normalised, so it cannot freeze the pane it names', () => {
-    const name = clearedSessionName('/Users/x/My Project')
-    expect(name).toBe('my project')
-    expect(looksLikeAssignedName(name)).toBe(true)
-  })
-
-  it('falls back when the directory yields nothing usable', () => {
-    expect(clearedSessionName(undefined)).toBe(CLEARED_SESSION_NAME)
-    expect(clearedSessionName('/')).toBe(CLEARED_SESSION_NAME)
-    expect(clearedSessionName('/Users/x/123')).toBe(CLEARED_SESSION_NAME)
-  })
-
-  // Whichever of the two it is, the namer has to be able to rename it later:
-  // a default name qualifies on its own, and anything else only because the
-  // service claimed it.
-  it('leaves the pane renameable', () => {
-    const path = '/Users/x/dev/memlake4'
-    const name = clearedSessionName(path)
-    expect(isRenameable(name, path, undefined)).toBe(true)
-    expect(isRenameable(CLEARED_SESSION_NAME, '/', CLEARED_SESSION_NAME)).toBe(true)
+  // The trap this pair exists for: a dash cannot pass the charset — it has no
+  // letter to lead with — so without an explicit claim every cleared pane
+  // would be disowned at the next restart and frozen on the dash for good.
+  it('is claimed by the reader, or every cleared pane freezes', () => {
+    expect(looksLikeAssignedName(CLEARED_SESSION_NAME)).toBe(true)
+    expect(isRenameable(CLEARED_SESSION_NAME, '/Users/x/dev/memlake', CLEARED_SESSION_NAME)).toBe(true)
   })
 })
 

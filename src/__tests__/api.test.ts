@@ -43,8 +43,6 @@ const mockLogBuffer: LogBuffer = {
 
 const mockAI = {
   getConfig: vi.fn().mockReturnValue({
-    aiEnabled: false,
-    aiProvider: 'claude-code',
     autoNaming: false,
     autoNamingIntervalSecs: 30,
   }),
@@ -185,14 +183,13 @@ describe('GET /api/sessions/:id/scrollback', () => {
 })
 
 describe('GET /api/ai/config', () => {
-  it('returns AI config', async () => {
+  // Provider and CLI command are gone with the namer that used them: a pen is
+  // named from the title the agent wrote itself.
+  it('returns the naming config', async () => {
     const res = await fetch(`${baseUrl}/ai/config`)
     expect(res.status).toBe(200)
     const body = await res.json() as Record<string, unknown>
-    expect(body).toHaveProperty('aiEnabled', false)
-    expect(body).toHaveProperty('aiProvider', 'claude-code')
-    expect(body).toHaveProperty('autoNaming', false)
-    expect(body).toHaveProperty('autoNamingIntervalSecs', 30)
+    expect(body).toEqual({ autoNaming: false, autoNamingIntervalSecs: 30 })
   })
 })
 
@@ -201,7 +198,7 @@ describe('POST /api/ai/config', () => {
     const res = await fetch(`${baseUrl}/ai/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aiEnabled: true }),
+      body: JSON.stringify({ autoNaming: true }),
     })
     expect(res.status).toBe(200)
     const body = await res.json() as { ok: boolean }

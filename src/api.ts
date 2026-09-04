@@ -20,7 +20,7 @@ import {
   transcriptScore, transcriptPattern, containsPattern, speakerOf,
   type MatchGroup, type Speaker,
 } from './search.js';
-import { clearedSessionName, isRenameable } from './ai.js';
+import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -673,9 +673,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // Never rename over a name a human chose — `/clear` wipes the agent's
       // context, not the user's intent for what this pane is called.
       const renamed = isRenameable(session.name, session.path, ai.assignedName(id));
-      // The directory's name, not one every cleared pane shares: nine rows
-      // reading "freshly shorn" say nothing about any of them.
-      const cleared = clearedSessionName(session.path);
+      // A dash, not the directory's name: the pane bar already carries the cwd
+      // under the title, and a cleared pane has no subject yet to be named
+      // after. The agent writes one of its own within a turn or two.
+      const cleared = CLEARED_SESSION_NAME;
       if (renamed) {
         ai.noteSessionCleared(id, cleared);
         await bridge.renameSession(id, cleared);
@@ -1784,13 +1785,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     const cfg = ai.getConfig();
 
     ai.saveConfig({
-      aiEnabled: body.aiEnabled !== undefined ? Boolean(body.aiEnabled) : cfg.aiEnabled,
-      aiProvider: typeof body.aiProvider === 'string' && (body.aiProvider === 'claude-code' || body.aiProvider === 'codex')
-        ? body.aiProvider : cfg.aiProvider,
       autoNaming: body.autoNaming !== undefined ? Boolean(body.autoNaming) : cfg.autoNaming,
       autoNamingIntervalSecs: typeof body.autoNamingIntervalSecs === 'number'
         ? body.autoNamingIntervalSecs : cfg.autoNamingIntervalSecs,
-      claudeCommand: typeof body.claudeCommand === 'string' ? body.claudeCommand : cfg.claudeCommand,
     });
 
     ai.restart();

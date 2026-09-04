@@ -236,6 +236,9 @@ interface TerminalCellProps {
   /** This pane's position within the workspace's `cells` array. Needed so
    *  the drag handle and drop target can identify the pane for swap/move. */
   paneIndex: number;
+  /** Quad cells keep terminal + browser side-by-side even though each cell is
+   *  narrow enough to normally trigger the responsive stacked layout. */
+  isQuad: boolean;
   isActive: boolean;
   onActivate: () => void;
   /** Remove this pane from its workspace. If it was the last pane, the
@@ -243,7 +246,7 @@ interface TerminalCellProps {
   onClose: () => void;
 }
 
-export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, onActivate, onClose }: TerminalCellProps) {
+export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isActive, onActivate, onClose }: TerminalCellProps) {
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
@@ -310,7 +313,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, o
   /** Below this a split stops being two columns. 560px is where a 60/40 split
    *  still leaves the narrow half ~220px — about the least a file tree or an
    *  address bar can use — and the terminal its 80 columns at a small font. */
-  const stacked = paneW > 0 && paneW < 560;
+  const stacked = !isQuad && paneW > 0 && paneW < 560;
   useEffect(() => { savePaneView(sessionId, view); }, [view, sessionId]);
   // Mirrored into a ref so the create-once terminal effect can read the live
   // theme when answering OSC colour queries.
