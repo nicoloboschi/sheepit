@@ -396,6 +396,23 @@ alone on screen there is no neighbour to keep it off.
 A name is written once and read a hundred times, at a glance, in a list of
 twenty panes. Two things follow, and both are enforced in `ai.ts`.
 
+**The agent's own title comes first.** Claude Code writes an `ai-title` row
+into its transcript every turn, and it is a better name than anything we can
+derive: written by the agent doing the work, from the whole conversation rather
+than three exchanges, and free. It named a pane `Litellm-sdk bedrock support`
+that our own namer had called `merge`. `readAgentTitle` reads it from the tail
+of the transcript — the rows are one per turn and only the last is current, and
+a transcript runs to hundreds of megabytes. **Codex writes no title at all**
+(`session_meta`, `turn_context`, `response_item`, nothing else), so those panes
+fall through to the namer below; a null here is the normal case for half the
+flock, not a failure.
+
+Its case is kept — the title is Sentence case on purpose — which is why
+`NAME_CHARSET` accepts capitals. That widening also un-freezes the pre-rule
+names (`check PR 1251 CI`), and its cost is deliberate: a short name typed by
+hand is now claimable too, so the namer may replace it. The shape test is the
+only ownership signal there is after a restart.
+
 **It is named after the subject, from the last three exchanges.** The bridge
 keeps `MAX_TURN_HISTORY` exchanges per session (`appendAgentTurn`, persisted as
 `turns`) and the namer sends all of them, oldest first, older ones trimmed
@@ -405,7 +422,9 @@ task, so a session that spent an hour on one subject got renamed after
 whatever was asked last.
 
 **It never contains an identifier.** No PR or issue numbers, no `#123`, no
-ticket keys. A number says nothing about the work and the bar already shows the
+ticket keys, no uuids or commit hashes — a uuid is 36 characters you cannot
+read at a glance, and it reached a live pane (`Recall metrics for org
+81db9954-2fb1-…`) by being one word with no `#` in it. A number says nothing about the work and the bar already shows the
 PR. The prompt asks for this, `normalizeAssignedName` enforces it (stripping
 the labelled form first, so `review pr #3672` becomes `review` and not `review
 pr`), and the PR number is no longer passed in the session context at all —

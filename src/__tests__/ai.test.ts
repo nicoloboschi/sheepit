@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, clearedSessionName, CLEARED_SESSION_NAME } from '../ai.js';
+import { buildNamerInvocation, isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, readAgentTitle, clearedSessionName, CLEARED_SESSION_NAME } from '../ai.js';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('AI naming CLI isolation', () => {
   it('runs Claude Code in safe mode without slash commands', () => {
@@ -116,10 +119,44 @@ describe('assigned-name shape', () => {
     expect(looksLikeAssignedName('merge and deploy dev')).toBe(true)
   })
 
-  it('still refuses names that are plainly a human\'s', () => {
-    expect(looksLikeAssignedName('Do Not Touch This')).toBe(false)
+  // Claude Code's own `ai-title` is a naming source now, and it is written
+  // Sentence case. A reader that refused capitals would disown every name
+  // taken from it — the same freeze, arriving by a new road. It also reclaims
+  // the pre-rule names ("check PR 1251 CI") that had been stuck since the
+  // identifier rule landed.
+  it('claims a Sentence-case title, because it now writes them', () => {
+    expect(looksLikeAssignedName('Litellm-sdk bedrock support')).toBe(true)
+    expect(looksLikeAssignedName('Fields distinction local storage scope')).toBe(true)
+  })
+
+  it('still refuses what it could never have written', () => {
     expect(looksLikeAssignedName('a name with far too many words in it to be ours')).toBe(false)
     expect(looksLikeAssignedName('x'.repeat(61))).toBe(false)
+    expect(looksLikeAssignedName('#3672')).toBe(false)
+    expect(looksLikeAssignedName('')).toBe(false)
+  })
+
+  // An agent title keeps its case; everything else is still lowercased, so the
+  // names our own namer writes stay one house style.
+  it('keeps the case of a title when asked, and strips ids either way', () => {
+    expect(normalizeAssignedName('Litellm-sdk bedrock support', { keepCase: true }))
+      .toBe('Litellm-sdk bedrock support')
+    expect(normalizeAssignedName('Merge PR 1249', { keepCase: true })).toBe('Merge')
+    expect(normalizeAssignedName('Check PR #1251 CI', { keepCase: true })).toBe('Check CI')
+    expect(normalizeAssignedName('Merge And Deploy')).toBe('merge and deploy')
+  })
+
+  // The prompt forbids these too, and an agent title volunteers them: this was
+  // a live pane called "Recall metrics for org 81db9954-2fb1-4012-…". A uuid
+  // is 36 characters you cannot read at a glance, and it slipped through the
+  // rules above by being one word with no `#` in it.
+  it('takes out uuids and commit hashes', () => {
+    expect(normalizeAssignedName('Recall metrics for org 81db9954-2fb1-4012-bab9-977e631c8126', { keepCase: true }))
+      .toBe('Recall metrics for org')
+    expect(normalizeAssignedName('revert a1b2c3d4e5f in the parser')).toBe('revert in the parser')
+    // A word that is only hex letters is a word, not a hash: the rule needs a
+    // digit in it, or "deadbeef" and "decade" would go the same way.
+    expect(normalizeAssignedName('decade of deadbeef cafes')).toBe('decade of deadbeef cafes')
   })
 
   it('normalises every way a name could fall outside the recogniser', () => {
@@ -183,3 +220,55 @@ describe('assigned-name shape', () => {
     }
   })
 })
+
+// Claude Code names its own session and writes it into the transcript every
+// turn. That title is a better name than anything derived from three exchanges
+// and costs no model call, so it is the first thing the namer looks for.
+describe('the agent\'s own title', () => {
+  const write = (lines: string[]): string => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sheepit-title-')), 'transcript.jsonl');
+    writeFileSync(path, lines.join('\n') + '\n', 'utf8');
+    return path;
+  };
+
+  it('reads the last title, not the first', () => {
+    const path = write([
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Early guess' }),
+      JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Litellm-sdk bedrock support' }),
+    ]);
+    expect(readAgentTitle(path)).toBe('Litellm-sdk bedrock support');
+  });
+
+  // Codex writes no title at all: session_meta, turn_context, response_item and
+  // nothing else. Half the flock takes this path, so it is a normal answer.
+  it('says nothing for a transcript with no title in it', () => {
+    const path = write([
+      JSON.stringify({ type: 'session_meta', payload: {} }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'reasoning' } }),
+    ]);
+    expect(readAgentTitle(path)).toBeNull();
+  });
+
+  it('is not fooled by a row that only mentions the words', () => {
+    const path = write([
+      JSON.stringify({ type: 'user', message: { content: 'grep for "ai-title" please' } }),
+    ]);
+    expect(readAgentTitle(path)).toBeNull();
+  });
+
+  it('reads the tail of a transcript far too big to parse whole', () => {
+    const filler = JSON.stringify({ type: 'assistant', message: { content: 'x'.repeat(500) } });
+    const path = write([
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Buried far too early' }),
+      ...Array.from({ length: 3000 }, () => filler),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Fields distinction local storage scope' }),
+      filler,
+    ]);
+    expect(readAgentTitle(path)).toBe('Fields distinction local storage scope');
+  });
+
+  it('has no opinion about a file that is not there', () => {
+    expect(readAgentTitle(join(tmpdir(), 'sheepit-nope', 'missing.jsonl'))).toBeNull();
+  });
+});

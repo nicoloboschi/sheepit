@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, closeSync, fstatSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { configDir } from './paths.js';
@@ -198,7 +198,17 @@ export function stripNameDecoration(raw: string): string {
  * other half — it is what lets the already-frozen sessions be reclaimed rather
  * than merely stopping new ones freezing.
  */
-const NAME_CHARSET = /^[a-z][a-z0-9 ._-]*$/;
+/* Uppercase is in the charset because Claude Code's own `ai-title` is Sentence
+ * case ("Litellm-sdk bedrock support") and that title is now a naming source.
+ * A reader that could not claim it would freeze every pane it named — the
+ * failure this whole contract exists to prevent. It also reclaims the names
+ * older writers produced before the identifier rule, which is why panes called
+ * "check PR 1251 CI" had been stuck since it landed.
+ *
+ * The cost is real and was taken deliberately: a short name typed by hand is
+ * now claimable too, so the namer may replace it. The shape test is the only
+ * ownership signal there is after a restart. */
+const NAME_CHARSET = /^[A-Za-z][A-Za-z0-9 ._-]*$/;
 const MAX_NAME_WORDS = 6;
 const MAX_NAME_LEN = 60;
 
@@ -223,8 +233,9 @@ export function looksLikeAssignedName(raw: string): boolean {
  *  Out-of-charset runs become spaces rather than being deleted, so `feat/foo`
  *  reads as two words instead of one portmanteau. `_` and `.` survive, because
  *  they are usually part of an identifier the user would recognise. */
-export function normalizeAssignedName(raw: string): string | null {
-  let name = stripNameDecoration(raw).toLowerCase()
+export function normalizeAssignedName(raw: string, opts?: { keepCase?: boolean }): string | null {
+  const decorated = stripNameDecoration(raw);
+  let name = (opts?.keepCase ? decorated : decorated.toLowerCase())
     // Identifiers out, before the charset pass turns `#3672` into a bare
     // `3672` that no later rule could tell from a version number. The prompt
     // asks for this too; a name is read a hundred times and written once, so
@@ -235,14 +246,20 @@ export function normalizeAssignedName(raw: string): string | null {
     // freezes its pane — the exact failure this whole contract exists for.
     // The labelled form first: it takes the word with the number, so
     // "review pr #3672" loses both and reads "review" rather than "review pr".
-    .replace(/\b(prs?|pull(?:\s+request)?s?|issues?|tickets?)\b[\s#:_-]*\d+/g, ' ')
+    .replace(/\b(prs?|pull(?:\s+request)?s?|issues?|tickets?)\b[\s#:_-]*\d+/gi, ' ')
     .replace(/#\d+/g, ' ')
-    .replace(/[^a-z0-9 ._-]+/g, ' ')
+    // Uuids and commit hashes, which the prompt also forbids and which an
+    // agent title volunteers: "Recall metrics for org 81db9954-2fb1-…" was a
+    // live pane. A uuid is 36 characters of nothing you can read at a glance,
+    // and it survived the rules above because it is one word and no `#`.
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, ' ')
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b/gi, ' ')
+    .replace(/[^A-Za-z0-9 ._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     // The charset requires a letter first; a name that is only punctuation and
     // digits has nothing to lead with and is rejected below.
-    .replace(/^[^a-z]+/, '')
+    .replace(/^[^A-Za-z]+/, '')
     .trim();
 
   const words = name.split(' ').filter(Boolean).slice(0, MAX_NAME_WORDS);
@@ -252,6 +269,53 @@ export function normalizeAssignedName(raw: string): string | null {
   name = words.join(' ').slice(0, MAX_NAME_LEN).trim();
 
   return looksLikeAssignedName(name) ? name : null;
+}
+
+/**
+ * The title Claude Code gave its own session.
+ *
+ * Claude writes an `ai-title` row into its transcript every turn, and it is a
+ * better name than anything we can derive: it is written by the agent doing
+ * the work, from the whole conversation rather than the last three exchanges,
+ * and it costs no model call of ours. "Litellm-sdk bedrock support" is what it
+ * produced for a pane our own namer had called "merge".
+ *
+ * Codex has no equivalent — its rollouts carry `session_meta`, `turn_context`
+ * and `response_item` and no title anywhere — so those panes still go to the
+ * namer. This returning null is the normal case for half the flock, not a
+ * failure.
+ *
+ * Read from the tail: a transcript runs to hundreds of megabytes, the rows are
+ * one per turn, and only the last one is the current title.
+ */
+export function readAgentTitle(transcriptPath: string): string | null {
+  const TAIL = 256 * 1024;
+  let fd: number | null = null;
+  try {
+    fd = openSync(transcriptPath, 'r');
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, TAIL);
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, size - length);
+    // A tail almost always starts mid-line; that first partial line is dropped
+    // rather than parsed, and it can never be the last title anyway.
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 1; i--) {
+      const line = lines[i]!;
+      if (!line.includes('"ai-title"')) continue;
+      try {
+        const row = JSON.parse(line) as { type?: string; aiTitle?: unknown };
+        if (row.type === 'ai-title' && typeof row.aiTitle === 'string' && row.aiTitle.trim()) {
+          return row.aiTitle.trim();
+        }
+      } catch { /* a row we cannot read is not a title */ }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) try { closeSync(fd); } catch { /* already gone */ }
+  }
 }
 
 export function isRenameable(name: string, path: string | undefined, ownedName: string | undefined): boolean {
@@ -467,6 +531,26 @@ export class AIService {
       // No turn means no name: a plain shell, or an agent without the plugin.
       // Guessing from raw output is what produced the bad names, so declining
       // is the better answer.
+      // The agent's own title first, when it has one. It is better than what
+      // we can derive and free — see readAgentTitle. Only Claude writes one,
+      // so this falls through for Codex and for a plain shell.
+      const transcript = this.bridge!.resolveAgentTranscript(sessionId);
+      const agentTitle = transcript ? readAgentTitle(transcript) : null;
+      if (agentTitle) {
+        // Case is kept: the title is written Sentence case on purpose and it
+        // reads as a title. Identifiers still come out — a PR number says
+        // nothing about the work and the pane bar already shows it.
+        const assigned = normalizeAssignedName(agentTitle, { keepCase: true });
+        if (assigned) {
+          if (this.aiAssignedName.get(sessionId) !== assigned) {
+            await this.bridge!.renameSession(sessionId, assigned);
+            this.aiAssignedName.set(sessionId, assigned);
+            logger.info(`AI naming ${sessionId} → "${assigned}" (agent title)`);
+          }
+          return;
+        }
+      }
+
       const turns = this.bridge!.getAgentTurns(sessionId)
         .filter(t => t.prompt || t.response);
       if (turns.length === 0) {
