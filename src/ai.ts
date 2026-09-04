@@ -205,10 +205,15 @@ export function stripNameDecoration(raw: string): string {
  * older writers produced before the identifier rule, which is why panes called
  * "check PR 1251 CI" had been stuck since it landed.
  *
+ * `#` is here for the reader alone — normalizeAssignedName strips `#123`, so
+ * the writer can never produce one. It is the only way to reclaim the names
+ * written before the identifier rule ("merge pr #1837"), which were otherwise
+ * frozen for good: disowned at every restart, and refused by isRenameable.
+ *
  * The cost is real and was taken deliberately: a short name typed by hand is
  * now claimable too, so the namer may replace it. The shape test is the only
  * ownership signal there is after a restart. */
-const NAME_CHARSET = /^[A-Za-z][A-Za-z0-9 ._-]*$/;
+const NAME_CHARSET = /^[A-Za-z][A-Za-z0-9 ._#-]*$/;
 const MAX_NAME_WORDS = 6;
 const MAX_NAME_LEN = 60;
 
@@ -406,6 +411,19 @@ export class AIService {
     for (const s of sessions) {
       if (looksLikeAssignedName(s.name)) {
         this.aiAssignedName.set(s.id, s.name);
+        // Repair a claimed name on the spot when the agent's own title says
+        // something better. Without this a pane frozen before the identifier
+        // rule stays frozen in practice: the sweep only names a session whose
+        // exchanges have changed, so an idle pane keeps a name like
+        // "merge pr #1837" until someone happens to work in it again.
+        const transcript = this.bridge.resolveAgentTranscript(s.id);
+        const title = transcript ? readAgentTitle(transcript) : null;
+        const better = title && normalizeAssignedName(title, { keepCase: true });
+        if (better && better !== s.name) {
+          this.aiAssignedName.set(s.id, better);
+          await this.bridge.renameSession(s.id, better);
+          logger.info(`AI naming: reclaimed ${s.id} "${s.name}" → "${better}"`);
+        }
       }
       // Panes cleared before a clear left the directory's name behind are
       // still sharing one name between them. They cannot be named from their

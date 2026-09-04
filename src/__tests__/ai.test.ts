@@ -129,6 +129,15 @@ describe('assigned-name shape', () => {
     expect(looksLikeAssignedName('Fields distinction local storage scope')).toBe(true)
   })
 
+  // The reader alone accepts a `#`: the writer strips `#123`, so it can never
+  // produce one. It is the only way back to the names written before the
+  // identifier rule, which were frozen for good — disowned at every restart.
+  it('claims a pre-rule name carrying an identifier', () => {
+    expect(looksLikeAssignedName('merge pr #1837')).toBe(true)
+    expect(looksLikeAssignedName('check PR 1251 CI')).toBe(true)
+    expect(normalizeAssignedName('merge pr #1837')).toBe('merge')
+  })
+
   it('still refuses what it could never have written', () => {
     expect(looksLikeAssignedName('a name with far too many words in it to be ours')).toBe(false)
     expect(looksLikeAssignedName('x'.repeat(61))).toBe(false)
