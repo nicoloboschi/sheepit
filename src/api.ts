@@ -141,6 +141,39 @@ function loadPreferences(): Record<string, string> {
 
 /** Rolling backups of preferences.json, newest first. */
 const PREFERENCES_BACKUPS = 5;
+/** Days of daily snapshots to keep beside them. */
+const PREFERENCES_DAILY_BACKUPS = 14;
+
+/**
+ * One snapshot per day, kept for a fortnight.
+ *
+ * The rolling five are written on every save, and something saves every couple
+ * of seconds, so they only ever hold the last minute or two — by the time
+ * anyone notices a profile has been damaged, all five already hold the damage.
+ * A day-stamped copy is the one that is still standing an hour later. Written
+ * once per day: the first save after midnight is the last good state of the
+ * day before.
+ */
+function snapshotPreferencesDaily(): void {
+  try {
+    if (!existsSync(PREFERENCES_PATH)) return;
+    const dir = nodePath.dirname(PREFERENCES_PATH);
+    const base = nodePath.basename(PREFERENCES_PATH);
+    const today = new Date().toISOString().slice(0, 10);
+    const target = nodePath.join(dir, `${base}.${today}.bak`);
+    if (existsSync(target)) return;
+    copyFileSync(PREFERENCES_PATH, target);
+
+    const daily = readdirSync(dir)
+      .filter(name => name.startsWith(`${base}.`) && /\.\d{4}-\d{2}-\d{2}\.bak$/.test(name))
+      .sort();
+    for (const name of daily.slice(0, Math.max(0, daily.length - PREFERENCES_DAILY_BACKUPS))) {
+      unlinkSync(nodePath.join(dir, name));
+    }
+  } catch {
+    // A failed backup must never block the write itself.
+  }
+}
 
 /**
  * Rotate a copy of the current preferences aside before overwriting.
@@ -152,6 +185,7 @@ const PREFERENCES_BACKUPS = 5;
  * generations makes that mistake undoable.
  */
 function rotatePreferenceBackups(): void {
+  snapshotPreferencesDaily();
   try {
     if (!existsSync(PREFERENCES_PATH)) return;
     for (let i = PREFERENCES_BACKUPS - 1; i >= 1; i--) {
@@ -273,8 +307,18 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     res.json({ values: loadPreferences() });
   });
 
+  /**
+   * Write some preference keys and tell every other client what moved.
+   *
+   * The broadcast is what keeps a second browser from believing the profile it
+   * read when it started. Without it each client edits its own snapshot and
+   * the last one to write wins, which is how the same pen ended up standing in
+   * two different fields in two browsers.
+   */
   router.patch('/preferences', (req, res) => {
-    const supplied = (req.body as { values?: unknown })?.values;
+    const body = req.body as { values?: unknown; origin?: unknown };
+    const supplied = body?.values;
+    const origin = typeof body?.origin === 'string' ? body.origin : undefined;
     if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
       return res.status(400).json({ error: 'Expected a preference values object' });
     }
@@ -289,6 +333,13 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
     try {
       savePreferences(current);
+      // Only the keys that changed: a client merges a patch, and shipping the
+      // whole profile on every keystroke-sized write would be the blob again.
+      bridge.pubsub.publish('__sessions__', {
+        type: 'preferences',
+        values: supplied as Record<string, string>,
+        origin,
+      });
       res.json({ values: current });
     } catch (error) {
       res.status(500).json({ error: String(error) });

@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import useStore, { assignFields, pensInField, DEFAULT_FIELD_ID } from '../store'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import useStore, {
+  assignFields, pensInField, readPersistedWorkspaces, writeWorkspaces, DEFAULT_FIELD_ID,
+} from '../store'
+import { preferences } from '../preferences'
 import type { Session, Workspace } from '../store'
 
 const makeSession = (id: string, name: string, path = '/tmp', gitRoot?: string): Session => ({
@@ -626,5 +629,144 @@ describe('fields', () => {
       expect(next?.workspaceId).toBe(id)
       expect(next?.paneIndex).toBe(1)
     })
+  })
+})
+
+// The sidebar is one preference key per pen, not one blob holding all of them.
+// A blob is written whole from a snapshot read at startup, so two browsers each
+// restated every pen on every save and the last one to write won — which is how
+// a pen came to stand in one field in one browser and another field in the next.
+describe('workspace persistence', () => {
+  const pen = (id: string, fieldId?: string): Workspace =>
+    ({ id, layout: 'single', cells: ['$' + id], activeCell: 0, ...(fieldId ? { fieldId } : {}) })
+
+  const fields = { [DEFAULT_FIELD_ID]: { id: DEFAULT_FIELD_ID, name: 'All pens' } }
+
+  beforeEach(() => {
+    for (const key of preferences.keys('sheepit:')) preferences.removeItem(key)
+    // Clear the snapshot the diff is taken against, too.
+    readPersistedWorkspaces()
+  })
+
+  it('writes one key per pen, plus the flock shape', () => {
+    writeWorkspaces({ a: pen('a'), b: pen('b') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    expect(preferences.keys('sheepit:pen:').sort()).toEqual(['sheepit:pen:a', 'sheepit:pen:b'])
+    expect(JSON.parse(preferences.getItem('sheepit:flock')!).order).toEqual(['a', 'b'])
+  })
+
+  // The whole point: a tab that changes one pen speaks for that pen alone, so a
+  // second tab's idea of every other pen cannot ride along and undo an edit.
+  it('re-sends only the pen that moved', () => {
+    writeWorkspaces({ a: pen('a'), b: pen('b') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    const write = vi.spyOn(preferences, 'setItem')
+    writeWorkspaces({ a: pen('a'), b: pen('b', 'f2') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    expect(write.mock.calls.map(c => c[0])).toEqual(['sheepit:pen:b'])
+    write.mockRestore()
+  })
+
+  it('writes nothing at all when nothing changed', () => {
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID])
+    const write = vi.spyOn(preferences, 'setItem')
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID])
+    expect(write).not.toHaveBeenCalled()
+    write.mockRestore()
+  })
+
+  it('removes the key of a pen that has been closed', () => {
+    writeWorkspaces({ a: pen('a'), b: pen('b') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID])
+    expect(preferences.keys('sheepit:pen:')).toEqual(['sheepit:pen:a'])
+  })
+
+  it('reads back what it wrote', () => {
+    writeWorkspaces({ a: pen('a', 'f2'), b: pen('b') }, ['b', 'a'], fields, [DEFAULT_FIELD_ID])
+    const back = readPersistedWorkspaces()!
+    expect(back.order).toEqual(['b', 'a'])
+    expect(back.workspaces.a!.fieldId).toBe('f2')
+    expect(back.fields).toEqual(fields)
+  })
+
+  // A pen the order has not heard of was made by another client while this list
+  // was being written. Dropping it would lose a sidebar row outright.
+  it('keeps a pen that is missing from the order', () => {
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID])
+    preferences.setItem('sheepit:pen:c', JSON.stringify(pen('c')))
+    const back = readPersistedWorkspaces()!
+    expect(back.order).toEqual(['a', 'c'])
+  })
+
+  it('has nothing to say about a profile with no pens in it', () => {
+    expect(readPersistedWorkspaces()).toBeNull()
+  })
+})
+
+// Two clients can both notice an unclaimed session and both make a pen for it.
+// The whole-blob write used to hide that by erasing one client's pens wholesale;
+// per-pen keys keep both, and the same sheep would stand in the flock twice.
+describe('duplicate pens', () => {
+  const pen = (id: string, cells: string[], layout = 'single'): Workspace =>
+    ({ id, layout: layout as Workspace['layout'], cells, activeCell: 0, fieldId: DEFAULT_FIELD_ID })
+  const fields = { [DEFAULT_FIELD_ID]: { id: DEFAULT_FIELD_ID, name: 'All pens' } }
+
+  beforeEach(() => {
+    for (const key of preferences.keys('sheepit:')) preferences.removeItem(key)
+    readPersistedWorkspaces()
+  })
+
+  // The pen somebody built beats the one the sweep made for them.
+  it('keeps the bigger pen and drops the single that duplicates it', () => {
+    writeWorkspaces({
+      grid: pen('grid', ['s1', 's2'], 'horizontal'),
+      auto1: pen('auto1', ['s1']),
+      auto2: pen('auto2', ['s2']),
+    }, ['auto1', 'auto2', 'grid'], fields, [DEFAULT_FIELD_ID])
+
+    const back = readPersistedWorkspaces()!
+    expect(Object.keys(back.workspaces)).toEqual(['grid'])
+    expect(back.workspaces.grid!.cells).toEqual(['s1', 's2'])
+    expect(back.order).toEqual(['grid'])
+  })
+
+  it('takes the duplicates off the profile instead of re-reading them for ever', () => {
+    writeWorkspaces({
+      grid: pen('grid', ['s1', 's2'], 'horizontal'),
+      auto1: pen('auto1', ['s1']),
+    }, ['auto1', 'grid'], fields, [DEFAULT_FIELD_ID])
+    readPersistedWorkspaces()
+    expect(preferences.keys('sheepit:pen:')).toEqual(['sheepit:pen:grid'])
+  })
+
+  // Ties go to the shared order, so every client discards the same pen without
+  // having to agree on anything else first.
+  it('breaks a tie between two same-sized pens on the order', () => {
+    writeWorkspaces({
+      a: pen('a', ['s1']),
+      b: pen('b', ['s1']),
+    }, ['b', 'a'], fields, [DEFAULT_FIELD_ID])
+    expect(Object.keys(readPersistedWorkspaces()!.workspaces)).toEqual(['b'])
+  })
+
+  // A pen that loses one sheep to a bigger neighbour keeps the rest, its
+  // orientation, and an activeCell that still points inside it.
+  it('trims a pen that overlaps rather than dropping it whole', () => {
+    writeWorkspaces({
+      quad: pen('quad', ['s1', 's2', 's3', 's4'], 'quad'),
+      pair: { ...pen('pair', ['s4', 's5'], 'vertical'), activeCell: 1 },
+    }, ['quad', 'pair'], fields, [DEFAULT_FIELD_ID])
+
+    const back = readPersistedWorkspaces()!
+    expect(back.workspaces.pair!.cells).toEqual(['s5'])
+    expect(back.workspaces.pair!.layout).toBe('single')
+    expect(back.workspaces.pair!.activeCell).toBe(0)
+    expect(back.workspaces.quad!.cells).toHaveLength(4)
+  })
+
+  it('leaves a flock with no duplicates exactly as it found it', () => {
+    writeWorkspaces({ a: pen('a', ['s1']), b: pen('b', ['s2']) }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    const write = vi.spyOn(preferences, 'setItem')
+    const back = readPersistedWorkspaces()!
+    expect(back.order).toEqual(['a', 'b'])
+    expect(write).not.toHaveBeenCalled()
+    write.mockRestore()
   })
 })

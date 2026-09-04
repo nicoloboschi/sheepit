@@ -823,3 +823,62 @@ vipershell any more.
 same prefix before persisting them to the server-side profile. **They must be
 changed together** — the UI's storage calls are proxied through that endpoint,
 so a prefix mismatch silently drops every write.
+
+### One key per pen, and the profile talks back
+
+The profile is shared by every browser looking at this machine, and each one
+holds a copy of it, read once at startup. Two rules keep the copies from
+diverging, and they only work together.
+
+**Writes are disjoint.** The sidebar is `sheepit:pen:<workspaceId>` per pen plus
+a small `sheepit:flock` for the one genuinely shared thing — the order and the
+fields themselves. It was a single `sheepit:workspaces` blob, which meant every
+save restated every pen from a snapshot that could be hours old, so the last
+browser to write replaced the other's work. Something saves every two seconds
+(`renderSessions`), so "last" was arbitrary. That is how one pen stood in two
+different fields in two browsers: membership lives on the pen, and each browser
+kept rewriting the pen with its own idea of it. `writeWorkspaces` diffs against
+what the profile holds and sends only the pens that moved; callers still hand
+over the whole map, and a pen missing from it has its key removed. Splitting the
+old blob is one-shot and runs on load; the blob is left in place as the way
+back, so it is frozen at the cutover and must not be read for anything else.
+
+**The profile tells you when it changes.** `PATCH /api/preferences` publishes
+the patch — the keys, not the profile — on the `__sessions__` channel, and every
+other client merges it. `subscribePreferences` in the store re-reads the pen and
+flock keys the moment one lands. Three things make the merge safe:
+
+- **A tab ignores its own echo**, matched on the `origin` it sent. Applying it
+  would revert a value changed while the request was in flight.
+- **A key with a local write pending or in flight is never overwritten.** Ours
+  is the newer intention. `pending` alone does not cover the window between the
+  send and the response, which is why `inFlight` exists as well.
+- **A reconnect resyncs the whole profile** — values only, never deletions. A
+  broadcast only reaches a connected tab; one that was asleep missed every
+  patch meanwhile. But a resync cannot tell a key someone deleted from a
+  profile that came back short (a half-written file, a server restarting
+  mid-read), and inferring deletion from absence turns one bad answer into
+  "throw away every pen". Deletions arrive as a broadcast, which says so.
+
+**A session belongs to exactly one pen**, and `dedupePens` is what enforces it
+on the way in. Two clients can both notice an unclaimed session in the same
+breath and both make a pen for it — `renderSessions` claims sessions against
+the pens *this* tab knows about, and a pen another tab made a moment ago is not
+one of them. The whole-blob write hid that by erasing the loser's pens
+wholesale; per-pen keys keep both, and the same sheep stands in the flock
+twice. The **bigger pen wins**: a pen holding two, three or four sheep is one
+somebody built, while a single over the same session is what the sweep makes
+automatically. Ties go to the shared order, so every client discards the same
+pen without needing to agree on anything first, and the loser's key is removed
+rather than merely ignored.
+
+The profile is also snapshotted **once a day** (`preferences.json.<date>.bak`,
+a fortnight kept) beside the five rolling backups. The rolling ones are written
+on every save and something saves every couple of seconds, so by the time
+anyone notices a profile has been damaged all five already hold the damage.
+The day-stamped copy is the one still standing an hour later.
+
+Re-reading on a remote change cannot lose a local edit because `preferences` is
+a synchronous mirror — a pen this tab just changed is already in it. If you add
+state that two browsers can both edit, give it its own key. A shared blob is a
+last-writer-wins channel wearing a preference's clothes.

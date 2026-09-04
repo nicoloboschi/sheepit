@@ -7,6 +7,7 @@
  */
 
 import { wsUrl } from './serverUrl';
+import { applyRemotePreferences, resyncPreferences } from './preferences';
 import useStore from './store';
 
 type MessageHandler = (msg: Record<string, unknown>) => void;
@@ -167,6 +168,9 @@ function connect(): void {
       send({ type: 'watch_file', path });
     }
 
+    // Anything written while we were away never reached us as a broadcast.
+    void resyncPreferences();
+
     // Notify global listeners of reconnect
     for (const fn of globalListeners) {
       try { fn({ type: '__ws_open__' }); } catch { /* ignore */ }
@@ -180,6 +184,14 @@ function connect(): void {
 
     const type = msg.type as string;
     const sessionId = msg.session_id as string | undefined;
+
+    // Another client wrote a preference. Merge it before anything else looks
+    // at the profile — this is what keeps two browsers from each editing their
+    // own copy of the pens.
+    if (type === 'preferences') {
+      applyRemotePreferences(msg.values, msg.origin as string | undefined);
+      return;
+    }
 
     // Route session-specific output to session listeners
     if (sessionId && (type === 'output' || type === 'connected')) {

@@ -55,4 +55,9 @@ export type BridgeMessage =
   | { type: 'current_input'; session_id: string; input: string }
   /** The app in the PTY asked for the user's attention (OSC 9) — for coding
    *  agents this is emitted when a turn completes. */
-  | { type: 'attention'; session_id: string; message: string };
+  | { type: 'attention'; session_id: string; message: string }
+  /** Preference keys just written by some client, echoed to all of them so no
+   *  browser goes on editing the profile it read when it started. Carries the
+   *  patch, not the profile, and the `origin` of the tab that wrote it — which
+   *  is how that tab ignores its own echo. */
+  | { type: 'preferences'; values: Record<string, string>; origin?: string };

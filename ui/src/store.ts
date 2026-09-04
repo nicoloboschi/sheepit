@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { notify } from './utils';
 import { applyTheme, readTheme, readTerminalFont, DEFAULT_TERMINAL_FONT, TERMINAL_FONT_KEY, type AppTheme } from './theme';
-import { preferences } from './preferences';
+import { preferences, subscribePreferences } from './preferences';
 
 // ── Core types ──────────────────────────────────────────────────────────────
 
@@ -314,8 +314,30 @@ export const DEFAULT_FONT_SIZE = (): number => 12;
 export const MIN_FONT_SIZE = 8;
 export const MAX_FONT_SIZE = 32;
 
+/** Ids the active-workspace pointer may hold that are not pens. */
+const VIRTUAL_IDS = new Set(['__notes__']);
+
 // ── Storage keys ────────────────────────────────────────────────────────────
-// New (post-refactor) keys:
+/**
+ * One key per pen, plus one small key for the shape of the flock.
+ *
+ * The sidebar used to be a single `sheepit:workspaces` blob. Preferences are
+ * read once into memory at startup and written back whole, so two browsers
+ * each held their own copy of every pen and whichever saved last — and
+ * something saves every couple of seconds — replaced the other's work. That
+ * is how one pen stood in two different fields in two browsers: field
+ * membership lives on the pen, and each browser kept overwriting the pen with
+ * its own idea of it.
+ *
+ * Per-pen keys make the writes disjoint: `saveWorkspaces` sends only the pens
+ * that actually changed, so a stale tab can no longer speak for a pen it never
+ * touched. `sheepit:flock` still carries the one genuinely shared list (the
+ * order, and the fields themselves), which is why the broadcast in
+ * `preferences.ts` matters — it keeps that snapshot fresh instead of stale.
+ */
+const PEN_KEY_PREFIX      = 'sheepit:pen:';
+const FLOCK_KEY           = 'sheepit:flock';
+// Read-only now: the pre-split blob, kept in place as a rollback path.
 const WORKSPACES_KEY      = 'sheepit:workspaces';
 const WORKSPACE_ZOOM_KEY  = 'sheepit:workspace-zoom';
 const LAST_WORKSPACE_KEY  = 'sheepit-last-workspace';
@@ -495,20 +517,151 @@ function dropDerivedFields(p: PersistedWorkspaces): PersistedWorkspaces {
   };
 }
 
-function loadWorkspacesFromStorage(): PersistedWorkspaces {
-  // Prefer the new key. If absent, run the one-shot legacy migration.
+/**
+ * The pens and the flock shape exactly as the profile holds them.
+ *
+ * Writes are diffed against this, which is what makes them disjoint: a pen
+ * whose JSON has not moved is not sent, so this tab only ever speaks for the
+ * pens it actually changed. It is refreshed both when we write and when
+ * another client's write arrives, so it is never our idea of the profile —
+ * it is the profile.
+ */
+let persistedPens: Record<string, string> = {};
+let persistedFlock = '';
+
+/** Read every `sheepit:pen:*` key plus the flock shape, and re-seed the
+ *  snapshot the diff is taken against. Exported for the tests, which drive the
+ *  two halves of this contract — what is written and what is read back —
+ *  directly, since a split that loses a pen loses a sidebar row. */
+export function readPersistedWorkspaces(): PersistedWorkspaces | null {
+  const pens: Record<string, string> = {};
+  const workspaces: Record<string, Workspace> = {};
+  for (const key of preferences.keys(PEN_KEY_PREFIX)) {
+    const raw = preferences.getItem(key);
+    if (!raw) continue;
+    let ws: Workspace | null = null;
+    try { ws = JSON.parse(raw) as Workspace; } catch { continue; }
+    if (!ws?.id || !Array.isArray(ws.cells) || ws.cells.length === 0) continue;
+    pens[ws.id] = raw;
+    workspaces[ws.id] = ws;
+  }
+
+  const rawFlock = preferences.getItem(FLOCK_KEY);
+  // Seed the diff's snapshot before anything can return: it is what the
+  // profile holds, and that is true even when the answer is "nothing".
+  persistedPens = pens;
+  persistedFlock = rawFlock ?? '';
+  if (rawFlock === null && Object.keys(workspaces).length === 0) return null;
+
+  let flock: { order?: string[]; fields?: Record<string, Field>; fieldOrder?: string[] } = {};
+  try { flock = rawFlock ? JSON.parse(rawFlock) : {}; } catch { /* an unreadable shape is no shape */ }
+
+  // The order is the flock's, filtered to the pens that exist — and then any
+  // pen the order has not heard of is appended. That pen is one another client
+  // made while this list was being written; dropping it would lose a sidebar
+  // row rather than merely misplace it.
+  const order = (Array.isArray(flock.order) ? flock.order : []).filter(id => workspaces[id]);
+  const known = new Set(order);
+  for (const id of Object.keys(workspaces)) if (!known.has(id)) order.push(id);
+
+  const deduped = dedupePens(workspaces, order);
+  const result = dropDerivedFields({
+    workspaces: deduped.workspaces, order: deduped.order,
+    fields: flock.fields ?? {},
+    fieldOrder: Array.isArray(flock.fieldOrder) ? flock.fieldOrder : [],
+  });
+  // Take the duplicates off the profile rather than merely ignoring them: they
+  // are otherwise re-read, and re-discarded, by every client for ever.
+  if (deduped.changed) {
+    writeWorkspaces(result.workspaces, result.order, result.fields ?? {}, result.fieldOrder ?? []);
+  }
+  return result;
+}
+
+/**
+ * A session belongs to exactly one pen.
+ *
+ * Two clients can both notice an unclaimed session in the same breath and both
+ * make a pen for it — `renderSessions` claims sessions against the pens *this*
+ * tab knows about, and a pen another tab made a moment ago is not yet one of
+ * them. The old whole-blob write hid that: whichever tab saved last erased the
+ * other's pen along with everything else. Per-pen keys keep both, so the same
+ * sheep shows up twice and the flock appears to double.
+ *
+ * The bigger pen wins. A pen holding two, three or four sheep is one somebody
+ * built on purpose; a single-pane pen over the same session is what the sweep
+ * makes automatically when it thinks nothing has claimed it. Ties go to
+ * whichever comes first in the shared order, so every client discards the same
+ * pen without having to agree on anything else.
+ */
+function dedupePens(
+  workspaces: Record<string, Workspace>,
+  order: string[],
+): { workspaces: Record<string, Workspace>; order: string[]; changed: boolean } {
+  const ranked = [...order].sort((a, b) => {
+    const size = (workspaces[b]?.cells.length ?? 0) - (workspaces[a]?.cells.length ?? 0);
+    return size !== 0 ? size : order.indexOf(a) - order.indexOf(b);
+  });
+
+  const claimed = new Set<string>();
+  const kept: Record<string, Workspace> = {};
+  let changed = false;
+  for (const id of ranked) {
+    const ws = workspaces[id];
+    if (!ws) continue;
+    const cells = ws.cells.filter(cell => !claimed.has(cell));
+    // Losing every sheep to bigger pens is what makes this a duplicate pen and
+    // not merely an overlapping one: there is nothing left to stand in it.
+    if (cells.length === 0) { changed = true; continue; }
+    if (cells.length !== ws.cells.length) changed = true;
+    for (const cell of cells) claimed.add(cell);
+    kept[id] = cells.length === ws.cells.length
+      ? ws
+      // A pen that keeps only some of its sheep keeps its orientation: that is
+      // what downgradeWorkspaceLayout is for. activeCell has to come back
+      // inside the pen, or it points past the end of it.
+      : {
+          ...ws, cells,
+          layout: downgradeWorkspaceLayout(ws.layout, cells.length),
+          activeCell: Math.min(ws.activeCell, cells.length - 1),
+        };
+  }
+
+  // Trimming a pen counts as much as dropping one: both have to be written
+  // back, and identity is what the callers compare to decide there is nothing
+  // to do.
+  return changed
+    ? { workspaces: kept, order: order.filter(id => kept[id]), changed }
+    : { workspaces, order, changed };
+}
+
+/** Split the pre-split `sheepit:workspaces` blob into one key per pen. Runs
+ *  once, the first time this build loads a profile written by the old one. The
+ *  blob is left where it is: it costs nothing and it is the way back. */
+function splitLegacyBlob(): PersistedWorkspaces | null {
   try {
     const raw = preferences.getItem(WORKSPACES_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as PersistedWorkspaces;
-      if (parsed?.workspaces && Array.isArray(parsed?.order)) return dropDerivedFields(parsed);
-    }
-  } catch { /* fall through to migration */ }
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedWorkspaces;
+    if (!parsed?.workspaces || !Array.isArray(parsed?.order)) return null;
+    return dropDerivedFields(parsed);
+  } catch { return null; }
+}
+
+function loadWorkspacesFromStorage(): PersistedWorkspaces {
+  const stored = readPersistedWorkspaces();
+  if (stored) return stored;
+
+  const split = splitLegacyBlob();
+  if (split) {
+    writeWorkspaces(split.workspaces, split.order, split.fields ?? {}, split.fieldOrder ?? []);
+    return split;
+  }
 
   const migrated = migrateLegacyWorkspaces();
   if (migrated) {
     const persisted: PersistedWorkspaces = { workspaces: migrated.workspaces, order: migrated.order };
-    try { preferences.setItem(WORKSPACES_KEY, JSON.stringify(persisted)); } catch { /* quota */ }
+    writeWorkspaces(persisted.workspaces, persisted.order, {}, []);
     try { preferences.setItem(WORKSPACE_ZOOM_KEY, JSON.stringify(migrated.zooms)); } catch { /* quota */ }
     if (migrated.lastWorkspaceId) {
       try { preferences.setItem(LAST_WORKSPACE_KEY, migrated.lastWorkspaceId); } catch { /* quota */ }
@@ -516,6 +669,38 @@ function loadWorkspacesFromStorage(): PersistedWorkspaces {
     return persisted;
   }
   return { workspaces: {}, order: [] };
+}
+
+/**
+ * Write only what moved: one key per changed pen, one for the flock's shape.
+ *
+ * Callers hand over the whole map, as they always have — a pen that is absent
+ * from it has been closed and its key is removed. What they do not do any more
+ * is restate every other pen, which is the whole point: two browsers editing
+ * different pens now write different keys and neither can undo the other.
+ */
+export function writeWorkspaces(
+  workspaces: Record<string, Workspace>,
+  order: string[],
+  fields: Record<string, Field>,
+  fieldOrder: string[],
+): void {
+  for (const [id, ws] of Object.entries(workspaces)) {
+    const json = JSON.stringify(ws);
+    if (persistedPens[id] === json) continue;
+    persistedPens[id] = json;
+    preferences.setItem(PEN_KEY_PREFIX + id, json);
+  }
+  for (const id of Object.keys(persistedPens)) {
+    if (workspaces[id]) continue;
+    delete persistedPens[id];
+    preferences.removeItem(PEN_KEY_PREFIX + id);
+  }
+
+  const flock = JSON.stringify({ order, fields, fieldOrder });
+  if (flock === persistedFlock) return;
+  persistedFlock = flock;
+  preferences.setItem(FLOCK_KEY, flock);
 }
 
 /** Write the sidebar's shape: pens, their order, and the fields they stand in.
@@ -531,11 +716,7 @@ function saveWorkspaces(
 ): void {
   try {
     const s = useStore.getState();
-    preferences.setItem(WORKSPACES_KEY, JSON.stringify({
-      workspaces, order,
-      fields: fields ?? s.fields,
-      fieldOrder: fieldOrder ?? s.fieldOrder,
-    }));
+    writeWorkspaces(workspaces, order, fields ?? s.fields, fieldOrder ?? s.fieldOrder);
   } catch { /* quota */ }
 }
 
@@ -714,7 +895,6 @@ const useStore = create<StoreState>((set, get) => ({
 
     // 3) Reconcile the "active workspace" pointer. If its workspace vanished,
     //    fall back to the first surviving one (or null if nothing left).
-    const VIRTUAL_IDS = new Set(['__notes__']);
     let nextCurrentId = currentSessionId;
     if (nextCurrentId && !VIRTUAL_IDS.has(nextCurrentId) && !nextWorkspaces[nextCurrentId]) {
       nextCurrentId = nextWorkspaceOrder[0] ?? null;
@@ -1530,5 +1710,51 @@ const useStore = create<StoreState>((set, get) => ({
     set({ theme });
   },
 }));
+
+/**
+ * Take in pens another client changed.
+ *
+ * The store is a copy of the profile, and until the profile could speak, that
+ * copy was only ever refreshed by a reload — so a second browser went on
+ * showing (and re-saving) the pens as they were when it started. Now every
+ * write is broadcast, and the pen and flock keys are re-read the moment one
+ * lands.
+ *
+ * Re-reading is safe against our own edits because `preferences` is a
+ * synchronous mirror: a pen this tab just changed is already in it, its own
+ * echo is dropped by origin, and a key with a write still pending is never
+ * overwritten by an incoming one.
+ */
+subscribePreferences(keys => {
+  if (!keys.some(key => key === FLOCK_KEY || key.startsWith(PEN_KEY_PREFIX))) return;
+  const next = readPersistedWorkspaces();
+  if (!next) return;
+
+  const s = useStore.getState();
+  const fields = next.fields ?? {};
+  const fieldOrder = next.fieldOrder ?? [];
+  // The sidebar has to keep standing in a field that exists — the one it was
+  // showing may have been deleted from the other browser.
+  const selectedFieldId = s.selectedFieldId && fields[s.selectedFieldId]
+    ? s.selectedFieldId
+    : fieldOrder[0] ?? null;
+  // The active pen likewise. renderSessions would repair both within two
+  // seconds, but two seconds of pointing at a pen that is gone is two seconds
+  // of an empty main area.
+  const currentSessionId = s.currentSessionId
+    && !VIRTUAL_IDS.has(s.currentSessionId)
+    && !next.workspaces[s.currentSessionId]
+      ? next.order[0] ?? null
+      : s.currentSessionId;
+
+  useStore.setState({
+    workspaces: next.workspaces,
+    workspaceOrder: next.order,
+    fields,
+    fieldOrder,
+    selectedFieldId,
+    currentSessionId,
+  });
+});
 
 export default useStore;
