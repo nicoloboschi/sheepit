@@ -37,6 +37,21 @@ function getConstructor(): RecognitionConstructor | null {
 
 function language(): string { return navigator.language || 'en-US'; }
 
+/** Brave strips Google's speech key from its build and does not fetch the
+ *  on-device pack either, so neither path exists there — worth naming, because
+ *  "unreachable" reads as a broken network and it is not one. */
+function isBrave(): boolean {
+  return Boolean((navigator as Navigator & { brave?: unknown }).brave);
+}
+
+/** The on-device install is a browser component fetch we do not control. In
+ *  Brave it never resolves at all, so it is raced against a clock — a popup
+ *  that says "downloading" forever is worse than one that says it cannot. */
+const INSTALL_TIMEOUT_MS = 12_000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([promise, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
+}
+
 /** 'available' only after the language pack is on disk; asking is cheap, and
  *  it answers 'unavailable' on every browser that never shipped the API. */
 async function onDeviceState(Constructor: RecognitionConstructor): Promise<OnDeviceState> {
@@ -88,7 +103,7 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
     if (state === 'unavailable' || !Constructor.install) return false;
     setStatus('Downloading the speech model…');
     try {
-      await Constructor.install({ langs: [language()], processLocally: true });
+      await withTimeout(Constructor.install({ langs: [language()], processLocally: true }), INSTALL_TIMEOUT_MS);
     } catch {
       // Fall through: the cloud path may still work.
     }
@@ -133,7 +148,9 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
       // one path out.
       cancelledRef.current = true;
       setError(event.error === 'network' && !local
-        ? 'Speech service unreachable — no on-device model for this language'
+        ? (isBrave()
+          ? 'Brave ships no speech engine — open sheepit in Chrome to dictate'
+          : 'Speech service unreachable, and no on-device model for this language')
         : errorMessage(event.error));
     };
     // Stopping is the whole confirmation: what was heard is typed into the
