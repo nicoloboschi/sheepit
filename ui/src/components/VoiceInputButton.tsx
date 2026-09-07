@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Check, Mic, Square, X } from 'lucide-react';
+import { Mic, Square } from 'lucide-react';
 import { sendToTerminal } from '../store';
 
 interface RecognitionResult {
@@ -27,8 +27,10 @@ function getRecognition(): Recognition | null {
 
 export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
   const recognitionRef = useRef<Recognition | null>(null);
+  // What was heard so far. Kept in a ref, not state: the text is typed on `onend`,
+  // which fires after the last `onresult`, and a state read there would be stale.
+  const transcriptRef = useRef('');
   const [listening, setListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   function start() {
@@ -37,42 +39,35 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
     recognition.lang = navigator.language || 'en-US';
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    setTranscript('');
+    transcriptRef.current = '';
     setError(null);
     recognition.onresult = event => {
       let text = '';
       for (let i = 0; i < event.results.length; i++) text += event.results[i]![0]!.transcript;
-      setTranscript(text.trim());
+      transcriptRef.current = text.trim();
     };
-    recognition.onerror = event => { setListening(false); setError(event.error === 'not-allowed' ? 'Microphone permission denied' : 'Voice input failed'); };
-    recognition.onend = () => setListening(false);
+    recognition.onerror = event => {
+      transcriptRef.current = '';
+      setListening(false);
+      setError(event.error === 'not-allowed' ? 'Microphone permission denied' : 'Voice input failed');
+    };
+    // Stopping is the whole confirmation: what was heard is typed into the pane,
+    // as if it had been keyed. Nothing is submitted — the Enter is still yours.
+    recognition.onend = () => {
+      setListening(false);
+      const text = transcriptRef.current.trim();
+      transcriptRef.current = '';
+      if (text) sendToTerminal(sessionId, { type: 'input', data: text });
+    };
     recognitionRef.current = recognition;
     setListening(true);
     recognition.start();
   }
 
-  function stop() { recognitionRef.current?.stop(); setListening(false); }
-  function insert() {
-    if (!transcript.trim()) return;
-    sendToTerminal(sessionId, { type: 'input', data: transcript.trim() });
-    setTranscript('');
-    setError(null);
-  }
+  function stop() { recognitionRef.current?.stop(); }
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-      {transcript && !listening && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3, maxWidth: 260 }}>
-          <input
-            value={transcript}
-            onChange={e => setTranscript(e.target.value)}
-            aria-label="Voice transcript"
-            style={{ width: 180, height: 22, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--ring)', background: 'var(--background)', color: 'var(--foreground)', font: '11px inherit' }}
-          />
-          <button onClick={insert} title="Insert transcript into this sheep" style={{ color: 'var(--success)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><Check size={13} /></button>
-          <button onClick={() => setTranscript('')} title="Discard transcript" style={{ color: 'var(--muted-foreground)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><X size={13} /></button>
-        </div>
-      )}
       {error && <span title={error} style={{ color: 'var(--destructive)', fontSize: 9 }}>mic</span>}
       <button
         onClick={listening ? stop : start}
