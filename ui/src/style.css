@@ -2368,3 +2368,11 @@
 @media (prefers-reduced-motion: reduce) {
   .voice-popup-dot { animation: none; }
 }
+
+/* Transcribing: the mic is closed and the model is working, which is a wait,
+   not a recording — so the dot goes to the brand colour and stops pulsing red
+   at someone whose microphone is already off. */
+.voice-popup-dot-working {
+  background: var(--primary);
+  animation-duration: 1.8s;
+}
