@@ -8,16 +8,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * produces already carries what CDP wants, so it is passed along rather than
  * translated into a private vocabulary and back.
  *
- * Two things this is NOT, and both are deliberate. It is not the preview
- * iframe: that renders natively, costs nothing and is better for a dev server,
- * which is why it is still the default where a page allows framing. And it is
- * not a tab strip — one pane is one page, because the pane is already the unit
- * you arrange things in.
- *
- * It is a *surface*, not a pane: `PreviewPane` owns the address bar for all
- * three routes, so that one bar says where you are whether the page came
- * framed, proxied, or from the browser on the machine. This fills in
- * `commands` so those buttons can drive it.
+ * It is not a tab strip — one pane is one page, because the pane is already
+ * the unit you arrange things in. And it is a *surface*, not a pane:
+ * `PreviewPane` owns the address bar, the history buttons and the port chips,
+ * and this fills in `commands` so they can drive the page.
  */
 
 const MODIFIERS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
@@ -167,7 +161,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     });
     ro.observe(el);
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
-  }, [measure, send]);
+  }, [syncSize]);
 
   /** Nudge the browser to activate this view's window. Needed once, because a
    *  target that has never been activated will not start casting; after that
@@ -234,9 +228,11 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         const { x, y } = pointFrom(e);
         send({
           type: 'input', method: 'Input.dispatchMouseEvent',
-          // Inverted, because a wheel event says how far the *content* moved
-          // and CDP asks how far the wheel turned.
-          params: { type: 'mouseWheel', x, y, deltaX: -e.deltaX, deltaY: -e.deltaY, modifiers: modifierBits(e) },
+          // Passed through, not negated: CDP's mouseWheel uses the same sign
+          // convention as a DOM wheel event — positive deltaY scrolls down in
+          // both. Flipping it here (on the theory that one measures content and
+          // the other the wheel) inverted scrolling in the pane.
+          params: { type: 'mouseWheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modifierBits(e) },
         });
       }}
       onFocus={claim}
