@@ -1368,9 +1368,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             left: 'calc(var(--flock-width, 0px) + 24px)',
             zIndex: 1000,
             borderRadius: 4,
-            padding: 2,
-            background: 'linear-gradient(135deg, rgba(156, 188, 127,0.7) 0%, rgba(111, 169, 140,0.7) 100%)',
-            boxShadow: '0 0 80px rgba(156, 188, 127,0.35), 0 0 160px rgba(111, 169, 140,0.15), 0 20px 60px rgba(0,0,0,0.6)',
+            padding: 1,
+            // A hairline and a shadow, not a lit green frame. Zen is where you
+            // read for minutes at a time, so it is the last place that should
+            // put the brand colour around the text; being the only lit thing
+            // over a dimmed grid is already all the emphasis it needs.
+            background: 'var(--border)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
             animation: 'zen-enter 0.25s ease-out',
           } : {}),
           display: 'flex', flexDirection: 'column',

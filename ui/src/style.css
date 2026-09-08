@@ -1194,17 +1194,28 @@
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .pane-card-active {
-  background: color-mix(in srgb, var(--primary) 13%, var(--accent));
-  border-color: rgba(156, 188, 127, 0.40);
+  /* The focused pane, said with a lift and a brighter edge rather than a green
+     fill. Selection is the most common thing on screen — one card in every pen
+     you look at — so it has to be the quietest signal here, leaving the tints
+     to the two states that actually want something from you. */
+  background: color-mix(in srgb, #ffffff 9%, var(--accent));
+  border-color: rgba(255, 255, 255, 0.22);
   box-shadow: none;
+}
+/* On a pale page a lift is a step DOWN in lightness; adding white there would
+   erase the card instead of raising it. */
+:root[data-theme='light'] .pane-card-active {
+  background: color-mix(in srgb, #000000 7%, var(--accent));
+  border-color: rgba(34, 41, 31, 0.28);
 }
 
 /* ── A tinted box means YOU have something to do ───────────────────────────
    Grazing deliberately does NOT tint the card. It is the most common state by
    far, so tinting it made most of the sidebar glow and left a tint meaning
-   nothing in particular — and it collided with the active row, which is green
-   too. It also did not need the help: the grazing sheep has a silhouette and a
-   glyph no other state uses.
+   nothing in particular. It also did not need the help: the grazing sheep has
+   a silhouette and a glyph no other state uses. (It used to collide with the
+   active card as well, back when selection was green; selection is a neutral
+   lift now, so the tints below are the only coloured fills in the pen.)
 
    So the two halves say different things. The BOX is about you: teal when a
    sheep is bleating for input, amber when a pane finished and you have not

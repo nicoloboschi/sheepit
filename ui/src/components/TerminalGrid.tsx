@@ -429,7 +429,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
         background: 'var(--background)',
       }}
     >
-      {!isMobile && <PenFence seed={fenceSeed} active gate={44} className="workspace-fence" />}
+      {!isMobile && <PenFence seed={fenceSeed} active gate={44} className="workspace-fence" rails={false} />}
       {renderLayout()}
     </div>
   );

@@ -14,7 +14,7 @@ import { noise, scatterGrass, frontGrass } from './grass';
  *  Costs one canvas and one ResizeObserver per pen. Everything is redrawn on
  *  size and theme changes only — there is no animation frame here. */
 export default function PenFence({
-  seed, active, gate = 17, className = 'pen-fence',
+  seed, active, gate = 17, className = 'pen-fence', rails = true,
 }: {
   seed: number;
   active: boolean;
@@ -23,6 +23,12 @@ export default function PenFence({
    *  a 17px gate on it reads as a nick rather than a way in. */
   gate?: number;
   className?: string;
+  /** Draw the timber. The workspace in the main area turns this off and keeps
+   *  only the grass: a fence is a thing you look at from outside, and at
+   *  full-window size — where the pane you are working in is already framed by
+   *  its own border — the rails were furniture around the furniture. The
+   *  ground stays, because that is what makes the gutters read as a field. */
+  rails?: boolean;
 }): React.ReactElement {
   const ref = useRef<HTMLCanvasElement | null>(null);
   // The wood colour comes from --fence, which the light theme redefines, so
@@ -54,6 +60,11 @@ export default function PenFence({
 
       g.lineCap = 'round';
 
+      // Blade and post positions both walk this counter, so the ground under a
+      // pen with rails and one without is drawn from the same hash.
+      let k = seed * 97;
+
+      if (rails) {
       // Rails first, posts on top of them, so the posts read as nearer the eye.
       const rail = (x1: number, y1: number, x2: number, y2: number, sag: number, alpha: number) => {
         g.strokeStyle = wood; g.globalAlpha = alpha; g.lineWidth = 1.1;
@@ -82,7 +93,6 @@ export default function PenFence({
       };
 
       const STEP = 30;
-      let k = seed * 97;
       for (let x = m; x <= W - m + 0.5; x += STEP) {     // top edge, skipping the gate
         if (Math.abs(x - W / 2) < GATE + 3) continue;
         post(x + (noise(k, 1) - 0.5) * 2, m - 3.5, 0, 1, 11 + noise(k, 2) * 3, 0.62); k++;
@@ -95,6 +105,7 @@ export default function PenFence({
       for (let y = m + STEP / 2; y <= H - m - STEP / 2; y += STEP) {
         post(m - 3.5,   y + (noise(k, 1) - 0.5) * 2, 1, 0, 11 + noise(k, 2) * 3, 0.5); k++;
         post(W - m - 7.5, y + (noise(k, 3) - 0.5) * 2, 1, 0, 11 + noise(k, 2) * 3, 0.5); k++;
+      }
       }
 
       // Grass, all over the pen floor. The cards and panes paint on top of
@@ -131,7 +142,7 @@ export default function PenFence({
     // `active` is in the deps because the canvas cannot react to a CSS colour
     // change on its own — --fence is read at paint time, so the fence has to
     // be repainted when the selected pen changes.
-  }, [seed, theme, active, gate]);
+  }, [seed, theme, active, gate, rails]);
 
   return <canvas ref={ref} className={className} aria-hidden />;
 }

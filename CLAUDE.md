@@ -146,7 +146,10 @@ particular:
 - The **selected pen** is a lift out of the column too. Its brand-coloured
   signal is its fence coming into the light (`.session-item.active
   .pen-fence`), which is a drawn thing about that one pen, rather than a green
-  card behind every row you scan.
+  card behind every row you scan. The **focused pane** inside it
+  (`.pane-card-active`) is a lift for the same reason — it is the most common
+  thing on screen, so it must be the quietest signal in the pen, leaving the
+  coloured fills to bleating and unread, which want something from you.
 - The **grass stays green** — the footer strip and the floor of every pen. That
   is a picture of something, and it reads better against grey than it did
   against olive.
@@ -298,11 +301,14 @@ It draws in two places, from one component:
 - around each **pen** in the sidebar (`.pen-body`), wrapping the pane grid
   only — the pen's name, star and row menu sit *above* the fence. A name
   inside the enclosure cost a row of pen the sheep needed.
-- around the **workspace** in the main area (`.workspace-pen`), because the
-  workspace is the pen you are standing in. Same wood, wider gate
-  (`gate={44}`; the sidebar's 17 reads as a nick at that width). Skipped on
-  mobile, where the grid is one full-screen pane and a fence would only cost
-  rows.
+- around the **workspace** in the main area (`.workspace-pen`) — **grass only**
+  (`rails={false}`). A fence is a thing you look at a pen from *outside*, which
+  is what the sidebar does; the workspace is the pen you are standing in, and
+  at full-window size the rails were furniture drawn around furniture, since
+  the pane inside is already framed by its own border. The ground stays,
+  because that is what makes the gutters and margins read as a field rather
+  than as empty space. Skipped entirely on mobile, where the grid is one
+  full-screen pane. `gate={44}` is now only consulted when rails are drawn.
 
 Both draw **grass** on the same canvas: scattered faintly over the whole pen
 floor, then a dense saturated strip along the front edge. **Pane cards must
@@ -394,6 +400,22 @@ The class names say `pane-bar-*`, not `pane-footer-*`; there is no footer to
 name any more.
 
 ### Zen mode
+
+Zen **leaves the sidebar showing**: the pane and its backdrop start at
+`calc(var(--flock-width) + 24px)`, so the flock list stays lit and clickable
+while you read one pane. Picking a pen is what you do next, and zen no longer
+ends to let you do it — `setCurrentSessionId` and `setActivePane` re-point
+`zenSessionId`, so zen is a **mode** you turn on once, not a property of one
+pane. (It was neither before: hidden workspaces sit under `display: none`,
+which hides a `position: fixed` child too, so picking a pen dropped you out of
+zen without turning it off and left a stale `/zen:` in the URL.) `--flock-width`
+is published by `Sidebar.tsx` and is 0 below the `md` breakpoint, where the
+list is a sheet and zen is the whole screen.
+
+Its frame is a **hairline and a shadow**, not the lit green border it had. Zen
+is where you read for minutes at a time — the last place to put the brand
+colour around the text — and being the only lit thing over a dimmed grid is
+already all the emphasis it needs.
 
 Zen insets the pane by **24px**, not the 40px it used to. It exists to read
 one pane, so most of the window should be pane — but it still has to read as
