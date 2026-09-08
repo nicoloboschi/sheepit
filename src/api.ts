@@ -12,10 +12,6 @@ import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
 import {
-  parsePreviewUrl, forwardableHeaders, injectBase,
-  rewriteLoopbackPaths, isLoopback, isHtml,
-} from './preview.js';
-import {
   parseQuery, matchFactsAll, bestPerGroup, snippetAround, transcriptLineText,
   transcriptScore, transcriptPattern, containsPattern, speakerOf,
   type MatchGroup, type Speaker,
@@ -1629,9 +1625,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           const key = `${pid}:${port}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          // Not sheepit's own port: previewing it nests the proxy inside
-          // itself, so parsePreviewUrl refuses it — and a chip that cannot
-          // load is the noise this list just finished removing.
+          // Not sheepit's own port: a chip for it would open sheepit inside
+          // sheepit, which is the noise this list just finished removing.
           if (port === bridge.getListenPort()) continue;
           (mine.has(pid) ? own : others).push({ port, pid, name });
         }
@@ -1656,65 +1651,13 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
-  /**
-   * Would this URL agree to be shown in an iframe?
-   *
-   * Asked here rather than guessed at in the browser: a blocked frame still
-   * fires `load`, so the page has no way to tell. The answer decides whether
-   * the preview loads the URL directly — keeping its own origin, cookies and
-   * websockets — or has to come back through /preview below.
-   */
-  /** Whether the live browser can run here at all — the pane picks the route
-   *  before it has anything to show, so it has to ask before trying. */
+  /** Whether the live browser can run here at all, and the port the pane
+   *  should point it at for sheepit's own files — the browser runs on this
+   *  machine, so it reaches them on loopback however far away the person
+   *  looking at the pane is. */
   router.get('/browser/status', (_req, res) => {
     const binary = findBrowser();
-    res.json({ available: binary !== null, binary });
-  });
-
-  /**
-   * Fetch a page and hand it back without the headers that refused the frame.
-   *
-   * This makes sheepit a web proxy for anything that can reach it, which is a
-   * real cost and a deliberate choice — see "A browser in the pane" in
-   * CLAUDE.md. What keeps it bounded: it is only ever reached because someone
-   * asked for a URL, nothing here follows links on its own, and the client
-   * renders the result in a sandboxed iframe WITHOUT allow-same-origin, so
-   * bytes served from sheepit's own origin still cannot touch sheepit's API.
-   *
-   * HTML gets a `<base>` so its assets load from the origin server rather than
-   * 404ing against sheepit. A loopback page has its own paths rewritten back
-   * through here instead, because the browser asking may be a phone, and a
-   * phone's 127.0.0.1 is the phone.
-   */
-  router.get('/preview', async (req, res) => {
-    const url = parsePreviewUrl(String(req.query.url ?? ''), { selfPort: bridge.getListenPort() });
-    if (!url) return res.status(400).send('Not a URL we can open');
-    try {
-      const upstream = await fetch(url.href, {
-        redirect: 'follow',
-        signal: AbortSignal.timeout(20_000),
-        headers: { 'user-agent': 'sheepit-preview', accept: req.headers.accept ?? '*/*' },
-      });
-
-      const finalUrl = upstream.url || url.href;
-      const headers = forwardableHeaders(upstream.headers);
-      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
-      res.setHeader('x-preview-final-url', finalUrl);
-      res.status(upstream.status);
-
-      if (!isHtml(upstream.headers.get('content-type')) || !upstream.body) {
-        const buf = Buffer.from(await upstream.arrayBuffer());
-        return res.send(buf);
-      }
-
-      let html = await upstream.text();
-      html = injectBase(html, finalUrl);
-      const target = new URL(finalUrl);
-      if (isLoopback(target)) html = rewriteLoopbackPaths(html, target.origin);
-      res.send(html);
-    } catch (e) {
-      res.status(502).send(`Could not load: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    res.json({ available: binary !== null, binary, serverPort: bridge.getListenPort() });
   });
 
   router.get('/fs/raw', (req, res) => {

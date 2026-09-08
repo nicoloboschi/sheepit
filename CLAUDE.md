@@ -828,74 +828,52 @@ every time it opens and a port does not change what it is between two clicks.
 
 It does mean sending a GET to ports nobody asked about, which is the price of
 filtering them at all; a non-HTTP service reads it as junk and closes. Sheepit's
-own port is dropped from the list rather than probed: `parsePreviewUrl` refuses
-it, so a chip for it could never load.
+own port is dropped from the list rather than probed: a chip for it would open
+sheepit inside sheepit.
 
 ### The browser half
 
-It shows what the work produces: a dev server, or an `.html` file from the
-tree. Not a real browser and not pretending to be — no tabs, no history, no
-cookies, no login.
+It shows what the work produces — a dev server, a pull request, an `.html` file
+from the tree — and **it is the real browser on this machine**: a Chromium
+driven over CDP, streamed into the pane as frames, with your clicks and keys
+sent back. See [The live browser](#the-live-browser).
 
 **A URL clicked in the terminal opens here**, not in the system browser
 (`handleWebLink` in `TerminalCell.tsx`, wired into both `WebLinksAddon` and the
 OSC 8 `linkHandler` so a bare URL and a Claude Code hyperlink behave the same).
 The agent starts a dev server or prints the PR it just opened, and looking at
 it should not mean leaving the app for a window that knows nothing about which
-pane sent you there.
-
-Three things still go outside, because this is deliberately not a browser —
-no tabs, no history, no cookies, no login:
-
-- a **modifier click** (⌘/Ctrl/Shift), which is the escape hatch for anything
-  that needs a real browser, a sign-in above all;
-- anything that is **not http(s)** — `mailto:`, `vscode:`, and the rest;
-- **sheepit's own origin**, which would nest the app inside itself.
-
-The preview bar's "open externally" button is the fourth way out, after you
+pane sent you there. Two things still go outside: a **modifier click**
+(⌘/Ctrl/Shift), and anything that is **not http(s)** — `mailto:`, `vscode:`.
+The bar's "open in your own browser" button is the third way out, after you
 have looked. `navSeq` counts openings rather than URLs, so clicking the same
-link again after wandering off inside the frame takes you back to it — a prop
+link again after wandering off inside the page takes you back to it — a prop
 that has not changed says nothing.
 
-**It is the real browser on the machine** — a Chromium driven over CDP and
-streamed into the pane as frames, with clicks and keys sent back
-(`live-browser.ts`, `browser-ws.ts`, `LiveBrowserSurface.tsx`). See [The live
-browser](#the-live-browser).
+**Chromium is assumed present.** Chrome, Brave, Edge or Chromium, or
+`SHEEPIT_BROWSER` pointing at one; where there is none, the pane says so
+instead of degrading. Two earlier routes are gone, and the reasons are worth
+keeping because they are the argument for owning a browser at all:
 
-There was a **direct** route that put the URL straight into an iframe. It
-rendered natively and cost nothing, and it is gone, because it was not a
-browser: no session of yours, forms that went nowhere, nothing at all on a site
-that refuses to be framed, and `localhost:3000` meaning the phone you were
-holding rather than this machine. Two answers to "show me this page" also meant
-every open paid for a probe first — asking whether an iframe would be refused —
-and could still land on the crippled one. `/api/preview/probe` and
-`refusesFraming` went with it: framing is not a question anything asks any
-more. Stripping those headers on the proxy path stays, because the fallback
-below is still an iframe.
+- **direct** put the URL straight into an iframe. Native rendering and no cost
+  — but not a browser: no session of yours, forms that went nowhere, nothing at
+  all on a site that refuses to be framed, and `localhost:3000` resolving to
+  the phone you were holding.
+- **via sheepit** was a one-document proxy (`/api/preview`) that stripped the
+  headers refusing the frame. It showed a page and could not log in, submit, or
+  run an app. It also made sheepit an **open web proxy** for anything that
+  could reach it — a surface that is now gone outright rather than bounded, and
+  `src/preview.ts` with it.
 
-One fallback remains, for a machine with no Chromium to run:
+Having more than one answer to "show me this page" also cost a probe
+(`/api/preview/probe`) on every open, and could still land on the crippled one.
 
-- **through sheepit** — `/api/preview` fetches the page and returns it without
-  the headers that refused the frame, in a sandboxed iframe. A cookie-less
-  photocopy: it shows, but forms go nowhere and nothing is signed in. Local
-  `.html` files from the tree come this way too, since sheepit serves them.
-
-**Neither path remembers a login.** Direct frames use the *browser's* cookie
-jar, subject to its own third-party rules — so a signed-in session may or may
-not reach a cross-site frame, and nothing about it belongs to sheepit. The
-proxy path has no jar at all: the server `fetch` sends no cookies, keeps none
-between requests, and `forwardableHeaders` strips `set-cookie` on the way back,
-because a proxied response arrives over sheepit's own origin and its cookies
-would be filed under sheepit's name and sent back to it forever after. Sheepit
-stores no browser state anywhere — no profile, no jar, no origin data — which
-is the same statement as "this is not a browser".
-
-**Sub-resources.** Proxied HTML gets a `<base href>` so images, CSS and scripts
-load **directly from the origin server** and only the top document is proxied —
-that one line is what makes a naive proxy render at all. A **loopback** target
-is the exception: its own paths are rewritten back through `/api/preview`,
-because the browser asking may be a phone, and a phone's `127.0.0.1` is the
-phone.
+**Sheepit's own files.** `/api/fs/raw?as=html` still renders a local `.html`,
+and the pane points the browser at `http://127.0.0.1:<serverPort>/api/fs/raw…`
+— absolute, on loopback, because the browser runs on this machine and a
+relative path would be the viewing device's. `/api/browser/status` carries that
+port along with whether a browser was found. Port chips are loopback for the
+same reason, which is why they work from a phone.
 
 ### The live browser
 
@@ -949,30 +927,6 @@ escalation over the preview iframe — and not one over sheepit itself, which
 hands the same caller a shell on the same machine as the same user. The shell
 is the bigger key. Do not add a way to reach the browser that does not come
 through sheepit's own front door.
-
-### It is an open proxy, deliberately
-
-`/api/preview` will fetch any http(s) URL, so anything that can reach sheepit
-can browse through this machine, including hosts only this machine can see.
-That was a considered choice, not an oversight. Three things keep it bounded,
-and all three are load-bearing:
-
-- **Nothing is fetched that was not asked for.** The proxy is reached only on a
-  machine with no browser to run, or when the user clicks "via sheepit".
-  Nothing here follows links on its own.
-- **Proxied and local-file HTML is sandboxed** — `allow-scripts allow-forms
-  allow-popups allow-modals`, deliberately *without* `allow-same-origin`. This
-  is the one that matters. Proxied bytes are served from sheepit's own origin,
-  so without the sandbox a proxied page's scripts would sit inside that origin
-  and could call `/api/*`. An opaque origin removes it.
-- **`parsePreviewUrl` refuses the rest**: anything that is not http(s) (`file:`
-  would read the disk through the server) and sheepit's own port, which would
-  nest the proxy inside itself until something gave up.
-
-`/api/fs/raw` gained `?as=html` for the same view, and it is narrow on purpose:
-only a `.html` extension, only with the flag, and only ever rendered in the
-sandboxed frame. Everything else still comes back as `text/plain`, which is
-what the file viewer wants.
 
 ## The PTY proxy — keep it empty
 
