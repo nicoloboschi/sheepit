@@ -368,7 +368,19 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   }, [clipboard]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const forwardKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
-    const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+    // A character the keyboard *composed* — `@` is Option+ò on an Italian
+    // layout, `#` is Option+à, and AltGr does the same job on Windows and
+    // Linux — arrives already composed in `e.key`, with the modifier that
+    // composed it still set. Sending that as a key event asks the page to read
+    // a character and a held Alt at once, which is an accelerator, not typing.
+    // `insertText` says the one thing that is actually true: this text was
+    // typed. It has no up and down, so there is nothing to send on release.
+    const composed = e.key.length === 1 && (e.altKey || (e.ctrlKey && e.altKey)) && !e.metaKey;
+    if (composed) {
+      if (down) send({ type: 'input', method: 'Input.insertText', params: { text: e.key } });
+      return;
+    }
+    const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
     const text = printable ? e.key : KEY_TEXT[e.key];
     // The event's own keyCode is the virtual key code; the table is only for
     // the events that report 0.
