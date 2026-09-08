@@ -141,6 +141,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
    * are still forwarded as key events from `keydown`.
    */
   const keySinkRef = useRef<HTMLTextAreaElement | null>(null);
+  // TEMPORARY: which instance is speaking, and whether it is the same one
+  // across a keystroke. A remount here destroys a composition in flight.
+  const whoRef = useRef(Math.random().toString(36).slice(2, 6));
+  useEffect(() => {
+    const who = whoRef.current;
+    // eslint-disable-next-line no-console
+    console.log('[sheepit surface] MOUNTED', who, '— live surfaces now:', document.querySelectorAll('.live-browser-key-sink').length + 1);
+    return () => { console.log('[sheepit surface] UNMOUNTED', who); }; // eslint-disable-line no-console
+  }, []);
   const imgRef = useRef<HTMLImageElement | null>(null);
   // The last frame's own size, so a click maps correctly even in the moment
   // between a resize and the first frame that is actually the new size.
@@ -582,7 +591,11 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        onFocus={() => { setFocused(true); claim(); }}
+        onFocus={() => {
+          // eslint-disable-next-line no-console
+          console.log('[sheepit focus]', whoRef.current);
+          setFocused(true); claim();
+        }}
         onBlur={() => {
           // Focus that goes *nowhere* — to the body, or to nothing at all — is
           // not somebody choosing another control; it is the pane dropping the
@@ -591,7 +604,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           const next = document.activeElement;
           const wentNowhere = !next || next === document.body;
           // eslint-disable-next-line no-console
-          console.log('[sheepit blur] focus went to:', (next as HTMLElement | null)?.className || next?.tagName || 'nothing');
+          console.log('[sheepit blur]', whoRef.current, 'focus went to:',
+            (next as HTMLElement | null)?.className || next?.tagName || 'nothing',
+            '| same element:', next === keySinkRef.current,
+            '| sinks on page:', document.querySelectorAll('.live-browser-key-sink').length);
           if (wentNowhere && hoveringRef.current) {
             keySinkRef.current?.focus({ preventScroll: true });
             return;
