@@ -939,7 +939,25 @@ load-bearing:
 
 The client speaks CDP's own `Input.*` dialect rather than a vocabulary of our
 own: a DOM event already carries what CDP wants, and translating it twice only
-adds a second place for a modifier bit to go missing. Frames ride a **separate
+adds a second place for a modifier bit to go missing. Two details in that
+translation are not optional:
+
+- **The virtual key code is the event's own `keyCode`**, never one derived from
+  the character. `key.toUpperCase().charCodeAt(0)` is right for letters and
+  digits and wrong for punctuation in a way that does damage rather than
+  nothing: `.` became 46, which is `VK_DELETE`, so typing a full stop sent
+  Chromium a Delete carrying the text ".".
+- **`keyDown` when there is text, `rawKeyDown` when there is not** — that is
+  what decides whether Chromium raises a keypress. Enter has no character but
+  does carry text (`\r`), and without it Enter raised a keydown that no form
+  ever submitted on.
+
+**The socket reconnects, with backoff.** The backend restarts — a deploy, a
+code change in dev — and each restart used to take every browser pane with it:
+the socket closed, nothing reopened it, and the pane sat on a black rectangle
+until the whole page was reloaded. On reconnect the view is opened again on the
+page the pane was already showing, which is why `LiveBrowserSurface` keeps that
+URL in a ref. Frames ride a **separate
 WebSocket** (`/ws/browser`) — tens of kilobytes many times a second must not
 queue in front of a keystroke on its way to a PTY. Both sockets are `noServer`
 and one `upgrade` listener routes them; a second path-bound `WebSocketServer`

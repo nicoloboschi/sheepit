@@ -23,15 +23,27 @@ function modifierBits(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; 
 
 const BUTTONS = ['left', 'middle', 'right'] as const;
 
-/** Keys that must reach the page as a *key*, not as text. Everything else that
- *  produces a single character is sent as text, which is the only way an IME,
- *  a dead key or an emoji arrives intact. */
-const NAMED_KEYS: Record<string, number> = {
+/** Virtual key codes for the keys a browser event may report as 0 — an IME
+ *  commit, a synthetic event. Everything else uses the event's own `keyCode`,
+ *  which IS the Windows virtual key code CDP wants (190 for `.`, 188 for `,`),
+ *  and is the only correct source for it.
+ *
+ *  Deriving one instead — `key.toUpperCase().charCodeAt(0)` — is right for
+ *  letters and digits and wrong for punctuation, in a way that does damage
+ *  rather than nothing: `.` became 46, which is VK_DELETE, so typing a full
+ *  stop sent Chromium a Delete carrying the text ".". */
+const FALLBACK_KEYS: Record<string, number> = {
   Backspace: 8, Tab: 9, Enter: 13, Escape: 27, ' ': 32,
   PageUp: 33, PageDown: 34, End: 35, Home: 36,
   ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
   Insert: 45, Delete: 46,
 };
+
+/** Keys that are not a character but still carry text into the page. Enter is
+ *  the one that matters: without `text`, Chromium raises a keydown and never
+ *  the keypress that submits a form or sends a message, so Enter appeared to
+ *  do nothing at all. */
+const KEY_TEXT: Record<string, string> = { Enter: '\r', NumpadEnter: '\r' };
 
 export interface LiveBrowserState {
   url: string; title: string; canGoBack: boolean; canGoForward: boolean;
@@ -99,42 +111,81 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
    *  to the wrong height for good. Re-send it once the view exists. */
   const syncSize = useCallback(() => send({ type: 'resize', ...measure() }), [measure, send]);
 
+  // The page this pane is on, kept in a ref so a reconnect can ask for it
+  // again. `initialUrl` is where it started; `state.url` is wherever the page
+  // has walked to since.
+  const urlRef = useRef<string | null>(initialUrl ?? null);
+  urlRef.current = (stateRef.current.url && stateRef.current.url !== 'about:blank')
+    ? stateRef.current.url
+    : (initialUrl ?? urlRef.current);
+
   // One socket per open pane: the view lives exactly as long as the connection,
   // so a closed pane cannot leave a headless page running with nobody looking.
+  //
+  // And it RECONNECTS. The backend restarts — on a deploy, on a code change in
+  // dev — and every restart took every browser pane with it: the socket closed,
+  // nothing reopened it, and the pane sat on its last frame (or on nothing at
+  // all, which is a black rectangle) until the whole page was reloaded. The
+  // terminal panes have always come back on their own; this one has to as well.
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/browser`);
-    wsRef.current = ws;
+    let socket: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let stopped = false;
 
-    ws.onopen = () => send({ type: 'open', url: initialUrl ?? 'about:blank', ...measure() });
-    ws.onmessage = event => {
-      const msg = JSON.parse(event.data as string);
-      if (msg.type === 'frame') {
-        frameSizeRef.current = { w: msg.width, h: msg.height };
-        if (imgRef.current) imgRef.current.src = `data:image/jpeg;base64,${msg.data}`;
-      } else if (msg.type === 'state') {
-        report({
-          url: msg.url, title: msg.title, loading: Boolean(msg.loading),
-          canGoBack: msg.canGoBack, canGoForward: msg.canGoForward,
-        });
-      } else if (msg.type === 'active') {
-        setPaused(!msg.active);
-        report({ streaming: Boolean(msg.active) });
-      } else if (msg.type === 'ready') {
-        report({ status: 'ready' });
-        // The box is certainly laid out by now; the one sent with `open` may
-        // have been measured before the split had settled.
-        syncSize();
-      } else if (msg.type === 'error') {
-        report({ status: 'error', error: msg.message });
-      }
-    };
-    ws.onclose = () => {
-      if (stateRef.current.status !== 'error') report({ status: 'connecting' });
+    const connect = () => {
+      if (stopped) return;
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws/browser`);
+      socket = ws;
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        attempt = 0;
+        // The view is a new one on the server — the old one died with the old
+        // process — so it is opened on the page this pane was already showing.
+        send({ type: 'open', url: urlRef.current ?? 'about:blank', ...measure() });
+      };
+      ws.onmessage = event => {
+        const msg = JSON.parse(event.data as string);
+        if (msg.type === 'frame') {
+          frameSizeRef.current = { w: msg.width, h: msg.height };
+          if (imgRef.current) imgRef.current.src = `data:image/jpeg;base64,${msg.data}`;
+        } else if (msg.type === 'state') {
+          report({
+            url: msg.url, title: msg.title, loading: Boolean(msg.loading),
+            canGoBack: msg.canGoBack, canGoForward: msg.canGoForward,
+          });
+        } else if (msg.type === 'active') {
+          setPaused(!msg.active);
+          report({ streaming: Boolean(msg.active) });
+        } else if (msg.type === 'ready') {
+          report({ status: 'ready' });
+          // The box is certainly laid out by now; the one sent with `open` may
+          // have been measured before the split had settled.
+          syncSize();
+        } else if (msg.type === 'error') {
+          report({ status: 'error', error: msg.message });
+        }
+      };
+      ws.onclose = () => {
+        if (stopped) return;
+        if (stateRef.current.status !== 'error') report({ status: 'connecting' });
+        // Backing off rather than hammering: a backend that is restarting takes
+        // a second or two, and one that is gone for good should not be asked
+        // twenty times a second.
+        const wait = Math.min(5000, 400 * 2 ** attempt++);
+        retry = setTimeout(connect, wait);
+      };
     };
 
-    return () => { wsRef.current = null; ws.close(); };
-    // Mounted once per pane; the URL is re-sent through the effect below.
+    connect();
+    return () => {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      wsRef.current = null;
+      socket?.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -206,17 +257,24 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // should reload the page and not the whole of sheepit.
     e.preventDefault();
     e.stopPropagation();
-    const modifiers = modifierBits(e);
-    const named = NAMED_KEYS[e.key];
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+    const text = printable ? e.key : KEY_TEXT[e.key];
+    // The event's own keyCode is the virtual key code; the table is only for
+    // the events that report 0.
+    const vk = e.keyCode || FALLBACK_KEYS[e.key] || 0;
     send({
       type: 'input', method: 'Input.dispatchKeyEvent',
       params: {
-        type: down ? (printable ? 'keyDown' : 'rawKeyDown') : 'keyUp',
-        key: e.key, code: e.code, modifiers,
-        windowsVirtualKeyCode: named ?? (printable ? e.key.toUpperCase().charCodeAt(0) : e.keyCode),
-        nativeVirtualKeyCode: named ?? (printable ? e.key.toUpperCase().charCodeAt(0) : e.keyCode),
-        ...(down && printable ? { text: e.key, unmodifiedText: e.key } : {}),
+        // `keyDown` when there is text to insert, `rawKeyDown` otherwise —
+        // this is the distinction that decides whether a keypress is raised.
+        type: down ? (text ? 'keyDown' : 'rawKeyDown') : 'keyUp',
+        key: e.key, code: e.code, modifiers: modifierBits(e),
+        windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+        ...(down && text ? { text, unmodifiedText: text } : {}),
+        // Numpad and left/right modifiers: the page can tell them apart, and a
+        // shortcut bound to one of them should not fire for the other.
+        ...(e.location ? { location: e.location } : {}),
+        ...(e.repeat ? { autoRepeat: true } : {}),
       },
     });
   }, [send]);
