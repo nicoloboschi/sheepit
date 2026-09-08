@@ -1037,6 +1037,12 @@ ever typed. Dead keys, IME candidates, the emoji picker and paste were lost the
 same way; all of them arrive now as an `input` event, already composed, and are
 sent with `Input.insertText`.
 
+**The pane's `mousedown` cancels its default**, and that is load-bearing: a
+mousedown's default action moves focus to whatever was clicked, and the surface
+is not focusable, so it took the focus straight back out of the sink — leaving
+a pane where the mouse worked and nothing could be typed at all. (It also stops
+the drag from selecting the pane's own image.)
+
 So the split is: **text comes from the sink, keys come from `keydown`**
 (`producesText` decides). A keystroke that makes a character is deliberately
 *not* cancelled — cancelling it is what stops the character from ever existing.

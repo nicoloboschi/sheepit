@@ -464,6 +464,12 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       className="live-browser-surface"
       style={{ cursor }}
       onMouseDown={e => {
+        // Cancel the default first. A mousedown's default action moves focus to
+        // whatever was clicked — and this div is not focusable — so it would
+        // take the focus straight back out of the sink we are about to give it
+        // to, leaving a pane where the mouse works and nothing can be typed.
+        // It also stops the drag from selecting the pane's own image.
+        e.preventDefault();
         // Focus the text sink, not this div: that is what gives the keyboard a
         // text input context, and what makes the input method compose.
         keySinkRef.current?.focus({ preventScroll: true });
@@ -475,6 +481,14 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       // only has to report the moves that happen while no button is down.
       onMouseMove={e => { if (!draggingRef.current) mouse('mouseMoved', e); }}
       onContextMenu={e => e.preventDefault()}
+      onMouseEnter={() => {
+        // Nothing steals focus on hover — but if the pane already had it and
+        // something took it (a re-render, a dialog closing), coming back to the
+        // pane should put the keyboard back where the eyes are.
+        if (focused && document.activeElement !== keySinkRef.current) {
+          keySinkRef.current?.focus({ preventScroll: true });
+        }
+      }}
       onWheel={e => {
         claim();
         const { x, y } = pointFrom(e);
