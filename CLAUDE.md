@@ -985,6 +985,20 @@ embed finishing says nothing about the thing you asked for. It has to be shown,
 because a streamed page keeps showing the *old* page until the new one paints:
 without the bar, a slow load and a click that did nothing look identical.
 
+**A screenshot's product is its path.** The camera in the bar asks the page
+for a PNG (`Page.captureScreenshot`, not the streamed frame — that is a JPEG
+scaled to the pane and quantised for the wire), keeps it in
+`~/.config/sheepit/screenshots`, and puts the **path** on the clipboard. The
+reason to screenshot a pane is almost always to show it to the agent in the
+terminal beside it, and what an agent wants is a file to read: an image on the
+clipboard has to be pasted into something that accepts images, which a terminal
+does not. It does not go to the pane's cwd, where a *pasted* image goes — a
+pasted image is something you brought to the work, while these are made by the
+dozen while reading a page and would litter a repository with untracked PNGs.
+The clipboard write falls back to `execCommand` because `navigator.clipboard`
+is secure-context only and sheepit is routinely reached over plain http on a
+LAN.
+
 **Sheepit's own files.** `/api/fs/raw?as=html` still renders a local `.html`,
 and the pane points the browser at `http://127.0.0.1:<serverPort>/api/fs/raw…`
 — absolute, on loopback, because the browser runs on this machine and a

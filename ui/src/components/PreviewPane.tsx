@@ -31,7 +31,7 @@
  * `localhost` port works whatever device you are looking from.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert } from 'lucide-react';
+import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check } from 'lucide-react';
 import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
 import useStore from '../store';
 import { preferences } from '../preferences';
@@ -50,6 +50,31 @@ function urlKey(sessionId: string): string {
 
 function rememberedUrl(sessionId: string): string | null {
   try { return preferences.getItem(urlKey(sessionId)) || null; } catch { return null; }
+}
+
+/** Put text on this machine's clipboard.
+ *
+ *  `navigator.clipboard` is a secure-context API, and sheepit is routinely
+ *  reached over plain http on a LAN — from a phone, from another laptop —
+ *  where it is simply not there. The old `execCommand` route still works in
+ *  that case, and a path nobody can copy is the whole feature missing. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* insecure context, or the write was denied */ }
+  try {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand('copy');
+    el.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 /** What someone typing in the address bar meant. */
@@ -166,6 +191,45 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
     // on still has to navigate.
   }, [browserNav?.seq, browserNav?.sessionId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Take a picture of the page, keep it, and put the path on the clipboard.
+   *
+   *  The path is the deliverable: the reason to screenshot a pane is almost
+   *  always to show it to the agent in the terminal beside it, and what an
+   *  agent wants is a file to read. The image itself would have to be pasted
+   *  into something that accepts images, which a terminal does not. */
+  const [shot, setShot] = useState<{ state: 'busy' | 'done' | 'failed'; path?: string } | null>(null);
+  const shotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (shotTimer.current) clearTimeout(shotTimer.current); }, []);
+  const capture = useCallback(async () => {
+    if (shot?.state === 'busy') return;
+    setShot({ state: 'busy' });
+    const flash = (next: { state: 'done' | 'failed'; path?: string }) => {
+      setShot(next);
+      if (shotTimer.current) clearTimeout(shotTimer.current);
+      shotTimer.current = setTimeout(() => setShot(null), 2500);
+    };
+    try {
+      const data = await liveCommands.current?.screenshot();
+      if (!data) return flash({ state: 'failed' });
+      // Named after the page and the moment, so a directory of them is
+      // readable and two shots of the same page never collide.
+      const host = (() => { try { return new URL(live?.url ?? '').hostname.replace(/^www\./, ''); } catch { return 'page'; } })();
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
+      const name = `${host || 'page'}-${stamp}.png`;
+      const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+      const res = await fetch(`/api/browser/screenshot?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: bytes,
+      });
+      const { ok, path } = await res.json();
+      if (!ok || !path) return flash({ state: 'failed' });
+      flash({ state: (await copyText(path)) ? 'done' : 'failed', path });
+    } catch {
+      flash({ state: 'failed' });
+    }
+  }, [live?.url, shot?.state]);
+
   const chips = [...listeners.own.map(l => ({ ...l, own: true })), ...listeners.others.map(l => ({ ...l, own: false }))];
 
   return (
@@ -188,6 +252,21 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           placeholder="localhost:3000, or any URL"
           spellCheck={false}
         />
+        {/* A picture of the page, on disk, with its path on the clipboard —
+            ready to paste to the agent in the terminal next door. */}
+        <button
+          className={`preview-btn${shot?.state === 'done' ? ' preview-btn-done' : ''}`}
+          onClick={capture}
+          disabled={shot?.state === 'busy'}
+          title={
+            shot?.state === 'done' ? `Path copied — ${shot.path}`
+            : shot?.state === 'failed' ? 'Screenshot failed'
+            : 'Screenshot: save the page and copy its path'
+          }
+        >
+          {shot?.state === 'done' ? <Check size={12} /> : <Camera size={12} />}
+        </button>
+
         {/* Your own browser, for what this one is not: a download, a password
             manager, a tab you want to keep. */}
         <a

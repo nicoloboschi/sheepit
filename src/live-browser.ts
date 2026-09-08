@@ -729,6 +729,22 @@ export class LiveBrowser {
     }
   }
 
+  /**
+   * A PNG of what the pane is showing, as base64.
+   *
+   * Not the streamed frame: that is a JPEG, scaled to the pane and quantised
+   * for the wire, which is the wrong thing to hand an agent to read. This asks
+   * the page itself, so what comes back is the page at its real size.
+   */
+  async screenshot(id: string): Promise<string> {
+    const view = this.views.get(id);
+    const cdp = this.cdp;
+    if (!view || !cdp) return '';
+    const res = await cdp.send<{ data: string }>(
+      'Page.captureScreenshot', { format: 'png' }, view.sessionId);
+    return res.data ?? '';
+  }
+
   /** The other direction: text from the machine's clipboard, typed in. Typed
    *  rather than pasted, because a paste would read the browser's own
    *  clipboard, which is not the one the text came from. */

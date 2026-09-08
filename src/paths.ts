@@ -46,6 +46,17 @@ export function ringBuffersDir(): string {
   return join(configDir(), 'ring-buffers');
 }
 
+/** Screenshots taken of a pane's browser.
+ *
+ *  Not the pane's cwd, which is where a *pasted* image goes: a pasted image is
+ *  something you brought to the work, while these are made by the dozen while
+ *  reading a page and would otherwise litter a repository with untracked PNGs.
+ *  The path handed back is absolute, so pasting it into an agent works from
+ *  anywhere. */
+export function screenshotsDir(): string {
+  return join(configDir(), 'screenshots');
+}
+
 /** The legacy second root, kept only so the move below can find it. */
 function legacyStateDir(): string {
   return join(homedir(), '.sheepit');

@@ -767,6 +767,10 @@
   color: var(--muted-foreground);
 }
 .preview-btn:hover { background: var(--accent); color: var(--foreground); }
+.preview-btn:disabled { opacity: 0.5; cursor: default; }
+/* The screenshot's path is on the clipboard — the one moment this row of
+   controls has something to report. */
+.preview-btn-done, .preview-btn-done:hover { color: var(--success); }
 .preview-address {
   flex: 1; min-width: 0;
   background: var(--background); border: 1px solid var(--border);

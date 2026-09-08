@@ -114,6 +114,8 @@ export interface LiveBrowserCommands {
   reload: () => void;
   back: () => void;
   forward: () => void;
+  /** A PNG of the page, base64. Empty if the browser did not answer. */
+  screenshot: () => Promise<string>;
 }
 
 export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onState, commands }: {
@@ -233,6 +235,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           syncSize();
         } else if (msg.type === 'cursor') {
           setCursor(safeCursor(String(msg.cursor ?? 'default')));
+        } else if (msg.type === 'shot') {
+          const resolve = shotReplyRef.current.get(msg.id);
+          if (resolve) { shotReplyRef.current.delete(msg.id); resolve(String(msg.data ?? '')); }
         } else if (msg.type === 'copied') {
           const resolve = copyReplyRef.current.get(msg.id);
           if (resolve) { copyReplyRef.current.delete(msg.id); resolve(String(msg.text ?? '')); }
@@ -267,15 +272,30 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     send({ type: 'navigate', url: initialUrl });
   }, [initialUrl, navSeq, send]);
 
+  /** Ask the page for a picture of itself. Same request/reply shape as the
+   *  copy below — one socket carries every pane's traffic, so an answer has to
+   *  say which question it belongs to. */
+  const shotReplyRef = useRef(new Map<number, (data: string) => void>());
+  const shotIdRef = useRef(1);
+  const askForScreenshot = useCallback(() => new Promise<string>(resolve => {
+    const id = shotIdRef.current++;
+    shotReplyRef.current.set(id, resolve);
+    send({ type: 'screenshot', id });
+    setTimeout(() => {
+      if (shotReplyRef.current.delete(id)) resolve('');
+    }, 10000);
+  }), [send]);
+
   useEffect(() => {
     commands.current = {
       navigate: (url: string) => send({ type: 'navigate', url }),
       reload: () => send({ type: 'reload' }),
       back: () => send({ type: 'back' }),
       forward: () => send({ type: 'forward' }),
+      screenshot: askForScreenshot,
     };
     return () => { commands.current = null; };
-  }, [commands, send]);
+  }, [commands, send, askForScreenshot]);
 
   // The page is laid out at the pane's own size, so what you see is a page
   // that fits rather than a shrunk photograph of a wider one.

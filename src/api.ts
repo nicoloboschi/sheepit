@@ -5,7 +5,7 @@ import { rgPath } from '@vscode/ripgrep';
 import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
-import { configDir, notesDir } from './paths.js';
+import { configDir, notesDir, screenshotsDir } from './paths.js';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
@@ -1658,6 +1658,29 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.get('/browser/status', (_req, res) => {
     const binary = findBrowser();
     res.json({ available: binary !== null, binary, serverPort: bridge.getListenPort() });
+  });
+
+  /** Keep a screenshot the pane just took, and answer with where it went.
+   *
+   *  The path is the product here: it is copied to the clipboard so it can be
+   *  pasted to an agent, which reads the file off disk. It lands in sheepit's
+   *  own directory rather than the pane's cwd — see `screenshotsDir`. */
+  router.post('/browser/screenshot', async (req, res) => {
+    // The PNG arrives as the raw body, not as JSON: a full-page screenshot is
+    // routinely larger than the 2 MB the JSON parser accepts, and base64 in a
+    // field would make it a third larger again.
+    const safeName = nodePath.basename((req.query.name as string | undefined) ?? '') || `page-${Date.now()}.png`;
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const dir = screenshotsDir();
+      mkdirSync(dir, { recursive: true });
+      const destPath = nodePath.join(dir, safeName);
+      writeFileSync(destPath, Buffer.concat(chunks));
+      res.json({ ok: true, path: destPath });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   router.get('/fs/raw', (req, res) => {

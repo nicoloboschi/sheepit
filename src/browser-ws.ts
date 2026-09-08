@@ -35,6 +35,7 @@ type ClientMessage =
   | { type: 'forward' }
   | { type: 'focus'; scale?: number }
   | { type: 'copy'; id: number }
+  | { type: 'screenshot'; id: number }
   | { type: 'paste'; text: string }
   | { type: 'input'; method: string; params: Record<string, unknown> };
 
@@ -93,6 +94,9 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
           // clipboard write open on a user gesture and cannot wait on a
           // message it is not sure is its own.
           case 'copy':     send({ type: 'copied', id: msg.id, text: await browser.selection(viewId) }); break;
+          // Same shape as `copy`, and for the same reason: the client is
+          // waiting on this one answer and cannot take somebody else's.
+          case 'screenshot': send({ type: 'shot', id: msg.id, data: await browser.screenshot(viewId) }); break;
           case 'paste':    browser.paste(viewId, msg.text); break;
           case 'navigate': browser.navigate(viewId, msg.url); break;
           case 'reload':   browser.reload(viewId); break;
