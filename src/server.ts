@@ -1,5 +1,7 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
+import { LiveBrowser } from './live-browser.js';
+import { attachBrowserWs, BROWSER_WS_PATH } from './browser-ws.js';
 import { createServer } from 'http';
 import { join, dirname, extname, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -157,7 +159,31 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
     app.get('*', (_req, res) => res.sendFile(join(uiDist, 'index.html')));
   }
 
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  // ── Two WebSocket servers, ONE upgrade listener ───────────────────────────
+  // Both are `noServer` and the route below decides which gets the socket.
+  // This is not a style choice. A `WebSocketServer({ server, path })` installs
+  // its own 'upgrade' listener, and that listener DESTROYS any socket whose
+  // path it does not recognise (ws/lib/websocket-server.js: `abortHandshake`
+  // when `shouldHandle` is false). With two of them on one HTTP server, every
+  // upgrade reaches both, so each one killed the other's connections: the
+  // terminal socket connected and dropped in the same millisecond, over and
+  // over, and the whole app was dead. Add a third path here, not a third
+  // WebSocketServer.
+  const wss = new WebSocketServer({ noServer: true });
+
+  // The live browser gets a socket of its own — screencast frames must not
+  // queue in front of a keystroke on its way to a PTY. See browser-ws.ts.
+  const liveBrowser = new LiveBrowser(msg => logger.info(msg));
+  const browserWss = attachBrowserWs(liveBrowser, msg => logger.warn(msg));
+
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const target = pathname === '/ws' ? wss
+      : pathname === BROWSER_WS_PATH ? browserWss
+      : null;
+    if (!target) { socket.destroy(); return; }
+    target.handleUpgrade(req, socket, head, ws => target.emit('connection', ws, req));
+  });
 
   // Track active WebSocket clients for diagnostics
   const activeClients = new Set<{ ws: WebSocket; state: ClientState; connectedAt: number; messageCount: number; bytesSent: number }>();
