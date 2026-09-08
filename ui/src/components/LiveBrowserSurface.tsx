@@ -621,6 +621,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           // shortcut instead of into the page. Take it back.
           const next = document.activeElement;
           const wentNowhere = !next || next === document.body;
+          // A blur caused by JS shows a stack; a blur caused by the OS or the
+          // window losing focus shows only the event dispatch.
+          console.trace('[sheepit blur stack]'); // eslint-disable-line no-console
           // eslint-disable-next-line no-console
           console.log('[sheepit blur]', whoRef.current, 'focus went to:',
             (next as HTMLElement | null)?.className || next?.tagName || 'nothing',
