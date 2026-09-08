@@ -23,6 +23,16 @@ function modifierBits(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; 
 
 const BUTTONS = ['left', 'middle', 'right'] as const;
 
+/** The keys that only ever modify another key.
+ *
+ *  These must never be cancelled. Holding Option is the *first half* of typing
+ *  `@` on an Italian layout, and cancelling that keydown tells the OS the
+ *  application has taken the key — so the input method never starts composing,
+ *  the `ò` that follows never becomes a character, and the whole chord falls
+ *  through to the browser's shortcuts. The symptom is a key that vanishes: the
+ *  Alt keydown arrives, and nothing else does. */
+const MODIFIER_KEYS = new Set(['Alt', 'AltGraph', 'Shift', 'Control', 'Meta', 'CapsLock', 'Dead', 'Process']);
+
 /** The cursors a page may ask this pane to show. An allowlist, because the
  *  value arrives from the page being viewed and `cursor` accepts `url(...)` —
  *  which would have a page nobody vouched for fetching an image through the
@@ -385,6 +395,11 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     }
     // Anything the input method is in the middle of composing belongs to it.
     if (e.isComposing || e.keyCode === 229) return;
+
+    // A modifier on its own is forwarded but never cancelled — see
+    // MODIFIER_KEYS. The page still learns the modifier is down, because every
+    // event carries the modifier bits with it.
+    if (MODIFIER_KEYS.has(e.key)) { forwardKey(e, down); return; }
 
     // Copy and paste are this machine's, not the page's, and are settled before
     // anything is forwarded.
