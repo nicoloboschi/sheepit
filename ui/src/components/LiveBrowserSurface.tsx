@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * A real browser, running on the machine, drawn into this pane.
@@ -43,6 +43,9 @@ export interface LiveBrowserState {
   url: string; title: string; canGoBack: boolean; canGoForward: boolean;
   status: 'connecting' | 'ready' | 'error';
   error: string | null;
+  /** Whether this pane currently holds the stream. Only one can — headless
+   *  Chromium casts its active page and no other. */
+  streaming: boolean;
 }
 
 export interface LiveBrowserCommands {
@@ -69,8 +72,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   onStateRef.current = onState;
   const stateRef = useRef<LiveBrowserState>({
     url: initialUrl ?? '', title: '', canGoBack: false, canGoForward: false,
-    status: 'connecting', error: null,
+    status: 'connecting', error: null, streaming: false,
   });
+  const [paused, setPaused] = useState(false);
   const report = useCallback((patch: Partial<LiveBrowserState>) => {
     stateRef.current = { ...stateRef.current, ...patch };
     onStateRef.current(stateRef.current);
@@ -105,6 +109,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         if (imgRef.current) imgRef.current.src = `data:image/jpeg;base64,${msg.data}`;
       } else if (msg.type === 'state') {
         report({ url: msg.url, title: msg.title, canGoBack: msg.canGoBack, canGoForward: msg.canGoForward });
+      } else if (msg.type === 'active') {
+        setPaused(!msg.active);
+        report({ streaming: Boolean(msg.active) });
       } else if (msg.type === 'ready') {
         report({ status: 'ready' });
       } else if (msg.type === 'error') {
@@ -152,6 +159,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, [measure, send]);
 
+  /** Take the stream. Sent on the gestures that mean "I am working in this
+   *  pane" — not on mousemove, which would have two panes trading it back and
+   *  forth as the pointer crossed them. */
+  const claim = useCallback(() => {
+    if (!stateRef.current.streaming) {
+      send({ type: 'focus', scale: Math.min(2, window.devicePixelRatio || 1) });
+    }
+  }, [send]);
+
   const pointFrom = useCallback((e: React.MouseEvent | React.WheelEvent) => {
     const box = surfaceRef.current?.getBoundingClientRect();
     if (!box) return { x: 0, y: 0 };
@@ -198,11 +214,12 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       ref={surfaceRef}
       className="live-browser-surface"
       tabIndex={0}
-      onMouseDown={e => { (e.currentTarget as HTMLElement).focus(); mouse('mousePressed', e, e.detail || 1); }}
+      onMouseDown={e => { (e.currentTarget as HTMLElement).focus(); claim(); mouse('mousePressed', e, e.detail || 1); }}
       onMouseUp={e => mouse('mouseReleased', e, e.detail || 1)}
       onMouseMove={e => mouse('mouseMoved', e)}
       onContextMenu={e => e.preventDefault()}
       onWheel={e => {
+        claim();
         const { x, y } = pointFrom(e);
         send({
           type: 'input', method: 'Input.dispatchMouseEvent',
@@ -211,10 +228,14 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           params: { type: 'mouseWheel', x, y, deltaX: -e.deltaX, deltaY: -e.deltaY, modifiers: modifierBits(e) },
         });
       }}
+      onFocus={claim}
       onKeyDown={e => onKey(e, true)}
       onKeyUp={e => onKey(e, false)}
     >
       <img ref={imgRef} className="live-browser-frame" alt="" draggable={false} />
+      {/* A still page with no explanation reads as a hang. The browser can only
+          cast one tab, so say which state this one is in. */}
+      {paused && <div className="live-browser-paused">Paused — click to resume</div>}
     </div>
   );
 }

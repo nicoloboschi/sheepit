@@ -2447,3 +2447,19 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
+
+/* Only one live browser pane streams at a time (headless Chromium casts its
+   active page and no other), so the others hold their last frame. Saying so is
+   the difference between "waiting its turn" and "hung". */
+.live-browser-paused {
+  position: absolute;
+  left: 50%; bottom: 12px;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--chrome-line);
+  background: color-mix(in srgb, var(--chrome) 88%, transparent);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  pointer-events: none;
+}

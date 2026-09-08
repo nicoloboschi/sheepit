@@ -31,7 +31,7 @@
  * reach the browser that does not go through sheepit's own front door.
  */
 import { spawn, type ChildProcess } from 'child_process';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'net';
 import { platform } from 'os';
 import { join } from 'path';
@@ -102,9 +102,32 @@ async function debuggerUrl(port: number): Promise<string | null> {
   }
 }
 
-/** The port a previous run left behind. Chromium writes it into the profile,
- *  so a server restart re-attaches to the browser that is already open with
- *  every tab and every session still in it, rather than starting a second one. */
+/** Where we record the browser we started: its pid and its debugging port.
+ *
+ *  Chromium writes `DevToolsActivePort` into the profile and that is what a
+ *  re-attach reads first — but it is Chromium's file, and it is gone the moment
+ *  the browser is not shut down cleanly. What is left then is the worst state
+ *  there is: a live browser holding the profile's `SingletonLock`, unreachable
+ *  because nothing knows its port, and every launch after it exiting with code
+ *  21 because it cannot take a lock the orphan still holds. One test run left
+ *  the feature wedged exactly that way. So we keep our own note. */
+function browserRecordFile(): string {
+  return join(configDir(), 'browser.json');
+}
+
+interface BrowserRecord { pid: number; port: number }
+
+function readRecord(): BrowserRecord | null {
+  try {
+    const raw = JSON.parse(readFileSync(browserRecordFile(), 'utf-8')) as BrowserRecord;
+    return Number.isFinite(raw.pid) && Number.isFinite(raw.port) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Chromium's own note, which is there after a clean run and absent after a
+ *  crash — read as a fallback to ours. */
 function portFromProfile(): number | null {
   try {
     const raw = readFileSync(join(browserProfileDir(), 'DevToolsActivePort'), 'utf-8');
@@ -112,6 +135,18 @@ function portFromProfile(): number | null {
     return Number.isFinite(port) && port > 0 ? port : null;
   } catch {
     return null;
+  }
+}
+
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** The lock files a dead Chromium leaves behind. Removing them is safe only
+ *  once nothing is holding the profile, which is the caller's job to ensure. */
+function clearProfileLocks(): void {
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    try { rmSync(join(browserProfileDir(), name), { force: true }); } catch { /* not there */ }
   }
 }
 
@@ -139,6 +174,7 @@ interface View {
   height: number;
   onFrame: (frame: ViewFrame) => void;
   onState: (state: ViewState) => void;
+  onActive: (active: boolean) => void;
   lastUrl: string;
   lastTitle: string;
 }
@@ -148,6 +184,22 @@ export class LiveBrowser {
   private cdp: CdpConnection | null = null;
   private starting: Promise<CdpConnection> | null = null;
   private views = new Map<string, View>();
+  /**
+   * Only one tab can stream at a time, so this is which one.
+   *
+   * Headless Chromium casts the *active* page and nothing else: measured,
+   * `Page.startScreencast` on a freshly launched browser fails outright with
+   * "Not attached to an active page" until `Target.activateTarget` has been
+   * called, and activating a second tab stops the first one's frames dead —
+   * even across a reload. Frames follow activation exactly, and switching back
+   * resumes it.
+   *
+   * So a pane streams while you are in it, and the others hold their last
+   * frame until you click into them — which is what a background tab does in
+   * any browser. What must never happen is silence with no explanation, so the
+   * pane that loses the stream is told (`onActive(false)`) and says so.
+   */
+  private activeViewId: string | null = null;
   private log: (msg: string) => void;
 
   constructor(log: (msg: string) => void = () => {}) { this.log = log; }
@@ -165,16 +217,29 @@ export class LiveBrowser {
 
   private async start(): Promise<CdpConnection> {
     // A browser from a previous server run is still holding the profile, so
-    // launching a second one against the same --user-data-dir would fail. Ask
-    // the one that is there first.
-    const existing = portFromProfile();
-    if (existing) {
-      const url = await debuggerUrl(existing);
+    // launching a second one against the same --user-data-dir cannot work.
+    // Talk to the one that is there — our note first, Chromium's second.
+    const record = readRecord();
+    for (const port of [record?.port, portFromProfile()]) {
+      if (!port) continue;
+      const url = await debuggerUrl(port);
       if (url) {
-        this.log(`live browser: re-attached on port ${existing}`);
+        this.log(`live browser: re-attached on port ${port}`);
         return this.connect(url);
       }
     }
+
+    // Nothing answers. If the browser we started is nonetheless still running,
+    // it is an orphan we can no longer speak to and it is holding the profile
+    // — so it has to go, or every launch from here on exits 21.
+    if (record && alive(record.pid)) {
+      this.log(`live browser: killing unreachable browser (pid ${record.pid})`);
+      try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
+      for (let i = 0; i < 25 && alive(record.pid); i++) await new Promise(r => setTimeout(r, 100));
+    }
+    // Whatever held them is gone by now: either it was never running, or we
+    // just killed it. A stale lock left behind refuses the next launch.
+    clearProfileLocks();
 
     const binary = findBrowser();
     if (!binary) throw new Error('No Chromium-family browser found. Set SHEEPIT_BROWSER to one.');
@@ -202,7 +267,10 @@ export class LiveBrowser {
       stderrTail = (stderrTail + chunk.toString()).slice(-2000);
     });
     this.proc.on('exit', code => {
-      this.log(`live browser: exited (${code})`);
+      // Exit codes here are Chromium's and mean nothing on their own — 21 is
+      // "could not take the profile lock" — so the stderr goes with them.
+      const why = stderrTail.trim().split('\n').filter(Boolean).slice(-2).join(' / ');
+      this.log(`live browser: exited (${code})${why ? `: ${why}` : ''}`);
       this.proc = null;
       this.cdp?.close();
       this.cdp = null;
@@ -216,8 +284,14 @@ export class LiveBrowser {
       const url = await debuggerUrl(port);
       if (url) {
         this.log(`live browser: started ${binary} on port ${port}`);
+        const pid = this.proc?.pid;
+        if (pid) {
+          try { writeFileSync(browserRecordFile(), JSON.stringify({ pid, port })); } catch { /* best effort */ }
+        }
         return this.connect(url);
       }
+      // A browser that has already exited will not start answering.
+      if (!this.proc) break;
       await new Promise(r => setTimeout(r, 120));
     }
     const why = stderrTail.trim().split('\n').filter(Boolean).slice(-2).join(' / ');
@@ -289,6 +363,7 @@ export class LiveBrowser {
     scale: number;
     onFrame: (frame: ViewFrame) => void;
     onState: (state: ViewState) => void;
+    onActive: (active: boolean) => void;
   }): Promise<void> {
     const cdp = await this.connection();
     await this.closeView(opts.id);
@@ -300,7 +375,7 @@ export class LiveBrowser {
       id: opts.id, targetId, sessionId,
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
-      onFrame: opts.onFrame, onState: opts.onState,
+      onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
       lastUrl: '', lastTitle: '',
     };
     this.views.set(opts.id, view);
@@ -308,7 +383,26 @@ export class LiveBrowser {
     await cdp.send('Page.enable', {}, sessionId);
     await this.applyMetrics(view, opts.scale);
     if (opts.url) await cdp.send('Page.navigate', { url: opts.url }, sessionId).catch(() => {});
-    await this.startCast(view, opts.scale);
+    await this.activate(opts.id, opts.scale);
+  }
+
+  /** Make this view the one that streams. Everything else stops, because the
+   *  browser only casts its active page — see `activeViewId`. */
+  async activate(id: string, scale = 1): Promise<void> {
+    const view = this.views.get(id);
+    const cdp = this.cdp;
+    if (!view || !cdp) return;
+    if (this.activeViewId === id) return;
+
+    const previous = this.activeViewId ? this.views.get(this.activeViewId) : undefined;
+    this.activeViewId = id;
+    if (previous && previous.id !== id) {
+      await cdp.send('Page.stopScreencast', {}, previous.sessionId).catch(() => {});
+      previous.onActive(false);
+    }
+    await cdp.send('Target.activateTarget', { targetId: view.targetId }).catch(() => {});
+    await this.startCast(view, scale);
+    view.onActive(true);
   }
 
   private async applyMetrics(view: View, scale: number): Promise<void> {
@@ -351,7 +445,11 @@ export class LiveBrowser {
 
   navigate(id: string, url: string): void {
     const view = this.views.get(id);
-    if (view) this.cdp?.post('Page.navigate', { url }, view.sessionId);
+    if (!view) return;
+    // Typing an address is using the pane, so it takes the stream too —
+    // otherwise the page would load where you cannot see it.
+    void this.activate(id);
+    this.cdp?.post('Page.navigate', { url }, view.sessionId);
   }
 
   reload(id: string): void {
@@ -385,6 +483,13 @@ export class LiveBrowser {
     const view = this.views.get(id);
     if (!view) return;
     this.views.delete(id);
+    if (this.activeViewId === id) {
+      this.activeViewId = null;
+      // Hand the stream to whoever is left rather than leaving every open pane
+      // frozen because the one that closed was the active one.
+      const next = this.views.keys().next();
+      if (!next.done) void this.activate(next.value);
+    }
     try { await this.cdp?.send('Target.closeTarget', { targetId: view.targetId }); } catch { /* gone */ }
   }
 

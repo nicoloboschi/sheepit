@@ -36,6 +36,41 @@ function browsingRemotely(): boolean {
   return !(h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]');
 }
 
+const ROUTE_LABEL: Record<Route, string> = {
+  direct: 'direct',
+  proxy: 'via sheepit',
+  live: 'live',
+};
+
+const ROUTE_HELP: Record<Route, string> = {
+  direct: 'The real page, framed as it is. Click to route it through sheepit.',
+  proxy: 'Coming through sheepit: headers stripped, sandboxed, no cookies, forms go nowhere. Click for the browser on the machine.',
+  live: 'A real browser on the machine, with its own profile — signed-in sites stay signed in. Click for a direct frame.',
+};
+
+/** direct → via sheepit → live → direct, skipping live where no browser was
+ *  found. Cycling rather than a menu: there are three, they are ordered by how
+ *  much of a real browser you are getting, and the pill is 60px wide. */
+function nextRoute(current: Route, liveAvailable: boolean): Route {
+  const order: Route[] = liveAvailable ? ['direct', 'proxy', 'live'] : ['direct', 'proxy'];
+  const at = order.indexOf(current);
+  return order[(at + 1) % order.length] ?? 'direct';
+}
+
+/** What someone typing in the address bar meant. `load` gets this from the
+ *  probe's `finalUrl`; the live browser has no probe, so it is done here. */
+function normalizeTyped(raw: string): string {
+  const trimmed = raw.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  // A dev server is the common case here and it is not on https. Anything
+  // loopback, or anything with an explicit port, is http; the rest of the web
+  // is https.
+  if (/^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\])(:\d+)?([/?#]|$)/i.test(trimmed)) return `http://${trimmed}`;
+  if (/^[\w-]+(\.[\w-]+)*:\d+([/?#]|$)/.test(trimmed)) return `http://${trimmed}`;
+  if (/^[\w-]+(\.[\w-]+)+([/?#]|$)/.test(trimmed)) return `https://${trimmed}`;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`;
+}
+
 function isLoopbackTarget(raw: string): boolean {
   try {
     const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
@@ -63,6 +98,20 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   const [listeners, setListeners] = useState<{ own: Listener[]; others: Listener[] }>({ own: [], others: [] });
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [nonce, setNonce] = useState(0);
+  // The live browser: whether this machine has one at all, what its page is
+  // doing, and the handle the bar drives it with.
+  const [liveAvailable, setLiveAvailable] = useState(false);
+  const [live, setLive] = useState<LiveBrowserState | null>(null);
+  const liveCommands = useRef<LiveBrowserCommands | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/browser/status')
+      .then(r => r.json())
+      .then(d => { if (alive) setLiveAvailable(Boolean(d.available)); })
+      .catch(() => { /* no browser: the other two routes still work */ });
+    return () => { alive = false; };
+  }, []);
 
   // What this pane's own processes are listening on — usually the dev server
   // the agent just started — and then everything else on the machine, because
@@ -75,6 +124,11 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       .catch(() => { /* lsof missing: the address bar still works */ });
     return () => { alive = false; };
   }, [sessionId, nonce]);
+
+  const liveAvailableRef = useRef(false);
+  liveAvailableRef.current = liveAvailable;
+
+  const [liveNav, setLiveNav] = useState(0);
 
   const load = useCallback(async (raw: string, force?: Route) => {
     const url = raw.trim();
@@ -99,10 +153,16 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       // whatever the probe says: the frame would resolve 127.0.0.1 to the
       // device you are holding.
       const mustProxy = isLoopbackTarget(url) && browsingRemotely();
-      const chosen: Route = force ?? (probe.framable && !mustProxy ? 'direct' : 'proxy');
+      // A page that refuses to be framed is exactly what the live browser is
+      // for. The proxy is what is left when there is no browser to run — it
+      // shows the page, but with no cookies and no working forms, which for
+      // github or google means a signed-out shell of the thing you asked for.
+      const refused: Route = liveAvailableRef.current && !mustProxy ? 'live' : 'proxy';
+      const chosen: Route = force ?? (probe.framable && !mustProxy ? 'direct' : refused);
       setRoute(chosen);
       const href = probe.finalUrl ?? (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`);
-      setSrc(chosen === 'direct' ? href : `/api/preview?url=${encodeURIComponent(href)}`);
+      if (chosen === 'live') { setSrc(href); setLiveNav(n => n + 1); }
+      else setSrc(chosen === 'direct' ? href : `/api/preview?url=${encodeURIComponent(href)}`);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
       setSrc(null);
@@ -114,7 +174,18 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   // Opened with a file from the tree.
   useEffect(() => { if (initialUrl) { setDraft(initialUrl); void load(initialUrl); } }, [initialUrl, navSeq, load]);
 
-  const openHref = target && !target.startsWith('/api/')
+  // In the live browser the page navigates on its own — every link you click
+  // is a navigation nothing else here knows about — so the bar follows it,
+  // except while you are typing in it.
+  const addressRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (route !== 'live' || !live?.url) return;
+    if (document.activeElement === addressRef.current) return;
+    if (live.url === 'about:blank') return;
+    setDraft(live.url);
+  }, [route, live?.url]);
+
+  const openHref = route === 'live' && live?.url ? live.url : target && !target.startsWith('/api/')
     ? (/^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? target : `http://${target}`)
     : src ?? undefined;
 
@@ -123,18 +194,41 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   return (
     <div className="preview-pane" onClick={e => e.stopPropagation()}>
       <div className="preview-bar">
+        {/* History belongs to the live browser alone: it is the only route with
+            any. An iframe's history is the page's own and reaching into it
+            cross-origin is not allowed, so these would be dead buttons on the
+            other two. */}
+        {route === 'live' && (
+          <>
+            <button className="preview-btn" title="Back" disabled={!live?.canGoBack}
+              onClick={() => liveCommands.current?.back()}><ArrowLeft size={12} /></button>
+            <button className="preview-btn" title="Forward" disabled={!live?.canGoForward}
+              onClick={() => liveCommands.current?.forward()}><ArrowRight size={12} /></button>
+          </>
+        )}
         <button
           className="preview-btn"
           title="Reload"
-          onClick={() => { if (target) { setNonce(n => n + 1); void load(target, route); } }}
+          onClick={() => {
+            if (route === 'live') { liveCommands.current?.reload(); return; }
+            if (target) { setNonce(n => n + 1); void load(target, route); }
+          }}
         >
           <RotateCw size={12} className={busy ? 'preview-spin' : undefined} />
         </button>
         <input
           className="preview-address"
+          ref={addressRef}
           value={draft}
           onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void load(draft); }}
+          onKeyDown={e => {
+            if (e.key !== 'Enter') return;
+            // In the live browser the address bar is the page's, so it goes
+            // straight there — re-probing would only ask whether a page we are
+            // not framing can be framed.
+            if (route === 'live') { setTarget(draft); liveCommands.current?.navigate(normalizeTyped(draft)); return; }
+            void load(draft);
+          }}
           placeholder="localhost:3000, or any URL"
           spellCheck={false}
         />
@@ -142,17 +236,23 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
             pane gets — a proxied page is a different thing from the real one,
             no cookies and no login, and you should not have to wonder which
             you are looking at. Only its word goes; the icon says it too. */}
+        {/* Which of the three you are looking at. It never leaves, however
+            narrow the pane: they are genuinely different things — one is the
+            real page, one is a cookie-less photocopy of it, one is a browser
+            with your logins in it — and you should not have to wonder which.
+            Only the word goes; the icon says it too. */}
         <button
-          className={`preview-route${route === 'proxy' ? ' preview-route-on' : ''}`}
-          title={route === 'proxy'
-            ? 'Coming through sheepit: headers stripped, sandboxed, no cookies. Click for a direct frame.'
-            : 'Loaded directly. Click to route it through sheepit instead.'}
-          onClick={() => { if (target) void load(target, route === 'proxy' ? 'direct' : 'proxy'); }}
+          className={`preview-route${route === 'direct' ? '' : ' preview-route-on'}`}
+          title={ROUTE_HELP[route]}
+          onClick={() => {
+            const next = nextRoute(route, liveAvailable);
+            if (!target) return;
+            if (next === 'live') { setRoute('live'); setLiveNav(n => n + 1); setSrc(normalizeTyped(target)); return; }
+            void load(target, next);
+          }}
         >
-          {route === 'proxy' ? <ServerCog size={12} /> : <Globe size={12} />}
-          {/* The word goes first when the pane is narrow; the icon carries the
-              same meaning and the tooltip carries the rest. */}
-          <span className="preview-route-label">{route === 'proxy' ? 'via sheepit' : 'direct'}</span>
+          {route === 'live' ? <MonitorPlay size={12} /> : route === 'proxy' ? <ServerCog size={12} /> : <Globe size={12} />}
+          <span className="preview-route-label">{ROUTE_LABEL[route]}</span>
         </button>
         <a
           className="preview-btn"
@@ -185,7 +285,14 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       )}
 
       <div className="preview-body">
-        {src ? (
+        {route === 'live' ? (
+          <LiveBrowserSurface
+            url={src}
+            navSeq={liveNav}
+            onState={setLive}
+            commands={liveCommands}
+          />
+        ) : src ? (
           <iframe
             ref={frameRef}
             key={`${src}-${nonce}`}

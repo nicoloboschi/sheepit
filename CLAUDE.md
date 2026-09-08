@@ -824,13 +824,21 @@ have looked. `navSeq` counts openings rather than URLs, so clicking the same
 link again after wandering off inside the frame takes you back to it — a prop
 that has not changed says nothing.
 
-A page arrives one of two ways, and the difference is worth keeping straight:
+A page arrives one of **three** ways, and the difference is worth keeping
+straight — they are not three renderings of the same thing:
 
 - **direct** — the URL goes into the iframe as-is, so the page keeps its own
   origin, its cookies and its websockets, and hot reload still works. This is
   the default and much the better one.
 - **through sheepit** — `/api/preview` fetches it and returns it without the
-  headers that refused the frame.
+  headers that refused the frame. A cookie-less photocopy: it shows, but forms
+  go nowhere and nothing is signed in.
+- **live** — a real Chromium on the machine, driven over CDP and streamed in as
+  frames, with clicks and keys sent back (`live-browser.ts`, `browser-ws.ts`,
+  `LiveBrowserSurface.tsx`). It is picked automatically when a page refuses to
+  be framed, which is exactly the case the proxy served worst: github and
+  google both refuse, and both are useless signed out. See [The live
+  browser](#the-live-browser).
 
 **Neither path remembers a login.** Direct frames use the *browser's* cookie
 jar, subject to its own third-party rules — so a signed-in session may or may
@@ -855,6 +863,51 @@ that one line is what makes a naive proxy render at all. A **loopback** target
 is the exception: its own paths are rewritten back through `/api/preview`,
 because the browser asking may be a phone, and a phone's `127.0.0.1` is the
 phone.
+
+### The live browser
+
+A genuine Chromium, running here, shown in a pane. Four things about it are
+load-bearing:
+
+- **It is the browser already on the machine** (`findBrowser`: Chrome, Brave,
+  Edge, Chromium; `SHEEPIT_BROWSER` overrides). No 300 MB download bundled into
+  an npm package whose whole pitch is `npx`.
+- **Its profile is persistent and its own** (`browserProfileDir()`, which lives
+  in `live-browser.ts` and *not* `paths.ts` — see [what the daemon
+  hashes](#what-the-daemon-hashes-and-why-it-is-one-small-file)). Signing in to
+  GitHub once is the point; the cookies are on disk, so they survive a server
+  restart. It never touches the user's own browser profile — two processes
+  cannot share a `--user-data-dir` anyway.
+- **Only one pane streams at a time.** Headless Chromium casts its *active*
+  page and no other: `Page.startScreencast` on a freshly launched browser fails
+  outright with "Not attached to an active page" until `Target.activateTarget`
+  has been called, and activating a second tab stops the first one's frames
+  dead, even across a reload. Measured, both directions. So a pane claims the
+  stream when you click, scroll, type or navigate in it, and the pane that
+  loses it is told and says "Paused — click to resume". A still page with no
+  explanation reads as a hang.
+- **We keep our own note of the browser we started** (`browser.json`: pid and
+  port). Chromium's `DevToolsActivePort` is gone after anything but a clean
+  exit, and what is left then is the worst state there is — a live browser
+  holding the profile's `SingletonLock`, unreachable because nothing knows its
+  port, with every later launch exiting 21. With the note we can re-attach, or
+  kill the orphan and clear the stale locks.
+
+The client speaks CDP's own `Input.*` dialect rather than a vocabulary of our
+own: a DOM event already carries what CDP wants, and translating it twice only
+adds a second place for a modifier bit to go missing. Frames ride a **separate
+WebSocket** (`/ws/browser`) — tens of kilobytes many times a second must not
+queue in front of a keystroke on its way to a PTY. Both sockets are `noServer`
+and one `upgrade` listener routes them; a second path-bound `WebSocketServer`
+on the same HTTP server destroys the first one's sockets, which once killed
+every terminal connection in the app.
+
+**Security, plainly.** Anything that can reach sheepit can drive this browser
+and is therefore inside every session it is signed into. That is a real
+escalation over the preview iframe — and not one over sheepit itself, which
+hands the same caller a shell on the same machine as the same user. The shell
+is the bigger key. Do not add a way to reach the browser that does not come
+through sheepit's own front door.
 
 ### It is an open proxy, deliberately
 

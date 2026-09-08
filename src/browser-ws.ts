@@ -33,6 +33,7 @@ type ClientMessage =
   | { type: 'reload' }
   | { type: 'back' }
   | { type: 'forward' }
+  | { type: 'focus'; scale?: number }
   | { type: 'input'; method: string; params: Record<string, unknown> };
 
 /** `noServer`, and the caller routes upgrades to it — see the comment on the
@@ -73,6 +74,9 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
               // LAN, and it keeps one message shape on the socket.
               onFrame: frame => send({ type: 'frame', ...frame }),
               onState: state => send({ type: 'state', ...state }),
+              // Only one pane streams at a time (see LiveBrowser.activeViewId),
+              // so a pane has to be able to say why it went still.
+              onActive: active => send({ type: 'active', active }),
             });
             send({ type: 'ready' });
             break;
@@ -80,6 +84,7 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
           case 'resize':
             await browser.resizeView(viewId, msg.width, msg.height, msg.scale ?? 1);
             break;
+          case 'focus':    await browser.activate(viewId, msg.scale ?? 1); break;
           case 'navigate': browser.navigate(viewId, msg.url); break;
           case 'reload':   browser.reload(viewId); break;
           case 'back':     await browser.history(viewId, -1); break;
