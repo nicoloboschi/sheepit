@@ -162,37 +162,34 @@ export function looksLikeAssignedName(raw: string): boolean {
   return words.length >= 1 && words.length <= MAX_NAME_WORDS;
 }
 
-/** Coerce a model's answer into a name we will still recognise as ours.
+/** Coerce the agent's title into a name we will still recognise as ours.
  *
  *  Returns null when there is nothing usable left, which the caller treats as
  *  "decline to rename" — leaving the old name alone is always better than
  *  storing one that locks us out.
  *
+ *  This is now **only** the writer/reader contract: the charset, the word cap,
+ *  the length cap, and a letter to lead with. Nothing here judges what the
+ *  title says.
+ *
+ *  It used to take identifiers out — PR and issue numbers, uuids, commit
+ *  hashes — and that rule outlived its reason. It was written to police a
+ *  model *we* called, with a prompt of six rules it might not follow. Nothing
+ *  calls a model any more: the name is the title Claude Code wrote for its own
+ *  session, chosen by the agent doing the work, and second-guessing it costs
+ *  more than it saves. A day of PR review made that plain — every title came
+ *  back as `hindsight#4066`, `hindsight pull request 4015`, and the rule
+ *  reduced three different pens to the word "hindsight", which is also the
+ *  name of the directory each of them is in. The number *was* the work.
+ *
  *  Out-of-charset runs become spaces rather than being deleted, so `feat/foo`
- *  reads as two words instead of one portmanteau. `_` and `.` survive, because
- *  they are usually part of an identifier the user would recognise. */
+ *  reads as two words instead of one portmanteau. `_`, `.` and `#` survive:
+ *  they are part of an identifier the user would recognise, and `#` was
+ *  already in NAME_CHARSET — the reader has always claimed these. */
 export function normalizeAssignedName(raw: string, opts?: { keepCase?: boolean }): string | null {
   const decorated = stripNameDecoration(raw);
   let name = (opts?.keepCase ? decorated : decorated.toLowerCase())
-    // Identifiers out, before the charset pass turns `#3672` into a bare
-    // `3672` that no later rule could tell from a version number. The prompt
-    // asks for this too; a name is read a hundred times and written once, so
-    // it is worth enforcing on the way in rather than hoping.
-    //
-    // Only the reader stays permissive: looksLikeAssignedName must keep
-    // claiming names we wrote before this rule existed, or every one of them
-    // freezes its pane — the exact failure this whole contract exists for.
-    // The labelled form first: it takes the word with the number, so
-    // "review pr #3672" loses both and reads "review" rather than "review pr".
-    .replace(/\b(prs?|pull(?:\s+request)?s?|issues?|tickets?)\b[\s#:_-]*\d+/gi, ' ')
-    .replace(/#\d+/g, ' ')
-    // Uuids and commit hashes, which the prompt also forbids and which an
-    // agent title volunteers: "Recall metrics for org 81db9954-2fb1-…" was a
-    // live pane. A uuid is 36 characters of nothing you can read at a glance,
-    // and it survived the rules above because it is one word and no `#`.
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, ' ')
-    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b/gi, ' ')
-    .replace(/[^A-Za-z0-9 ._-]+/g, ' ')
+    .replace(/[^A-Za-z0-9 ._#-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     // The charset requires a letter first; a name that is only punctuation and

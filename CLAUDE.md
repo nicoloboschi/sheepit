@@ -516,18 +516,33 @@ The reported turns (`appendAgentTurn`, persisted as `turns`) are still kept —
 ⌘K searches them and the hook trace shows them — but nothing names a pane from
 them any more.
 
-**It never contains an identifier.** No PR or issue numbers, no `#123`, no
-ticket keys, no uuids or commit hashes — a uuid is 36 characters you cannot
-read at a glance, and it reached a live pane (`Recall metrics for org
-81db9954-2fb1-…`) by being one word with no `#` in it. A number says nothing about the work and the bar already shows the
-PR. The prompt asks for this, `normalizeAssignedName` enforces it (stripping
-the labelled form first, so `review pr #3672` becomes `review` and not `review
-pr`), and the PR number is no longer passed in the session context at all —
-it carried no topic and its only effect on a name was to end up inside it.
+**The title is taken as it is.** `normalizeAssignedName` is now *only* the
+writer/reader contract — the charset, six words, sixty characters, and a letter
+to lead with. Nothing in it judges what the title says.
 
-Only the **writer** strips ids. `looksLikeAssignedName` stays permissive, or
-every name written before that rule freezes its pane — which is the whole
-subject of the section below.
+It used to take identifiers out: PR and issue numbers, `#123`, uuids, commit
+hashes. **That rule outlived its reason.** It was written to police a model
+*we* called, against a prompt of six rules it might not follow. Nothing calls a
+model any more — the name is the title Claude Code wrote for its own session,
+chosen by the agent doing the work — and a rule that second-guesses it is a
+rule with no author left to correct.
+
+A day of PR review is what showed the cost. Every title came back shaped like
+the work: `hindsight#4066`, `hindsight#4206`, `hindsight pull request 4015`.
+Stripping the number left three different pens all called `hindsight`, which is
+also the name of the directory each of them is in — the namer writing a name
+that `isRenameable` would call a default. The number *was* the work. The old
+argument (the bar already shows the PR) does not hold either: the bar shows the
+**branch's** PR, and a pane reviewing someone else's has none.
+
+The uuid goes with it, deliberately — `Recall metrics for org
+81db9954-2fb1-…` is a real pane and reads long, but it is what the agent chose
+to call it, and there is no longer anything here that claims to know better.
+
+Both halves of the contract accept the same names now. `#` was always in
+`NAME_CHARSET`, so the reader has claimed these all along; only the writer had
+stopped producing them, which is what made every pre-rule name a name the
+namer could never rewrite.
 
 ### The writer and the reader are one definition
 

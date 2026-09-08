@@ -95,13 +95,13 @@ describe('assigned-name shape', () => {
     expect(looksLikeAssignedName('Fields distinction local storage scope')).toBe(true)
   })
 
-  // The reader alone accepts a `#`: the writer strips `#123`, so it can never
-  // produce one. It is the only way back to the names written before the
-  // identifier rule, which were frozen for good — disowned at every restart.
-  it('claims a pre-rule name carrying an identifier', () => {
+  // `#` is in the charset on both sides now. It always was on the reader's,
+  // which is what kept the names written before the identifier rule from
+  // freezing; the writer produces them again.
+  it('claims a name carrying an identifier, and writes one', () => {
     expect(looksLikeAssignedName('merge pr #1837')).toBe(true)
     expect(looksLikeAssignedName('check PR 1251 CI')).toBe(true)
-    expect(normalizeAssignedName('merge pr #1837')).toBe('merge')
+    expect(normalizeAssignedName('merge pr #1837')).toBe('merge pr #1837')
   })
 
   it('still refuses what it could never have written', () => {
@@ -113,25 +113,11 @@ describe('assigned-name shape', () => {
 
   // An agent title keeps its case; everything else is still lowercased, so the
   // names our own namer writes stay one house style.
-  it('keeps the case of a title when asked, and strips ids either way', () => {
+  it('keeps the case of a title when asked', () => {
     expect(normalizeAssignedName('Litellm-sdk bedrock support', { keepCase: true }))
       .toBe('Litellm-sdk bedrock support')
-    expect(normalizeAssignedName('Merge PR 1249', { keepCase: true })).toBe('Merge')
-    expect(normalizeAssignedName('Check PR #1251 CI', { keepCase: true })).toBe('Check CI')
+    expect(normalizeAssignedName('Check PR #1251 CI', { keepCase: true })).toBe('Check PR #1251 CI')
     expect(normalizeAssignedName('Merge And Deploy')).toBe('merge and deploy')
-  })
-
-  // The prompt forbids these too, and an agent title volunteers them: this was
-  // a live pane called "Recall metrics for org 81db9954-2fb1-4012-…". A uuid
-  // is 36 characters you cannot read at a glance, and it slipped through the
-  // rules above by being one word with no `#` in it.
-  it('takes out uuids and commit hashes', () => {
-    expect(normalizeAssignedName('Recall metrics for org 81db9954-2fb1-4012-bab9-977e631c8126', { keepCase: true }))
-      .toBe('Recall metrics for org')
-    expect(normalizeAssignedName('revert a1b2c3d4e5f in the parser')).toBe('revert in the parser')
-    // A word that is only hex letters is a word, not a hash: the rule needs a
-    // digit in it, or "deadbeef" and "decade" would go the same way.
-    expect(normalizeAssignedName('decade of deadbeef cafes')).toBe('decade of deadbeef cafes')
   })
 
   it('normalises every way a name could fall outside the recogniser', () => {
@@ -154,24 +140,30 @@ describe('assigned-name shape', () => {
     expect(long).toBe('alpha bravo charlie delta echo')
   })
 
-  // A name is read a hundred times and written once, and an id in it says
-  // nothing about the work: the prompt asks the model not to produce one, and
-  // this is the half that does not depend on the model complying.
-  it('never stores an identifier in a name', () => {
-    expect(normalizeAssignedName('review pr #3672')).toBe('review')
-    expect(normalizeAssignedName('mirror pr 2207')).toBe('mirror')
-    expect(normalizeAssignedName('fix issue 88 in namer')).toBe('fix in namer')
-    expect(normalizeAssignedName('pull request 42 review')).toBe('review')
-    // Nothing left to name it after — better the old name than "3672".
-    expect(normalizeAssignedName('pr-3672')).toBeNull()
+  // The identifier rule is gone: nothing calls a model any more, so there is
+  // no model's output to police — the title is the agent's own, and on a day
+  // of PR review the number is what the pane is about. It used to reduce
+  // these three to "hindsight", the name of the directory all three are in.
+  it('keeps the identifier the agent put in its title', () => {
+    expect(normalizeAssignedName('hindsight#4066', { keepCase: true })).toBe('hindsight#4066')
+    expect(normalizeAssignedName('hindsight pull request 4015', { keepCase: true }))
+      .toBe('hindsight pull request 4015')
+    expect(normalizeAssignedName('Hindsight pull request 3977 review', { keepCase: true }))
+      .toBe('Hindsight pull request 3977 review')
+    expect(normalizeAssignedName('review pr #3672')).toBe('review pr #3672')
+    expect(normalizeAssignedName('Recall metrics for org 81db9954-2fb1-4012-bab9-977e631c8126', { keepCase: true }))
+      .toBe('Recall metrics for org 81db9954-2fb1-4012-bab9-977e631c8126')
+    // A name still has to start with a letter, so one that is only an id has
+    // nothing to lead with — better the old name than "3672".
     expect(normalizeAssignedName('#123')).toBeNull()
   })
 
-  // The reader stays permissive on purpose: names written before that rule
-  // existed must still be claimable, or every one of them freezes its pane.
-  it('still claims back the names it wrote before ids were stripped', () => {
+  // The reader has always been the permissive half; the writer no longer
+  // produces anything it has to stretch for.
+  it('claims back every name it has ever written', () => {
     expect(looksLikeAssignedName('mirror pr 2207')).toBe(true)
     expect(looksLikeAssignedName('compare 0.9.1 pr regression')).toBe(true)
+    expect(looksLikeAssignedName('hindsight#4066')).toBe(true)
   })
 
   // The invariant. If this fails, the writer can once again store a name the

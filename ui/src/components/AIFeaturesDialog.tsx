@@ -69,8 +69,9 @@ export function AIFeaturesContent() {
             <p className="text-xs text-muted-foreground leading-relaxed">
               Claude Code titles its own session and writes that title into its transcript.
               Sheepit reads it and names the pen after it — no model call, and it keeps up
-              as the work moves on. PR numbers, issue numbers, uuids and commit hashes are
-              taken out: the pane bar already shows the PR.
+              as the work moves on. The title is taken as it is, PR numbers and all: the
+              agent doing the work picked it, and on a day of PR review the number is what
+              the pen is about.
             </p>
             <p className="text-xs text-muted-foreground leading-relaxed">
               Codex writes no title, so a Codex pen keeps the name it has until you change it.
