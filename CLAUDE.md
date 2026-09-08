@@ -669,6 +669,42 @@ pane bar shows). Both are otherwise invisible, and a blank column is the whole
 explanation for a pane that lights up correctly but is never named, or never
 shows its PR.
 
+## The terminal font, and the cache that outlives it
+
+Picking a font applies to every pane straight away, and for a long time it
+looked like it did nothing: you chose Menlo and the panes went on rendering
+whatever they had. The setting, the preference and the xterm option were all
+correct. **The renderer's glyph cache was the problem.**
+
+xterm's WebGL renderer keeps a texture atlas of rasterised glyphs and a render
+model holding, per cell, the texture coordinates into it. Setting
+`fontFamily` does swap in a new atlas — the atlas config includes the family —
+but `_handleOptionsChanged` refreshes the atlas and leaves the model alone, and
+`_updateModel` skips any cell whose character and colours are unchanged. On a
+screen nobody has typed into, that is *every* cell. So the pane keeps drawing
+the old font from coordinates computed against the old atlas.
+
+`term.refresh()` does not fix it, which is why it was there and did not work: a
+refresh marks rows dirty, and dirty rows still hit that unchanged-cell
+`continue`. The fix is `WebglAddon.clearTextureAtlas()`, which clears the atlas
+*and* the model, so every cell is rasterised again. It is why the addon is kept
+in a ref (`webglRef`) rather than only as a local in the mount effect — the
+font effect has to reach it.
+
+Two things follow that are easy to get wrong:
+
+- **A font *size* change needs none of this.** It moves the cell metrics, so
+  the renderer resizes and clears the model itself. That asymmetry is why zoom
+  always worked and the family picker never did, and why a bug report here will
+  say "the size works, the font doesn't".
+- **The DOM renderer has no atlas.** With no WebGL context there is no addon,
+  and a plain repaint is both necessary and enough — so the font effect falls
+  back to `refresh()` when `webglRef` is empty rather than assuming an addon.
+
+A reload always looked correct, because a fresh `Terminal` is constructed with
+the right family and rasterises from scratch. "It works after a reload" is the
+signature of this bug, not evidence against it.
+
 ## Nothing reads the terminal as text
 
 Two things used to be derived by reading the output as prose. Both are gone,

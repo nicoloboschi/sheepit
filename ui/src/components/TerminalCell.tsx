@@ -84,8 +84,11 @@ function enableWebglRenderer(term: Terminal, onReady: (addon: WebglLike) => void
   }).catch(() => { /* chunk failed to load; DOM renderer still works */ });
 }
 
-/** Minimal shape we need; avoids importing the addon type eagerly. */
-interface WebglLike { dispose(): void }
+/** Minimal shape we need; avoids importing the addon type eagerly.
+ *
+ *  `clearTextureAtlas` is optional because the DOM renderer has no addon at
+ *  all — every caller has to cope with there being nothing to clear. */
+interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
 
 /** Per-pane view — each pane independently shows its terminal, git diff, or
  *  file browser, all scoped to that pane's own session/cwd. Persisted so a
@@ -283,6 +286,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   const fitAddonRef = useRef<FitAddon | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererReadyRef = useRef(false);
+  /** The WebGL renderer, when there is one. Held here and not just in the
+   *  mount effect because a font-family change has to reach into it — see the
+   *  font effect below. */
+  const webglRef = useRef<WebglLike | null>(null);
 
   // Per-pane view (terminal / git / files) + a ref the Files view fills in so
   // the git view (and terminal file links) can open a file in this same pane.
@@ -620,6 +627,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
         // leaving a live WebGL context attached to a dead terminal.
         if (disposed) { try { addon.dispose(); } catch { /* already gone */ } return; }
         webglAddon = addon;
+        webglRef.current = addon;
       });
 
       renderDispose = term.onRender(() => {
@@ -762,6 +770,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       // unregisters it from the AddonManager, so term.dispose() skips it.
       try { webglAddon?.dispose(); } catch { /* already gone */ }
       webglAddon = null;
+      webglRef.current = null;
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
@@ -964,15 +973,26 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     return () => clearTimeout(id);
   }, [zoom]);
 
-  // Apply font-family changes. The explicit refresh is the whole trick, and it
-  // is why this cannot just copy the zoom effect: xterm's CharSizeService only
-  // fires onCharSizeChange when the measured cell *dimensions* change, and two
-  // monospace faces at the same px size usually measure identically. So a
-  // family swap alone leaves no dirty rows — the atlas is rebuilt underneath
-  // and the screen goes on showing the glyphs it already painted, which reads
-  // as the setting doing nothing at all. Changing fontSize always moves the
-  // metrics, which is why zoom gets away without this. The theme effect above
-  // repaints for the same reason.
+  // Apply font-family changes.
+  //
+  // **The glyph cache has to be thrown away by hand.** Setting the option does
+  // give the WebGL renderer a new texture atlas (the atlas config includes
+  // fontFamily), but nothing clears the render model that points into the old
+  // one: `_handleOptionsChanged` refreshes the atlas and leaves the model
+  // alone, and `_updateModel` skips every cell whose character and colours are
+  // unchanged — which, on a screen you have not touched, is all of them. So
+  // the pane goes on painting the previous font's glyphs from vertex data
+  // computed against the previous atlas.
+  //
+  // `term.refresh()` cannot fix that, which is why it used to be here and did
+  // not work: refresh only marks rows dirty, and dirty rows still hit that
+  // unchanged-cell `continue`. `clearTextureAtlas()` is the addon's public
+  // answer — it clears the atlas *and* the model, so every cell is rasterised
+  // again in the new face.
+  //
+  // A font *size* change needs none of this: it moves the cell metrics, so the
+  // renderer resizes and clears the model on its own. That asymmetry is the
+  // whole reason a family swap looked like the setting doing nothing.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -984,7 +1004,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       safeFit();
       const t = termRef.current;
       if (!t) return;
-      t.refresh(0, t.rows - 1);
+      // No addon means the DOM renderer, which reads the family off the
+      // element and needs nothing but a repaint.
+      if (webglRef.current?.clearTextureAtlas) {
+        try { webglRef.current.clearTextureAtlas(); } catch { /* context lost; the DOM renderer takes over */ }
+      } else {
+        t.refresh(0, t.rows - 1);
+      }
       sendResize();
     }, 20);
     return () => clearTimeout(id);
