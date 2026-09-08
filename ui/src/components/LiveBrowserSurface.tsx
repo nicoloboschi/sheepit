@@ -386,9 +386,26 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       return;
     }
 
-    // A key that produces text is left alone: it types into the sink, and the
-    // `input` event sends it. Taking it here instead is what broke ⌥ò — the
-    // composed character never exists if the keydown is cancelled.
+    // A character the keyboard composed with Option/AltGr — `@` is ⌥ò on an
+    // Italian layout — is taken here, deliberately, and marked handled.
+    //
+    // Chromium hands a key event the renderer did NOT handle back to the
+    // browser for accelerator processing. Left alone, ⌥ò reached the sink,
+    // was not inserted as text, bounced back, and Brave ran its own shortcut
+    // with it. `preventDefault` is what says "handled", and the character is
+    // already composed in `e.key` — macOS did that part — so it goes straight
+    // in as text.
+    if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.length === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (down) send({ type: 'input', method: 'Input.insertText', params: { text: e.key } });
+      return;
+    }
+
+    // Everything else that produces text is left alone: it types into the sink
+    // and the `input` event sends it, which is the only path a dead key or an
+    // IME candidate can take — cancelling those stops the character ever
+    // existing.
     if (producesText(e)) return;
 
     e.preventDefault();

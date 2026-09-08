@@ -1043,6 +1043,16 @@ is not focusable, so it took the focus straight back out of the sink — leaving
 a pane where the mouse worked and nothing could be typed at all. (It also stops
 the drag from selecting the pane's own image.)
 
+**A character composed with Option/AltGr is taken explicitly, and marked
+handled.** Chromium hands any key event the renderer did *not* handle back to
+the browser for accelerator processing — so ⌥ò reached the sink, was not
+inserted as text, bounced back, and Brave ran its own shortcut with it (a tab
+switch). `preventDefault` is what says "handled" and ends that; the character
+is already composed in `e.key`, because macOS did that part, so it goes in with
+`Input.insertText`. Note the shape of this: the sink was still necessary —
+without a text input context the key never reached the page at all — but it was
+not sufficient.
+
 So the split is: **text comes from the sink, keys come from `keydown`**
 (`producesText` decides). A keystroke that makes a character is deliberately
 *not* cancelled — cancelling it is what stops the character from ever existing.
