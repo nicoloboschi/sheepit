@@ -1067,6 +1067,31 @@ translation are not optional:
   does carry text (`\r`), and without it Enter raised a keydown that no form
   ever submitted on.
 
+**Send nothing to the browser while a modifier is held.** This is the rule the
+rest of the keyboard section exists to support, and it cost a day to find.
+
+Driving a Chrome over CDP makes that Chrome **activate itself at the macOS
+window level** — a known Chromium bug (chromium#223828, and
+`ChromeDevTools/chrome-devtools-mcp#1254`). Any command will do it. So a bare
+`Alt` keydown forwarded the moment you hold Option pulled the desktop's focus
+off the browser you were typing into, and the half-composed character died with
+it: `@` on an Italian layout is ⌥ò, and macOS was mid-composition when the
+window blurred. What the user saw was a beep, no character, and *System
+Information* coming to the front — the chord escalating up macOS's menu chain,
+where Option turns "About This Mac" into "System Information…".
+
+Everything about it pointed away from us. It happened in Brave and in Comet
+alike (the thief is Chrome, not the viewer). It never happened in any other
+app (nothing else drives a second browser over CDP while you type). It worked
+if you pressed both keys fast enough to beat the round trip. Hours went into
+the machine's shortcut stores, extension commands and accessibility settings,
+and the answer was one WebSocket message at exactly the wrong moment.
+
+A modifier on its own is therefore **dropped**: not cancelled (that kills the
+composition too), not forwarded. Nothing needs it — every mouse and key event
+already carries the modifier bits. `Target.activateTarget` is in the same
+family and is now only sent once, to start a cast; see `activate()`.
+
 **The keyboard goes into a real text field.** The pane keeps an invisible
 one-pixel `<textarea>` (`.live-browser-key-sink`) and focuses that, the same
 trick xterm uses, for the same reason: focusing a plain `<div>` gives the OS no
