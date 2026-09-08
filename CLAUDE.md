@@ -915,23 +915,35 @@ both moved to `direct-bridge.ts`, and the proxy went 483 → 376 lines.
   truly cannot go there, you are about to cost every user every session — say
   so in the PR.
 
-### `src/paths.ts` is a daemon source — editing it closes every session
+### What the daemon hashes, and why it is one small file
 
 `dev.sh` decides whether the running daemon is stale by hashing
-`DAEMON_SOURCES="src/pty-daemon.ts src/paths.ts"` and comparing it to the hash
-the daemon recorded at startup. A difference means "replace the daemon", and
-replacing the daemon kills every shell it holds and every agent running in one.
+`DAEMON_SOURCES` and comparing that to the hash the daemon recorded at startup.
+A difference means "replace the daemon" — and replacing the daemon closes every
+shell it holds and kills every agent running in one.
 
-So `paths.ts` is not an ordinary file. Adding one unrelated helper to it — a
-directory for the live browser's profile, which the daemon never reads — is
-enough to change that hash, and the next routine `dev.sh` then closes every
-pane on the machine. It has happened, and the tell afterwards is a full session
-list whose panes all hold a fresh `/bin/zsh -l`.
+That set used to be `src/pty-daemon.ts src/paths.ts`, and `paths.ts` holds
+every path in the product. The daemon imports exactly one of them
+(`configDir`), but the hash covered all of them, so adding an unrelated
+directory for an unrelated feature — a browser profile the daemon never reads —
+armed a trap that the next ordinary restart sprang. 24 live sessions, closed by
+a function nobody called. The tell afterwards is a full session list whose
+panes all hold a fresh `/bin/zsh -l`.
 
-A path only the server uses belongs next to the server code that uses it
-(`browserProfileDir` lives in `live-browser.ts` for exactly this reason). Put a
-path in `paths.ts` only when the daemon genuinely needs it — and then know you
-have spent everyone's sessions on it.
+Two things now stand between that mistake and your sessions, and both matter:
+
+- **`src/daemon-paths.ts`** holds `configDir` and nothing else, and is what the
+  daemon imports; `paths.ts` re-exports it, so there is still one definition of
+  where sheepit keeps its state. `DAEMON_SOURCES` is `pty-daemon.ts` and that
+  file. A new path added to `paths.ts` can no longer change what is hashed.
+  **Keep `daemon-paths.ts` small** — a change to it should mean the daemon
+  genuinely needs to restart.
+- **A stale daemon holding live shells is kept, not replaced.** `dev.sh` says
+  what changed and tells you to run `./dev.sh --fresh-daemon` deliberately.
+  Sessions are the expensive thing here — an agent mid-run, an hour of
+  scrollback — and "the daemon is running older code" is the cheaper problem.
+  It still replaces a stale daemon that holds nothing, which is the case the
+  check was written for.
 
 ## Legacy names — don't rename, just document
 

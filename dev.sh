@@ -114,7 +114,11 @@ DAEMON_PID_FILE="$DAEMON_DIR/pty-daemon.pid"
 DAEMON_FINGERPRINT_FILE="$DAEMON_DIR/pty-daemon.fingerprint"
 # Only the proxy's own code counts. Server sources are hot-reloaded by tsx
 # watch and must not trigger a session-closing restart.
-DAEMON_SOURCES="src/pty-daemon.ts src/paths.ts"
+# What the daemon actually runs. NOT src/paths.ts: that holds every path in
+# the product, so adding an unrelated one to it made this hash change and the
+# next ordinary restart closed 24 live sessions over a function the daemon
+# never calls. daemon-paths.ts exists to be small and to stay still.
+DAEMON_SOURCES="src/pty-daemon.ts src/daemon-paths.ts"
 
 sha16() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi
@@ -173,8 +177,20 @@ reset_daemon() {
       echo "  PTY daemon (pid $daemon_pid) is current [${running:-?}] — reusing it, sessions kept."
       return 0
     fi
+    # A stale daemon with live sessions is not something to fix silently. The
+    # sessions are the expensive thing in this program — an agent mid-run, a
+    # build, an hour of scrollback — and "the code moved on" is a far cheaper
+    # problem than losing them. So say what changed and let the daemon be; the
+    # user replaces it deliberately, when nothing is mid-flight.
     if [ "$force" -eq 0 ]; then
-      echo "  Replacing PTY daemon (pid $daemon_pid): running [${running:-none}] but disk is [${disk:-?}]."
+      live=$(pgrep -P "$daemon_pid" 2>/dev/null | wc -l | tr -d ' ')
+      if [ "${live:-0}" -gt 0 ]; then
+        echo "  PTY daemon (pid $daemon_pid) is running [${running:-none}] but disk is [${disk:-?}]."
+        echo "  It is holding $live shell(s), so it is being KEPT — your sessions are safe."
+        echo "  Daemon changes will not take effect until you run: ./dev.sh --fresh-daemon"
+        return 0
+      fi
+      echo "  Replacing PTY daemon (pid $daemon_pid): running [${running:-none}] but disk is [${disk:-?}] (no live shells)."
     else
       echo "  Replacing PTY daemon (pid $daemon_pid) (--fresh-daemon)."
     fi

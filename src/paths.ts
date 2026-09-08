@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { configDir } from './daemon-paths.js';
 
 /**
  * On-disk locations for sheepit's own state — one root, `~/.config/sheepit`.
@@ -17,10 +18,13 @@ import { join } from 'path';
  * explicit step — see `scripts/migrate-from-vipershell.sh`.
  */
 
-/** `~/.config/sheepit` — the single root: config, sessions, notes, buffers. */
-export function configDir(): string {
-  return join(homedir(), '.config', 'sheepit');
-}
+/** `~/.config/sheepit` — the single root: config, sessions, notes, buffers.
+ *
+ *  Defined in `daemon-paths.ts` and re-exported here, so this stays the one
+ *  place to import a path from while the daemon depends on a file that only
+ *  ever holds this. See the comment there: what the daemon hashes is what a
+ *  routine `dev.sh` will close your sessions over. */
+export { configDir };
 
 /** Markdown notes, one file per sheet. */
 export function notesDir(): string {

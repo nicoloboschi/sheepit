@@ -23,7 +23,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { homedir } from 'os';
-import { configDir } from './paths.js';
+// Deliberately NOT './paths.js': what this file imports is what dev.sh hashes,
+// and hashing every path in the product meant an unrelated addition to it
+// closed every session. See daemon-paths.ts.
+import { configDir } from './daemon-paths.js';
 
 const CONFIG_DIR = configDir();
 const SOCKET_PATH = join(CONFIG_DIR, 'pty-daemon.sock');
