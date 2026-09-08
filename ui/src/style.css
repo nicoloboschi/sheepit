@@ -2477,3 +2477,25 @@
 @media (prefers-reduced-motion: reduce) {
   .preview-loading { animation: none; background-position: 0 0; background-size: 100% 100%; opacity: 0.5; }
 }
+
+/* The live browser's keyboard sink — invisible, but a real text field.
+   Focusing a div gives the OS no text input context, and without one macOS
+   never composes: `@` is ⌥ò on an Italian layout, and the raw chord fell
+   through to the browser's own shortcuts instead of becoming a character.
+   Dead keys, IME candidates and the emoji picker need the same context. */
+.live-browser-key-sink {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  outline: none;
+  overflow: hidden;
+  z-index: 1;
+  /* Never eat a click meant for the page. */
+  pointer-events: none;
+}

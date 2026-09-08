@@ -28,6 +28,15 @@ const BUTTONS = ['left', 'middle', 'right'] as const;
  *  which would have a page nobody vouched for fetching an image through the
  *  viewer's own browser. Every keyword CSS defines is here; anything else
  *  becomes the default. */
+/** Does this keystroke make text? Anything one character long that is not a
+ *  chord — including everything ⌥ composes. Those are typed into the sink and
+ *  arrive as an `input` event; everything else (Enter, Tab, arrows, Escape,
+ *  function keys, and any ⌘/⌃ chord) is a key the page should see as a key. */
+function producesText(e: KeyboardEvent): boolean {
+  if (e.metaKey || e.ctrlKey) return false;
+  return e.key.length === 1 || e.key === 'Process' || e.key === 'Unidentified' || e.key === 'Dead';
+}
+
 const CURSORS = new Set([
   'auto', 'default', 'none', 'context-menu', 'help', 'pointer', 'progress', 'wait',
   'cell', 'crosshair', 'text', 'vertical-text', 'alias', 'copy', 'move', 'no-drop',
@@ -106,6 +115,22 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
 }): React.ReactElement {
   const wsRef = useRef<WebSocket | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Where the keyboard actually goes — an invisible textarea, the same trick
+   * xterm uses, and for the same reason.
+   *
+   * Focus a plain `<div>` and there is no *text input context*, so macOS never
+   * runs the input method: `@` on an Italian layout is ⌥ò, and the composition
+   * that turns those two into a character only happens when something editable
+   * is focused. Without it the raw ⌥+key falls through to the application's
+   * accelerators — Brave switched tab, and the character was never typed. Dead
+   * keys, IME candidates and the emoji picker were all lost the same way.
+   *
+   * So the character arrives here as an `input` event, already composed, and
+   * is sent as text. Keys that are not text — Enter, Tab, arrows, shortcuts —
+   * are still forwarded as key events from `keydown`.
+   */
+  const keySinkRef = useRef<HTMLTextAreaElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   // The last frame's own size, so a click maps correctly even in the moment
   // between a resize and the first frame that is actually the new size.
@@ -342,45 +367,39 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       // Cut still needs the page to do the removing.
       return key === 'c';
     }
-    if (key === 'v') {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) send({ type: 'paste', text });
-      } catch { /* denied: nothing to paste, and the page cannot help */ }
-      return true;
-    }
+    // ⌘V is deliberately NOT handled here: the sink is a real text field, so
+    // the browser pastes into it and the `input` event forwards the text. That
+    // needs no clipboard permission and works with what the OS pasted.
     return false;
   }, [askForSelection, send]);
 
   const onKey = useCallback((e: KeyboardEvent, down: boolean) => {
-    // The page has the keyboard while it is focused — including ⌘R, which
-    // should reload the page and not the whole of sheepit.
-    e.preventDefault();
-    e.stopPropagation();
-    // Copy and paste are this machine's, not the page's — and they are settled
-    // before anything is forwarded, so the page never sees a copy it would
-    // answer into a clipboard nobody can read.
+    // Anything the input method is in the middle of composing belongs to it.
+    if (e.isComposing || e.keyCode === 229) return;
+
+    // Copy and paste are this machine's, not the page's, and are settled before
+    // anything is forwarded.
     if (down && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      e.stopPropagation();
       void clipboard(e).then(handled => { if (!handled) forwardKey(e, true); });
       return;
     }
+
+    // A key that produces text is left alone: it types into the sink, and the
+    // `input` event sends it. Taking it here instead is what broke ⌥ò — the
+    // composed character never exists if the keydown is cancelled.
+    if (producesText(e)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
     forwardKey(e, down);
   }, [clipboard]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const forwardKey = useCallback((e: KeyboardEvent, down: boolean) => {
-    // A character the keyboard *composed* — `@` is Option+ò on an Italian
-    // layout, `#` is Option+à, and AltGr does the same job on Windows and
-    // Linux — arrives already composed in `e.key`, with the modifier that
-    // composed it still set. Sending that as a key event asks the page to read
-    // a character and a held Alt at once, which is an accelerator, not typing.
-    // `insertText` says the one thing that is actually true: this text was
-    // typed. It has no up and down, so there is nothing to send on release.
-    const composed = e.key.length === 1 && (e.altKey || (e.ctrlKey && e.altKey)) && !e.metaKey;
-    if (composed) {
-      if (down) send({ type: 'input', method: 'Input.insertText', params: { text: e.key } });
-      return;
-    }
-    const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+    // Text never comes through here any more — see `producesText` — so what is
+    // left is keys, and only Enter still carries text with it.
+    const printable = false;
     const text = printable ? e.key : KEY_TEXT[e.key];
     // The event's own keyCode is the virtual key code; the table is only for
     // the events that report 0.
@@ -426,7 +445,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // in a browser pane, it is not there at all.
     if (!focused) return;
     const handle = (down: boolean) => (e: KeyboardEvent) => {
-      if (document.activeElement !== surfaceRef.current) return;
+      if (document.activeElement !== keySinkRef.current) return;
       onKey(e, down);
     };
     const down = handle(true);
@@ -444,9 +463,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       ref={surfaceRef}
       className="live-browser-surface"
       style={{ cursor }}
-      tabIndex={0}
       onMouseDown={e => {
-        (e.currentTarget as HTMLElement).focus();
+        // Focus the text sink, not this div: that is what gives the keyboard a
+        // text input context, and what makes the input method compose.
+        keySinkRef.current?.focus({ preventScroll: true });
         claim();
         draggingRef.current = true;
         mouse('mousePressed', e, e.detail || 1);
@@ -467,10 +487,28 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           params: { type: 'mouseWheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modifierBits(e) },
         });
       }}
-      onFocus={() => { setFocused(true); claim(); }}
-      onBlur={() => setFocused(false)}
+
     >
       <img ref={imgRef} className="live-browser-frame" alt="" draggable={false} />
+      {/* The keyboard's real destination. Invisible, one pixel, and never
+          holding anything: whatever lands in it is sent to the page and wiped,
+          so it can never disagree with what the page is showing. */}
+      <textarea
+        ref={keySinkRef}
+        className="live-browser-key-sink"
+        aria-label="Browser keyboard input"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        onFocus={() => { setFocused(true); claim(); }}
+        onBlur={() => setFocused(false)}
+        onInput={e => {
+          const el = e.currentTarget;
+          const text = el.value;
+          el.value = '';
+          if (text) send({ type: 'input', method: 'Input.insertText', params: { text } });
+        }}
+      />
       {/* A still page with no explanation reads as a hang. The browser can only
           cast one tab, so say which state this one is in. */}
       {paused && <div className="live-browser-paused">Not streaming — click to retry</div>}

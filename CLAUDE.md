@@ -990,6 +990,25 @@ translation are not optional:
   does carry text (`\r`), and without it Enter raised a keydown that no form
   ever submitted on.
 
+**The keyboard goes into a real text field.** The pane keeps an invisible
+one-pixel `<textarea>` (`.live-browser-key-sink`) and focuses that, the same
+trick xterm uses, for the same reason: focusing a plain `<div>` gives the OS no
+*text input context*, so macOS never runs the input method. `@` on an Italian
+layout is ⌥ò, and the composition that turns those two into a character only
+happens when something editable has focus — without it the raw chord fell
+through to the application's accelerators, so Brave switched tab and no `@` was
+ever typed. Dead keys, IME candidates, the emoji picker and paste were lost the
+same way; all of them arrive now as an `input` event, already composed, and are
+sent with `Input.insertText`.
+
+So the split is: **text comes from the sink, keys come from `keydown`**
+(`producesText` decides). A keystroke that makes a character is deliberately
+*not* cancelled — cancelling it is what stops the character from ever existing.
+Enter, Tab, arrows, Escape and every ⌘/⌃ chord are cancelled and forwarded as
+key events. ⌘V needs no special handling at all: the browser pastes into the
+sink and the same `input` event carries it, with no clipboard permission asked
+for.
+
 **The keyboard is captured at the window, not taken on the element.** A page
 can only stop a browser shortcut it sees first, and by the time a handler on
 the element runs, the event has already passed the window — so the *viewing*
