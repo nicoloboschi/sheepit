@@ -48,6 +48,15 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
     });
   }, []);
 
+  // Publish the sidebar's width so a full-area surface can start where the
+  // sidebar ends. Zen is the one that needs it: it is read *while* picking the
+  // next pen out of the list, so it must not cover the list. Kept as a CSS
+  // variable rather than a store field because the only consumers are styles,
+  // and the drag would otherwise re-render every pane 60 times a second.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--flock-width-raw', `${collapsed ? 36 : sidebarW}px`);
+  }, [collapsed, sidebarW]);
+
   // Expose toggle so App can show a button when sidebar is collapsed
   useEffect(() => {
     (window as any).__sheepitToggleSidebar = toggleCollapse;

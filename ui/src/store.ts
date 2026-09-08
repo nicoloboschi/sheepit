@@ -988,6 +988,10 @@ const useStore = create<StoreState>((set, get) => ({
       sessionLastEvent: nextLastEvent,
       workspaces: nextWorkspaces,
       workspaceOrder: nextWorkspaceOrder,
+      // A pane whose session has gone cannot be the one you are reading. Zen
+      // survives a change of pen now, so a dead id here would otherwise sit in
+      // the state (and in the URL) until something happened to replace it.
+      ...(prev.zenSessionId && !liveSessionIds.has(prev.zenSessionId) ? { zenSessionId: null } : {}),
     });
   },
 
@@ -1022,6 +1026,24 @@ const useStore = create<StoreState>((set, get) => ({
         }
         set({ sessionHasUnseen: nextUnseen, sessionNeedsAttention: nextAttention });
       }
+    }
+    // Zen is a mode, not a property of one pane. It used to be neither: the
+    // flag stayed on while the pane it named was unmounted with its workspace
+    // (hidden workspaces sit under `display: none`, which hides a fixed child
+    // too), so picking a pen dropped you out of zen without turning it off,
+    // and left `/zen:` in the URL pointing at a pane nobody was looking at.
+    // Now it moves with you — pick a pen from the sidebar and you read that
+    // pen, still in zen, which is the whole reason the sidebar stays visible.
+    if (id) {
+      const { zenSessionId, workspaces } = get();
+      if (zenSessionId) {
+        const ws = workspaces[id];
+        const next = ws ? (ws.cells[ws.activeCell] ?? ws.cells[0] ?? id) : id;
+        if (next !== zenSessionId) set({ zenSessionId: next });
+      }
+    } else if (get().zenSessionId) {
+      // Nothing selected — there is no pane to be zen on.
+      set({ zenSessionId: null });
     }
     set({ currentSessionId: id });
   },
@@ -1271,7 +1293,13 @@ const useStore = create<StoreState>((set, get) => ({
         [workspaceId]: { ...ws, activeCell: paneIndex },
       };
       saveWorkspaces(nextWorkspaces, s.workspaceOrder);
-      return { workspaces: nextWorkspaces };
+      // In zen you are reading one pane, so moving the focus to another pane
+      // of the same pen means reading that one instead — ⌘↑/↓ walks panes in
+      // zen the same way it walks them in the grid.
+      const zen = s.zenSessionId && s.workspaces[workspaceId]?.cells.includes(s.zenSessionId)
+        ? (ws.cells[paneIndex] ?? s.zenSessionId)
+        : s.zenSessionId;
+      return { workspaces: nextWorkspaces, zenSessionId: zen };
     });
   },
 

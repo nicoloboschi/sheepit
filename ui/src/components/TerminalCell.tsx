@@ -1334,11 +1334,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
 
   return (
     <>
-      {/* Zen backdrop — dims everything behind the pane */}
+      {/* Zen backdrop — dims the grid behind the pane, but stops at the
+          sidebar: the flock list stays lit and clickable, because picking the
+          next pen is what you do next and zen does not end to let you do it. */}
       {isZen && (
         <div
           style={{
-            position: 'fixed', inset: 0, zIndex: 999,
+            position: 'fixed', top: 0, right: 0, bottom: 0, left: 'var(--flock-width, 0px)', zIndex: 999,
             background: 'radial-gradient(ellipse at center, rgba(6,10,6,0.92) 0%, rgba(0,0,0,0.98) 100%)',
             backdropFilter: 'blur(8px)',
             animation: 'zen-enter 0.2s ease-out',
@@ -1357,7 +1359,13 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             // grid, not as a mode that replaced it. 40px was too much
             // backdrop (~11% of a 1440px screen's width); 12px was too little
             // to see it was an overlay at all. This is the middle.
-            inset: '24px',
+            //
+            // It starts where the sidebar ends rather than at the window edge.
+            // Zen used to cover the flock, so switching pens meant leaving it,
+            // and reading one pane is exactly when you are working through the
+            // list. On mobile --flock-width is 0 and this is the full screen.
+            top: 24, right: 24, bottom: 24,
+            left: 'calc(var(--flock-width, 0px) + 24px)',
             zIndex: 1000,
             borderRadius: 4,
             padding: 2,
