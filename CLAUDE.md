@@ -825,20 +825,27 @@ link again after wandering off inside the frame takes you back to it — a prop
 that has not changed says nothing.
 
 A page arrives one of **three** ways, and the difference is worth keeping
-straight — they are not three renderings of the same thing:
+straight — they are not three renderings of the same thing. **The live browser
+is the default wherever the machine has one**, and the other two are what is
+left when it does not:
 
 - **direct** — the URL goes into the iframe as-is, so the page keeps its own
-  origin, its cookies and its websockets, and hot reload still works. This is
-  the default and much the better one.
+  origin, its websockets and the *viewing browser's* cookies, and hot reload
+  still works. Still on the pill, for the two things it is better at: native
+  rendering (crisp text, no stream, no CPU), and several panes showing pages at
+  once, since only one pane can hold the live stream.
 - **through sheepit** — `/api/preview` fetches it and returns it without the
   headers that refused the frame. A cookie-less photocopy: it shows, but forms
   go nowhere and nothing is signed in.
 - **live** — a real Chromium on the machine, driven over CDP and streamed in as
   frames, with clicks and keys sent back (`live-browser.ts`, `browser-ws.ts`,
-  `LiveBrowserSurface.tsx`). It is picked automatically when a page refuses to
-  be framed, which is exactly the case the proxy served worst: github and
-  google both refuse, and both are useless signed out. See [The live
-  browser](#the-live-browser).
+  `LiveBrowserSurface.tsx`). **The default.** It is the only one of the three
+  that is actually a browser: cookies, logins, forms, popups, a page that
+  navigates itself. Choosing it needs no probe, so an open is one round-trip
+  shorter — and it is the answer to loopback-from-a-phone, which used to force
+  the proxy, because the browser runs on this machine and `localhost:3000`
+  therefore means this machine's port whatever device you are holding. See
+  [The live browser](#the-live-browser).
 
 **Neither path remembers a login.** Direct frames use the *browser's* cookie
 jar, subject to its own third-party rules — so a signed-in session may or may

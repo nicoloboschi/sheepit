@@ -43,18 +43,21 @@ const ROUTE_LABEL: Record<Route, string> = {
 };
 
 const ROUTE_HELP: Record<Route, string> = {
-  direct: 'The real page, framed as it is. Click to route it through sheepit.',
+  live: 'A real browser on this machine, with its own profile — signed-in sites stay signed in. Click to frame the page directly instead.',
+  direct: 'Framed directly: native rendering, no stream, and several panes at once — but the page has no session of yours. Click to route it through sheepit.',
   proxy: 'Coming through sheepit: headers stripped, sandboxed, no cookies, forms go nowhere. Click for the browser on the machine.',
-  live: 'A real browser on the machine, with its own profile — signed-in sites stay signed in. Click for a direct frame.',
 };
 
-/** direct → via sheepit → live → direct, skipping live where no browser was
- *  found. Cycling rather than a menu: there are three, they are ordered by how
- *  much of a real browser you are getting, and the pill is 60px wide. */
+/** live → direct → via sheepit → live, in that order because that is the order
+ *  you would want them: the real browser, then the iframe when you want native
+ *  rendering (crisp text, no stream, and two panes at once — only one pane can
+ *  hold the live stream), then the proxy, which is the one that is nobody's
+ *  first choice. Cycling rather than a menu: three items, and the pill is 60px
+ *  wide. Live is skipped where no browser was found. */
 function nextRoute(current: Route, liveAvailable: boolean): Route {
-  const order: Route[] = liveAvailable ? ['direct', 'proxy', 'live'] : ['direct', 'proxy'];
+  const order: Route[] = liveAvailable ? ['live', 'direct', 'proxy'] : ['direct', 'proxy'];
   const at = order.indexOf(current);
-  return order[(at + 1) % order.length] ?? 'direct';
+  return order[(at + 1) % order.length] ?? order[0]!;
 }
 
 /** What someone typing in the address bar meant. `load` gets this from the
@@ -146,19 +149,31 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       return;
     }
 
+    // The real browser is the default now, and where it exists nothing else is
+    // asked. It is the only route that is actually a browser — cookies, logins,
+    // forms, popups, a page that navigates itself — and picking it needs no
+    // probe, which also takes a network round-trip out of every open.
+    //
+    // It is also the answer to loopback-from-a-phone, which used to force the
+    // proxy: the browser runs on this machine, so `localhost:3000` means this
+    // machine's port whatever device you are holding.
+    if (!force && liveAvailableRef.current) {
+      setRoute('live');
+      setSrc(normalizeTyped(url));
+      setLiveNav(n => n + 1);
+      setBusy(false);
+      return;
+    }
+
     try {
       const probe = await fetch(`/api/preview/probe?url=${encodeURIComponent(url)}`).then(r => r.json());
       if (probe.error && !probe.framable) setError(probe.error);
-      // Loopback seen from another device has to come through the server
-      // whatever the probe says: the frame would resolve 127.0.0.1 to the
-      // device you are holding.
+      // With no browser on the machine we are back to the old pair. Loopback
+      // seen from another device has to come through the server whatever the
+      // probe says: the frame would resolve 127.0.0.1 to the device you are
+      // holding.
       const mustProxy = isLoopbackTarget(url) && browsingRemotely();
-      // A page that refuses to be framed is exactly what the live browser is
-      // for. The proxy is what is left when there is no browser to run — it
-      // shows the page, but with no cookies and no working forms, which for
-      // github or google means a signed-out shell of the thing you asked for.
-      const refused: Route = liveAvailableRef.current && !mustProxy ? 'live' : 'proxy';
-      const chosen: Route = force ?? (probe.framable && !mustProxy ? 'direct' : refused);
+      const chosen: Route = force ?? (probe.framable && !mustProxy ? 'direct' : 'proxy');
       setRoute(chosen);
       const href = probe.finalUrl ?? (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`);
       if (chosen === 'live') { setSrc(href); setLiveNav(n => n + 1); }
