@@ -184,6 +184,27 @@ export interface StoreState {
   workspaceOrder: string[];
   /** Session id of the pane currently in zen (fullscreen) mode, or null. */
   zenSessionId: string | null;
+
+  /**
+   * What each open browser pane is showing, reported by the pane itself.
+   *
+   * It lives in the store for one reason: the URL rides in sheepit's own
+   * address bar (see `buildHash` in App.tsx), so the window's Back and Forward
+   * — and the mouse buttons that mean them — step through the pages you looked
+   * at in a pane, the way they would in any browser. A pane clears its entry
+   * when it unmounts, so the hash never carries a page nobody is showing.
+   */
+  browserUrls: Record<string, string>;
+  setBrowserUrl: (sessionId: string, url: string | null) => void;
+
+  /**
+   * A URL the app is *asking* a pane to show — the other direction, and the
+   * one Back travels on. Carries a sequence number because going back to a
+   * page you are already on has to still navigate: the page moved on when you
+   * clicked a link inside it, and the URL alone cannot say "again".
+   */
+  browserNav: { sessionId: string; url: string; seq: number } | null;
+  requestBrowserUrl: (sessionId: string, url: string) => void;
   /** Bumped each time zen is *opened*, and never when it moves from one pane
    *  to another. It is what tells a pane whether to play zen's entrance: the
    *  frame stays exactly where it is across a switch, so replaying it there
@@ -810,6 +831,8 @@ const useStore = create<StoreState>((set, get) => ({
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
   selectedFieldId: null,
   zenSessionId: null,
+  browserUrls: {},
+  browserNav: null,
   zenOpenSeq: 0,
   fontSize: loadFontSize(),
   terminalFontFamily: readTerminalFont(),
@@ -1689,6 +1712,20 @@ const useStore = create<StoreState>((set, get) => ({
 
   exitZen() {
     set({ zenSessionId: null });
+  },
+
+  setBrowserUrl(sessionId: string, url: string | null) {
+    set(s => {
+      const current = s.browserUrls[sessionId];
+      if (current === url) return {};
+      const next = { ...s.browserUrls };
+      if (url) next[sessionId] = url; else delete next[sessionId];
+      return { browserUrls: next };
+    });
+  },
+
+  requestBrowserUrl(sessionId: string, url: string) {
+    set(s => ({ browserNav: { sessionId, url, seq: (s.browserNav?.seq ?? 0) + 1 } }));
   },
 
   navigateSession(direction: 'up' | 'down') {

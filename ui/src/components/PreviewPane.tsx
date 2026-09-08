@@ -33,8 +33,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert } from 'lucide-react';
 import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
+import useStore from '../store';
+import { preferences } from '../preferences';
 
 interface Listener { port: number; pid: number; name: string }
+
+/** Where a pane's last page is remembered, one key per pane.
+ *
+ *  Its own key rather than a shared map: the profile is shared by every
+ *  browser looking at this machine and a single blob is last-writer-wins, so
+ *  two tabs each browsing in a different pane would take turns erasing each
+ *  other's page. See "One key per pen" in CLAUDE.md. */
+function urlKey(sessionId: string): string {
+  return `sheepit:pane-url:${sessionId}`;
+}
+
+function rememberedUrl(sessionId: string): string | null {
+  try { return preferences.getItem(urlKey(sessionId)) || null; } catch { return null; }
+}
 
 /** What someone typing in the address bar meant. */
 function normalizeTyped(raw: string): string {
@@ -59,8 +75,11 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
    *  page would do nothing at all: the prop never changed. */
   navSeq?: number;
 }): React.ReactElement {
-  const [draft, setDraft] = useState('');
-  const [src, setSrc] = useState<string | null>(null);
+  // The page this pane was last showing. Read once, synchronously: the browser
+  // opens on it, so a reload of sheepit puts you back where you were rather
+  // than on a blank pane you have to re-navigate.
+  const [draft, setDraft] = useState(() => (initialUrl ? '' : rememberedUrl(sessionId) ?? ''));
+  const [src, setSrc] = useState<string | null>(() => (initialUrl ? null : rememberedUrl(sessionId)));
   const [nav, setNav] = useState(0);
   const [listeners, setListeners] = useState<{ own: Listener[]; others: Listener[] }>({ own: [], others: [] });
   const [live, setLive] = useState<LiveBrowserState | null>(null);
@@ -123,6 +142,30 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
     setDraft(live.url);
   }, [live?.url]);
 
+  // Tell the app where this pane is, so the URL can carry it (Back and Forward
+  // then walk this pane's pages), and remember it for the next time sheepit is
+  // opened. Both are the same fact, reported once.
+  const setBrowserUrl = useStore(s => s.setBrowserUrl);
+  useEffect(() => {
+    const url = live?.url;
+    if (!url || url === 'about:blank') return;
+    setBrowserUrl(sessionId, url);
+    try { preferences.setItem(urlKey(sessionId), url); } catch { /* quota */ }
+  }, [live?.url, sessionId, setBrowserUrl]);
+
+  // A pane that is not showing a browser has no page, and the URL must not
+  // claim otherwise.
+  useEffect(() => () => setBrowserUrl(sessionId, null), [sessionId, setBrowserUrl]);
+
+  // The other direction: Back, Forward, or a link opened into this pane.
+  const browserNav = useStore(s => s.browserNav);
+  useEffect(() => {
+    if (!browserNav || browserNav.sessionId !== sessionId) return;
+    go(browserNav.url);
+    // `seq` is in the deps on purpose — going back to the page you are already
+    // on still has to navigate.
+  }, [browserNav?.seq, browserNav?.sessionId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const chips = [...listeners.own.map(l => ({ ...l, own: true })), ...listeners.others.map(l => ({ ...l, own: false }))];
 
   return (
@@ -132,8 +175,10 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           onClick={() => liveCommands.current?.back()}><ArrowLeft size={12} /></button>
         <button className="preview-btn" title="Forward" disabled={!live?.canGoForward}
           onClick={() => liveCommands.current?.forward()}><ArrowRight size={12} /></button>
-        <button className="preview-btn" title="Reload"
-          onClick={() => liveCommands.current?.reload()}><RotateCw size={12} /></button>
+        <button className="preview-btn" title={live?.loading ? 'Loading…' : 'Reload'}
+          onClick={() => liveCommands.current?.reload()}>
+          <RotateCw size={12} className={live?.loading ? 'preview-spin' : undefined} />
+        </button>
         <input
           className="preview-address"
           ref={addressRef}
@@ -175,7 +220,13 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
 
       <div className="preview-body">
         {server.available ? (
-          <LiveBrowserSurface url={src} navSeq={nav} onState={setLive} commands={liveCommands} />
+          <>
+            {/* The page is a picture until its first frame lands, and a picture
+                of the last page while the next one loads — so the only way to
+                know something is happening is to say so. */}
+            {live?.loading && <div className="preview-loading" />}
+            <LiveBrowserSurface url={src} navSeq={nav} onState={setLive} commands={liveCommands} />
+          </>
         ) : (
           <div className="preview-empty">
             <ShieldAlert size={14} />

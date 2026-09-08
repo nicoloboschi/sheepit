@@ -74,21 +74,29 @@ export default function App() {
   // the session list arrives, and the link's target would be lost.
   const initialHashRef = useRef(window.location.hash);
 
-  /** Build the hash fragment from workspace + zen + field.
-   *  Format: `#workspaceId[/zen:sessionId][/f:fieldId]`
+  /** Build the hash fragment from workspace + zen + field + the page the
+   *  active pane's browser is showing.
+   *  Format: `#workspaceId[/zen:sessionId][/f:fieldId][/b:url]`
+   *
+   *  The page rides here so the *window's* Back and Forward — and the mouse
+   *  buttons that mean them — walk the pages you looked at in a pane, which is
+   *  what everyone's hands already expect a browser's back button to do. It is
+   *  last in the fragment and percent-encoded whole, since a URL contains
+   *  every character the other segments use as punctuation.
    *
    *  The field rides in the URL rather than in localStorage on purpose: two
    *  tabs standing in two different fields is the point, and one shared key
    *  would have the second tab drag the first. A refresh keeps each where it
    *  was, and a link carries the field with it. */
-  const buildHash = useCallback((wsId: string, zenId?: string | null, fieldId?: string | null) => {
+  const buildHash = useCallback((wsId: string, zenId?: string | null, fieldId?: string | null, browserUrl?: string | null) => {
     return `#${wsId}`
       + (zenId ? `/zen:${zenId}` : '')
-      + (fieldId ? `/f:${encodeURIComponent(fieldId)}` : '');
+      + (fieldId ? `/f:${encodeURIComponent(fieldId)}` : '')
+      + (browserUrl ? `/b:${encodeURIComponent(browserUrl)}` : '');
   }, []);
 
-  /** Parse hash → { workspaceId, zenSessionId, fieldId } */
-  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null; fieldId: string | null } | null => {
+  /** Parse hash → { workspaceId, zenSessionId, fieldId, browserUrl } */
+  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null; fieldId: string | null; browserUrl: string | null } | null => {
     const raw = hash.replace(/^#/, '');
     if (!raw) return null;
     // Field ids contain ':' (`fld:default`) but never '/', so the segments are
@@ -99,7 +107,13 @@ export default function App() {
     const zenSegment = segments.find(x => x.startsWith('zen:'));
     const wsId = head;
     const zenPart = zenSegment?.slice(4);
-    return { workspaceId: wsId!, zenSessionId: zenPart ?? null, fieldId };
+    // The page's own '/' survived the split above, so it is put back together
+    // from everything after `b:` rather than taken as one segment.
+    const browserAt = segments.findIndex(x => x.startsWith('b:'));
+    const browserUrl = browserAt === -1
+      ? null
+      : decodeURIComponent(segments.slice(browserAt).join('/').slice(2));
+    return { workspaceId: wsId!, zenSessionId: zenPart ?? null, fieldId, browserUrl };
   }, []);
 
   /** Resolve a hash into a workspace that actually exists right now, plus the
@@ -122,7 +136,7 @@ export default function App() {
     // A field from another browser's URL may not exist here; dropping it
     // leaves the sidebar on whatever it was showing rather than empty.
     const fieldId = parsed.fieldId && useStore.getState().fields[parsed.fieldId] ? parsed.fieldId : null;
-    return { workspaceId, zenSessionId, fieldId };
+    return { workspaceId, zenSessionId, fieldId, browserUrl: parsed.browserUrl };
   }, [parseHash]);
 
   /** Push current workspace + zen state into the URL hash. */
@@ -130,9 +144,14 @@ export default function App() {
     if (fromPopstateRef.current) return;
     // Don't overwrite the opened link before we've had a chance to honour it.
     if (!initialHashAppliedRef.current && initialHashRef.current) return;
-    const { currentSessionId: wsId, zenSessionId, selectedFieldId } = useStore.getState();
+    const { currentSessionId: wsId, zenSessionId, selectedFieldId, workspaces, browserUrls } = useStore.getState();
     if (!wsId) return;
-    const next = buildHash(wsId, zenSessionId, selectedFieldId);
+    // The active pane's page, and only that one: several panes can hold a
+    // browser, and a URL that carried all of them would be a URL nobody could
+    // read or share. `browserUrls` only holds panes that are showing one.
+    const ws = workspaces[wsId];
+    const activePane = ws?.cells[ws.activeCell] ?? wsId;
+    const next = buildHash(wsId, zenSessionId, selectedFieldId, browserUrls[activePane] ?? null);
     if (window.location.hash !== next) {
       history.pushState(null, '', next);
     }
@@ -162,7 +181,8 @@ export default function App() {
   // Sync the hash whenever zen mode or the shown field changes.
   const zenSessionId = useStore(s => s.zenSessionId);
   const selectedFieldId = useStore(s => s.selectedFieldId);
-  useEffect(() => { syncHash(); }, [zenSessionId, selectedFieldId, syncHash]);
+  const browserUrls = useStore(s => s.browserUrls);
+  useEffect(() => { syncHash(); }, [zenSessionId, selectedFieldId, browserUrls, syncHash]);
 
   // Browser back/forward: read workspace + zen state from hash.
   useEffect(() => {
@@ -184,6 +204,17 @@ export default function App() {
         store.toggleZen(target.zenSessionId);
       } else if (!target.zenSessionId && store.zenSessionId) {
         store.exitZen();
+      }
+      // The page the pane was showing at that point in history. Asked for by
+      // sequence rather than by value, so stepping back to a page you are
+      // already on still navigates — you got here by following a link out of
+      // it, and Back means undo that.
+      if (target.browserUrl) {
+        const ws = store.workspaces[target.workspaceId];
+        const pane = ws?.cells[ws.activeCell] ?? target.workspaceId;
+        if (store.browserUrls[pane] !== target.browserUrl) {
+          store.requestBrowserUrl(pane, target.browserUrl);
+        }
       }
       setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 100);
       fromPopstateRef.current = false;
@@ -221,6 +252,15 @@ export default function App() {
             if (hashTarget.fieldId) useStore.getState().setSelectedField(hashTarget.fieldId);
             if (hashTarget.zenSessionId && useStore.getState().zenSessionId !== hashTarget.zenSessionId) {
               useStore.getState().toggleZen(hashTarget.zenSessionId);
+            }
+            // A link someone sent carries the page as well as the pen. The
+            // request waits in the store until that pane's browser mounts,
+            // which is what makes a shared URL open on the same page.
+            if (hashTarget.browserUrl) {
+              const store2 = useStore.getState();
+              const ws = store2.workspaces[hashTarget.workspaceId];
+              const pane = ws?.cells[ws.activeCell] ?? hashTarget.workspaceId;
+              store2.requestBrowserUrl(pane, hashTarget.browserUrl);
             }
             break;
           }

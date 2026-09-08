@@ -35,6 +35,10 @@ const NAMED_KEYS: Record<string, number> = {
 
 export interface LiveBrowserState {
   url: string; title: string; canGoBack: boolean; canGoForward: boolean;
+  /** The page's own answer, from `Page.frameStartedLoading` on its main frame
+   *  — not a guess from the last navigate we sent, which would miss every link
+   *  the page followed by itself. */
+  loading: boolean;
   status: 'connecting' | 'ready' | 'error';
   error: string | null;
   /** Whether frames are flowing. Normally true for every open pane — each gets
@@ -67,7 +71,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   onStateRef.current = onState;
   const stateRef = useRef<LiveBrowserState>({
     url: initialUrl ?? '', title: '', canGoBack: false, canGoForward: false,
-    status: 'connecting', error: null, streaming: false,
+    loading: false, status: 'connecting', error: null, streaming: false,
   });
   const [paused, setPaused] = useState(false);
   const report = useCallback((patch: Partial<LiveBrowserState>) => {
@@ -109,7 +113,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         frameSizeRef.current = { w: msg.width, h: msg.height };
         if (imgRef.current) imgRef.current.src = `data:image/jpeg;base64,${msg.data}`;
       } else if (msg.type === 'state') {
-        report({ url: msg.url, title: msg.title, canGoBack: msg.canGoBack, canGoForward: msg.canGoForward });
+        report({
+          url: msg.url, title: msg.title, loading: Boolean(msg.loading),
+          canGoBack: msg.canGoBack, canGoForward: msg.canGoForward,
+        });
       } else if (msg.type === 'active') {
         setPaused(!msg.active);
         report({ streaming: Boolean(msg.active) });

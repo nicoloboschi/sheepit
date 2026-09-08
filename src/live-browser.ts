@@ -170,6 +170,11 @@ interface View {
   id: string;
   targetId: string;
   sessionId: string;
+  /** The page's own top frame. `frameStartedLoading` fires for every frame in
+   *  the page, and an ad or an embed finishing says nothing about whether the
+   *  thing you asked for has arrived. */
+  mainFrameId: string | null;
+  loading: boolean;
   width: number;
   height: number;
   onFrame: (frame: ViewFrame) => void;
@@ -310,6 +315,20 @@ export class LiveBrowser {
     cdp.on('Page.loadEventFired', restate);
     cdp.on('Page.navigatedWithinDocument', restate);
 
+    // Loading is the page's answer, not ours: a click on a link starts a load
+    // nothing on this side initiated, so guessing from `navigate` calls would
+    // miss most of them and lie about the rest.
+    const setLoading = (loading: boolean) => (params: Record<string, unknown>, sessionId?: string) => {
+      const view = sessionId ? this.viewBySession(sessionId) : undefined;
+      if (!view) return;
+      if (view.mainFrameId && params.frameId !== view.mainFrameId) return;
+      if (view.loading === loading) return;
+      view.loading = loading;
+      void this.pushState(view);
+    };
+    cdp.on('Page.frameStartedLoading', setLoading(true));
+    cdp.on('Page.frameStoppedLoading', setLoading(false));
+
     cdp.on('__closed__', () => { this.cdp = null; this.views.clear(); });
     return cdp;
   }
@@ -331,7 +350,7 @@ export class LiveBrowser {
       view.onState({
         url: view.lastUrl,
         title: view.lastTitle,
-        loading: false,
+        loading: view.loading,
         canGoBack: history.currentIndex > 0,
         canGoForward: history.currentIndex < history.entries.length - 1,
       });
@@ -377,12 +396,17 @@ export class LiveBrowser {
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
+      mainFrameId: null, loading: false,
       casting: false, lastUrl: '', lastTitle: '',
     };
     this.views.set(opts.id, view);
 
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
+    try {
+      const tree = await cdp.send<{ frameTree: { frame: { id: string } } }>('Page.getFrameTree', {}, sessionId);
+      view.mainFrameId = tree.frameTree.frame.id;
+    } catch { /* loading stays a guess rather than a lie */ }
     await this.applyMetrics(view, opts.scale);
     if (opts.url) await cdp.send('Page.navigate', { url: opts.url }, sessionId).catch(() => {});
     await this.activate(opts.id, opts.scale);

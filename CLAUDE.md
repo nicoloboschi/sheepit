@@ -211,7 +211,7 @@ of chrome above a list is one too many in a sidebar whose whole job is the
 list.
 
 **The shown field lives in the URL**, not in preferences:
-`#<workspaceId>[/zen:<sessionId>][/f:<fieldId>]`. Two tabs standing in two
+`#<workspaceId>[/zen:<sessionId>][/f:<fieldId>][/b:<page>]`. Two tabs standing in two
 different fields is the point, and one shared storage key would have the second
 tab drag the first; a refresh keeps each tab where it was, and a link carries
 the field with it. On restore the field is applied *after* the workspace —
@@ -867,6 +867,31 @@ keeping because they are the argument for owning a browser at all:
 
 Having more than one answer to "show me this page" also cost a probe
 (`/api/preview/probe`) on every open, and could still land on the crippled one.
+
+**The page is in sheepit's own URL** — `/b:<percent-encoded page>`, last in the
+fragment because a URL contains every character the other segments use as
+punctuation. That is what makes the *window's* Back and Forward, and the mouse
+buttons that mean them, walk the pages you looked at in a pane: every
+navigation the page makes pushes a hash entry, and a popstate asks the pane to
+go back. Only the **active pane's** page is carried — several panes can hold a
+browser, and a URL naming all of them is one nobody can read or share — and
+`browserUrls` in the store holds only panes that are currently showing one, so
+the URL never claims a page nobody is looking at. The request travels with a
+**sequence number** (`requestBrowserUrl`): stepping back to a page you are
+already on still has to navigate, because you left it by following a link and
+Back means undo that. A link someone sends carries the page too.
+
+**Each pane remembers its last page** in `sheepit:pane-url:<sessionId>` — its
+own key, not a shared map, because the profile is shared by every browser
+looking at this machine and a blob is last-writer-wins (see [One key per
+pen](#one-key-per-pen-and-the-profile-talks-back)). It is read synchronously at
+mount, so reloading sheepit puts the pane back on the page it was showing.
+
+**Loading is the page's answer, not ours** —
+`Page.frameStartedLoading` / `frameStoppedLoading` on the *main* frame, since an
+embed finishing says nothing about the thing you asked for. It has to be shown,
+because a streamed page keeps showing the *old* page until the new one paints:
+without the bar, a slow load and a click that did nothing look identical.
 
 **Sheepit's own files.** `/api/fs/raw?as=html` still renders a local `.html`,
 and the pane points the browser at `http://127.0.0.1:<serverPort>/api/fs/raw…`
