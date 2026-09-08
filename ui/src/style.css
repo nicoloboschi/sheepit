@@ -277,8 +277,10 @@
 
 /* ── Workspace sidebar (the flock) ─────────────────────────────────────────
    The sidebar is a navigation instrument, not a second terminal surface. It is
-   neutral graphite with a faint dot texture, so the pen cards on top of it
-   stay the brightest thing in the column and workspace state is easy to scan.
+   flat neutral graphite, so the pen cards on top of it stay the brightest
+   thing in the column and workspace state is easy to scan. The field had a dot
+   texture; it was one more thing in the peripheral vision of a column whose
+   whole job is the list.
 
    It used to be an olive field, on the reasoning that the sidebar is the
    pasture the flock stands in. The grass is still down there in the footer
@@ -288,16 +290,13 @@
 .sidebar-shell {
   isolation: isolate;
   background:
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 9px 9px,
     radial-gradient(ellipse 90% 30% at 22% -10%, rgba(255, 255, 255, 0.055), transparent 70%),
     var(--sidebar-field, #15171a);
   border-right: 1px solid var(--chrome-line);
   box-shadow: inset -1px 0 rgba(255, 255, 255, 0.06), 10px 0 28px rgba(0, 0, 0, 0.16);
 }
 .sidebar-shell-collapsed {
-  background:
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 9px 9px,
-    var(--sidebar-field, #15171a);
+  background: var(--sidebar-field, #15171a);
 }
 :root { --sidebar-field: var(--chrome); }
 /* How wide the flock list is, and how much of it is actually on screen. The
@@ -308,9 +307,7 @@
 @media (min-width: 768px) { :root { --flock-width: var(--flock-width-raw); } }
 :root[data-theme='light'] .sidebar-shell,
 :root[data-theme='light'] .sidebar-shell-collapsed {
-  background:
-    radial-gradient(circle at 1px 1px, rgba(34, 41, 31, 0.06) 1px, transparent 1.6px) 0 0 / 9px 9px,
-    var(--sidebar-field);
+  background: var(--sidebar-field);
 }
 .sidebar-header,
 .sidebar-footer {
