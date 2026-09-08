@@ -416,16 +416,30 @@ export class LiveBrowser {
   private async startCast(view: View, scale: number): Promise<void> {
     const cdp = this.cdp;
     if (!cdp) return;
-    try {
-      await this.castOnce(view, scale, cdp);
-      view.casting = true;
-      view.onActive(true);
-    } catch (err) {
-      // A pane showing a still page with no explanation reads as a hang, so
-      // say it is not streaming rather than letting it look frozen.
-      view.casting = false;
-      view.onActive(false);
-      this.log(`live browser: screencast refused for ${view.id}: ${err instanceof Error ? err.message : String(err)}`);
+    // "Not attached to an active page" is a *race*, not a verdict: activating a
+    // window and that window becoming the one Chromium will cast are not the
+    // same instant, and a third pane opening while two others stream loses that
+    // race reproducibly. Re-activate and ask again rather than sleeping a fixed
+    // time in the hope it is enough.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        await this.castOnce(view, scale, cdp);
+        view.casting = true;
+        view.onActive(true);
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt === 3 || !/not attached to an active page/i.test(message)) {
+          // A pane showing a still page with no explanation reads as a hang, so
+          // say it is not streaming rather than letting it look frozen.
+          view.casting = false;
+          view.onActive(false);
+          this.log(`live browser: screencast refused for ${view.id}: ${message}`);
+          return;
+        }
+        await new Promise(r => setTimeout(r, 150 * (attempt + 1)));
+        await cdp.send('Target.activateTarget', { targetId: view.targetId }).catch(() => {});
+      }
     }
   }
 
