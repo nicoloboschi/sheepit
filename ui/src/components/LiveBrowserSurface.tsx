@@ -390,10 +390,21 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // Anything the input method is in the middle of composing belongs to it.
     if (e.isComposing || e.keyCode === 229) return;
 
-    // A modifier on its own is forwarded but never cancelled — see
-    // MODIFIER_KEYS. The page still learns the modifier is down, because every
-    // event carries the modifier bits with it.
-    if (MODIFIER_KEYS.has(e.key)) { forwardKey(e, down); return; }
+    // A modifier on its own is DROPPED — not cancelled, not forwarded.
+    //
+    // Cancelling it kills the composition (holding Option is the first half of
+    // typing `@` on an Italian layout). Forwarding it is worse: driving a
+    // Chrome over CDP makes that Chrome activate at the macOS window level —
+    // a known Chromium bug, chromium#223828 and ChromeDevTools/
+    // chrome-devtools-mcp#1254 — so a CDP message sent while you hold Option
+    // pulls the desktop's focus away from the browser you are typing into, and
+    // the half-composed character dies with it. It looked like the OS eating
+    // the key; it was us, one WebSocket message at exactly the wrong moment.
+    //
+    // Nothing needs it: every mouse and key event we send already carries the
+    // modifier bits, so the page knows Option is held without being told
+    // separately.
+    if (MODIFIER_KEYS.has(e.key)) return;
 
     // Copy and paste are this machine's, not the page's, and are settled before
     // anything is forwarded.
