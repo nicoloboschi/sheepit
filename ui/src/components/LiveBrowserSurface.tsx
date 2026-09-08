@@ -332,7 +332,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     }, 1500);
   }), [send]);
 
-  const clipboard = useCallback(async (e: React.KeyboardEvent): Promise<boolean> => {
+  const clipboard = useCallback(async (e: KeyboardEvent): Promise<boolean> => {
     const accel = e.metaKey || e.ctrlKey;
     if (!accel || e.altKey) return false;
     const key = e.key.toLowerCase();
@@ -352,7 +352,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     return false;
   }, [askForSelection, send]);
 
-  const onKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
+  const onKey = useCallback((e: KeyboardEvent, down: boolean) => {
     // The page has the keyboard while it is focused — including ⌘R, which
     // should reload the page and not the whole of sheepit.
     e.preventDefault();
@@ -367,7 +367,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     forwardKey(e, down);
   }, [clipboard]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const forwardKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
+  const forwardKey = useCallback((e: KeyboardEvent, down: boolean) => {
     // A character the keyboard *composed* — `@` is Option+ò on an Italian
     // layout, `#` is Option+à, and AltGr does the same job on Windows and
     // Linux — arrives already composed in `e.key`, with the modifier that
@@ -402,6 +402,36 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     });
   }, [send]);
 
+  /**
+   * The keyboard, taken at the window in the capture phase rather than on this
+   * element.
+   *
+   * A page can only stop a browser shortcut it sees first. Handled on the
+   * element, the event has already travelled through the window by the time
+   * `preventDefault` runs, and a viewing browser with its own binding acts on
+   * it anyway — Brave maps `@` (Option+ò on an Italian layout) to Back, so
+   * typing an email address in the pane navigated sheepit backwards. Capturing
+   * at the window is the earliest a page is allowed to look, and from there the
+   * key belongs to the pane.
+   *
+   * Only while this surface holds focus, so the address bar, ⌘K and every
+   * other part of sheepit keep their own keys.
+   */
+  useEffect(() => {
+    const handle = (down: boolean) => (e: KeyboardEvent) => {
+      if (document.activeElement !== surfaceRef.current) return;
+      onKey(e, down);
+    };
+    const down = handle(true);
+    const up = handle(false);
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup', up, true);
+    return () => {
+      window.removeEventListener('keydown', down, true);
+      window.removeEventListener('keyup', up, true);
+    };
+  }, [onKey]);
+
   return (
     <div
       ref={surfaceRef}
@@ -431,8 +461,6 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         });
       }}
       onFocus={claim}
-      onKeyDown={e => onKey(e, true)}
-      onKeyUp={e => onKey(e, false)}
     >
       <img ref={imgRef} className="live-browser-frame" alt="" draggable={false} />
       {/* A still page with no explanation reads as a hang. The browser can only

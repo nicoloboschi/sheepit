@@ -990,6 +990,21 @@ translation are not optional:
   does carry text (`\r`), and without it Enter raised a keydown that no form
   ever submitted on.
 
+**The keyboard is captured at the window, not taken on the element.** A page
+can only stop a browser shortcut it sees first, and by the time a handler on
+the element runs, the event has already passed the window — so the *viewing*
+browser acts on its own binding regardless. Brave maps `@` (Option+ò on an
+Italian layout) to Back, which meant typing an email address in a pane
+navigated sheepit backwards. The listener is on `window` in the capture phase,
+and only while the surface holds focus, so the address bar, ⌘K and the rest of
+sheepit keep their keys.
+
+A character the keyboard **composed** — `@` as Option+ò, `#` as Option+à,
+anything AltGr makes — arrives already composed in `e.key` with the modifier
+that made it still held. Forwarded as a key event that reads as a chord, not as
+typing; it goes through `Input.insertText` instead, which says the only true
+thing about it.
+
 **Copy and paste cross the machine boundary by hand.** ⌘C in a streamed page
 works perfectly and puts the text on the *host's* clipboard, where nothing on
 the viewing machine can reach it. So the shortcut is caught in the pane, never
