@@ -1,19 +1,19 @@
 /**
- * A browser in the pane — enough of one to watch what the work produces.
- *
- * Not a real browser and not pretending to be: no tabs, no history, no
- * cookies, no login. An address bar, the ports this pane is listening on, and
- * an iframe.
- *
- * A page arrives one of two ways, and which one is decided by asking the
- * server rather than by guessing:
+ * A browser in the pane — one address bar over three quite different ways of
+ * getting a page, chosen by asking the server rather than by guessing:
  *
  *   - **direct** — the URL goes straight into the iframe, so the page keeps
  *     its own origin, its cookies and its websockets, and a dev server's
  *     hot reload still works. This is the good path and the default.
- *   - **through sheepit** — for a page that refuses to be framed (google and
- *     github both do), or for a loopback port when you are looking from
- *     another device, where the browser's own 127.0.0.1 is not this machine.
+ *   - **through sheepit** — a one-document proxy, for a loopback port seen
+ *     from another device, where the browser's own 127.0.0.1 is not this
+ *     machine. No cookies, sandboxed, and the page's own forms go nowhere.
+ *   - **live** — a real Chromium on the machine, streamed in as frames with
+ *     your clicks and keys sent back (`LiveBrowserSurface`). It has a
+ *     persistent profile, so a site you are logged into stays logged in: this
+ *     is the one that can read a pull request, open Files changed and leave a
+ *     comment. It is picked automatically when a page refuses to be framed,
+ *     which is exactly the case the proxy handled worst.
  *
  * Anything that comes back through sheepit is served from sheepit's origin, so
  * it is rendered in a sandbox WITHOUT `allow-same-origin`. That is the line
@@ -21,12 +21,13 @@
  * sheepit's own origin and could call its API.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, Globe, ServerCog, ShieldAlert } from 'lucide-react';
+import { RotateCw, ExternalLink, Globe, ServerCog, ShieldAlert, ArrowLeft, ArrowRight, MonitorPlay } from 'lucide-react';
+import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
 
 interface Listener { port: number; pid: number; name: string }
 
 /** How the current page is being loaded. */
-type Route = 'direct' | 'proxy';
+type Route = 'direct' | 'proxy' | 'live';
 
 /** Is the browser looking at this from another machine? A loopback URL means
  *  something different there, and has to come through the server. */

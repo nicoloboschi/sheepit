@@ -21,6 +21,7 @@ import {
   type MatchGroup, type Speaker,
 } from './search.js';
 import { CLEARED_SESSION_NAME, isRenameable } from './ai.js';
+import { findBrowser } from './live-browser.js';
 import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
@@ -1663,6 +1664,13 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    * the preview loads the URL directly — keeping its own origin, cookies and
    * websockets — or has to come back through /preview below.
    */
+  /** Whether the live browser can run here at all — the pane picks the route
+   *  before it has anything to show, so it has to ask before trying. */
+  router.get('/browser/status', (_req, res) => {
+    const binary = findBrowser();
+    res.json({ available: binary !== null, binary });
+  });
+
   router.get('/preview/probe', async (req, res) => {
     const url = parsePreviewUrl(String(req.query.url ?? ''), { selfPort: bridge.getListenPort() });
     if (!url) return res.status(400).json({ ok: false, error: 'Not a URL we can open' });

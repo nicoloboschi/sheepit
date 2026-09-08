@@ -2413,3 +2413,37 @@
   background: var(--primary);
   animation-duration: 1.8s;
 }
+
+/* ── The live browser ──────────────────────────────────────────────────────
+   A real page, rendered on the machine and arriving here as frames. The
+   surface takes the keyboard (hence tabIndex and a focus ring), and the image
+   fills it exactly: the page is laid out at this element's own size, so a
+   click at (x, y) here is a click at (x, y) there and there is no mapping to
+   get wrong. */
+.live-browser-surface {
+  position: relative;
+  flex: 1; min-height: 0; min-width: 0;
+  overflow: hidden;
+  background: var(--card);
+  outline: none;
+  cursor: default;
+}
+.live-browser-surface:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.live-browser-frame {
+  display: block;
+  width: 100%; height: 100%;
+  /* `fill`, not `contain`: the frame is already the size of this box, and a
+     letterboxed image would put the page's coordinates out of step with the
+     pointer's for as long as the mismatch lasted. */
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.live-browser-veil {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; text-align: center;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}

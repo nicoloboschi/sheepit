@@ -915,6 +915,24 @@ both moved to `direct-bridge.ts`, and the proxy went 483 → 376 lines.
   truly cannot go there, you are about to cost every user every session — say
   so in the PR.
 
+### `src/paths.ts` is a daemon source — editing it closes every session
+
+`dev.sh` decides whether the running daemon is stale by hashing
+`DAEMON_SOURCES="src/pty-daemon.ts src/paths.ts"` and comparing it to the hash
+the daemon recorded at startup. A difference means "replace the daemon", and
+replacing the daemon kills every shell it holds and every agent running in one.
+
+So `paths.ts` is not an ordinary file. Adding one unrelated helper to it — a
+directory for the live browser's profile, which the daemon never reads — is
+enough to change that hash, and the next routine `dev.sh` then closes every
+pane on the machine. It has happened, and the tell afterwards is a full session
+list whose panes all hold a fresh `/bin/zsh -l`.
+
+A path only the server uses belongs next to the server code that uses it
+(`browserProfileDir` lives in `live-browser.ts` for exactly this reason). Put a
+path in `paths.ts` only when the daemon genuinely needs it — and then know you
+have spent everyone's sessions on it.
+
 ## Legacy names — don't rename, just document
 
 Nothing in the shipped product carries the old name any more. `src/paths.ts`
