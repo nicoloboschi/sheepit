@@ -417,7 +417,14 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
    * Only while this surface holds focus, so the address bar, ⌘K and every
    * other part of sheepit keep their own keys.
    */
+  const [focused, setFocused] = useState(false);
   useEffect(() => {
+    // Attached only while the surface is focused, rather than always-on with a
+    // check inside. Same effect, but a window-level capture listener that
+    // swallows keys is exactly the kind of thing that gets blamed for a
+    // keystroke going missing somewhere else in the app — so while you are not
+    // in a browser pane, it is not there at all.
+    if (!focused) return;
     const handle = (down: boolean) => (e: KeyboardEvent) => {
       if (document.activeElement !== surfaceRef.current) return;
       onKey(e, down);
@@ -430,7 +437,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
     };
-  }, [onKey]);
+  }, [focused, onKey]);
 
   return (
     <div
@@ -460,7 +467,8 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           params: { type: 'mouseWheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modifierBits(e) },
         });
       }}
-      onFocus={claim}
+      onFocus={() => { setFocused(true); claim(); }}
+      onBlur={() => setFocused(false)}
     >
       <img ref={imgRef} className="live-browser-frame" alt="" draggable={false} />
       {/* A still page with no explanation reads as a hang. The browser can only
