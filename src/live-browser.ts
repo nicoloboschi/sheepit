@@ -574,8 +574,22 @@ export class LiveBrowser {
     const view = this.views.get(id);
     const cdp = this.cdp;
     if (!view || !cdp) return;
+    // Already streaming? Then do NOTHING — and this is not an optimisation.
+    //
+    // `Target.activateTarget` activates the browser *application* on macOS,
+    // headless or not. Called when a pane took focus, it pulled OS focus away
+    // from the browser the user is actually looking at, a few hundred
+    // milliseconds after their click — long enough to land in the middle of a
+    // keyboard composition and destroy it. The symptom was `@` (⌥ò) failing
+    // unless both keys were pressed fast enough to beat the round trip, with
+    // Brave blurring and refocusing for no reason anybody could see.
+    //
+    // The only thing activation is needed for is starting a cast: a target
+    // that has never been activated answers `startScreencast` with "Not
+    // attached to an active page". Once it is casting, it never needs it again.
+    if (view.casting) return;
     await cdp.send('Target.activateTarget', { targetId: view.targetId }).catch(() => {});
-    if (!view.casting) await this.startCast(view, scale);
+    await this.startCast(view, scale);
   }
 
   private async applyMetrics(view: View, scale: number): Promise<void> {
