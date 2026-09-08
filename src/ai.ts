@@ -22,12 +22,41 @@ const CONFIG_PATH = join(configDir(), 'config.json');
 export interface AIConfig {
   autoNaming: boolean;
   autoNamingIntervalSecs: number;
+  /** Start the agent again in a pane whose shell died with the machine.
+   *  Read at startup by the session restore in `direct-bridge.ts`; see
+   *  AGENT_RESUME_COMMANDS there for what it types. */
+  resumeAgents: boolean;
 }
 
 const AI_DEFAULTS: AIConfig = {
   autoNaming: true,
   autoNamingIntervalSecs: 30,
+  resumeAgents: true,
 };
+
+/**
+ * The settings, read fresh from disk.
+ *
+ * Module-level rather than only a method, because session restore needs it
+ * before an AIService exists — the bridge is started first, and restoring is
+ * the one moment `resumeAgents` matters.
+ */
+export function readAiConfig(): AIConfig {
+  try {
+    const raw = readFileSync(CONFIG_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    return {
+      // `aiEnabled` was the master switch over a naming pipeline that no
+      // longer exists. It is still honoured as an off switch so a profile
+      // that turned naming off does not have it turned back on by upgrading.
+      autoNaming: (data.aiEnabled ?? true) && (data.aiAutoNaming ?? AI_DEFAULTS.autoNaming),
+      autoNamingIntervalSecs: data.aiAutoNamingIntervalSecs ?? AI_DEFAULTS.autoNamingIntervalSecs,
+      resumeAgents: data.aiResumeAgents ?? AI_DEFAULTS.resumeAgents,
+    };
+  } catch {
+    return { ...AI_DEFAULTS };
+  }
+}
 
 /**
  * What a pane is called after `/clear` wiped its context.
@@ -251,19 +280,7 @@ export class AIService {
   private aiAssignedName = new Map<string, string>();
 
   getConfig(): AIConfig {
-    try {
-      const raw = readFileSync(CONFIG_PATH, 'utf8');
-      const data = JSON.parse(raw);
-      return {
-        // `aiEnabled` was the master switch over a naming pipeline that no
-        // longer exists. It is still honoured as an off switch so a profile
-        // that turned naming off does not have it turned back on by upgrading.
-        autoNaming: (data.aiEnabled ?? true) && (data.aiAutoNaming ?? AI_DEFAULTS.autoNaming),
-        autoNamingIntervalSecs: data.aiAutoNamingIntervalSecs ?? AI_DEFAULTS.autoNamingIntervalSecs,
-      };
-    } catch {
-      return { ...AI_DEFAULTS };
-    }
+    return readAiConfig();
   }
 
   saveConfig(updates: Partial<AIConfig>): void {
@@ -276,6 +293,7 @@ export class AIService {
       data.aiEnabled = updates.autoNaming;
     }
     if ('autoNamingIntervalSecs' in updates) data.aiAutoNamingIntervalSecs = updates.autoNamingIntervalSecs;
+    if ('resumeAgents' in updates) data.aiResumeAgents = updates.resumeAgents;
     mkdirSync(dirname(CONFIG_PATH), { recursive: true });
     writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2) + '\n');
   }

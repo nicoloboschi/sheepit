@@ -1796,6 +1796,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       autoNaming: body.autoNaming !== undefined ? Boolean(body.autoNaming) : cfg.autoNaming,
       autoNamingIntervalSecs: typeof body.autoNamingIntervalSecs === 'number'
         ? body.autoNamingIntervalSecs : cfg.autoNamingIntervalSecs,
+      resumeAgents: body.resumeAgents !== undefined ? Boolean(body.resumeAgents) : cfg.resumeAgents,
     });
 
     ai.restart();

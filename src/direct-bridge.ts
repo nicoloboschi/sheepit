@@ -24,6 +24,7 @@ import { SessionStore, type StoredSession } from './session-store.js';
 import { mergePrRefs, type PrRef } from './pr-refs.js';
 import { isSearchableTranscript } from './search.js';
 import { logger } from './server.js';
+import { readAiConfig } from './ai.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -91,6 +92,35 @@ const EXEC_CONCURRENCY = 4;
  *  responsive so a newly opened pane appears promptly, but the stats behind it
  *  need a `ps` of every process on the machine, which is the expensive part. */
 const PROC_INFO_TTL_MS = 10_000;
+
+/**
+ * What to type into a restored pane to put its agent back.
+ *
+ * A shell only dies with the machine (see restoreSessions), and when it does
+ * the pane comes back holding a bare `/bin/zsh -l` — the conversation the pane
+ * was named for is still on disk, but somebody has to ask for it. `-c`
+ * continues the most recent conversation in the pane's own directory, which is
+ * the one that was running there.
+ *
+ * Only Claude Code is here. Every other agent sheepit detects either has no
+ * "continue the last one" flag or spells it differently enough that guessing
+ * would resume the wrong conversation, and a wrong resume is worse than a
+ * prompt: the pane looks restored and is not.
+ */
+const AGENT_RESUME_COMMANDS: Record<string, string> = {
+  claude: 'claude --dangerously-skip-permissions -c',
+};
+
+/** How quiet a restored shell must go before the resume command is typed, and
+ *  the longest we wait for that quiet.
+ *
+ *  A fresh login shell runs the user's rc files, and a prompt drawn *after* the
+ *  command lands is a prompt with half a command on it. Waiting for output to
+ *  settle rather than for a fixed delay is what makes this work on a machine
+ *  restoring twenty panes at once, where every shell starts slowly. The
+ *  deadline is the backstop for a shell that never goes quiet on its own. */
+const RESUME_SETTLE_MS = 700;
+const RESUME_DEADLINE_MS = 15_000;
 
 /** Run a background sweep's command at reduced scheduling priority.
  *
@@ -884,6 +914,10 @@ export class DirectBridge {
   private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
   /** Per-session state on disk, one file each (see session-store.ts). */
+  /** Restored panes whose agent is waiting to be started again, keyed by
+   *  session id. See scheduleAgentResume. */
+  private pendingResumes = new Map<string, { command: string; timer: ReturnType<typeof setTimeout>; deadline: number }>();
+
   private store = new SessionStore();
   /** Port the HTTP server is actually listening on, told to us by index.ts.
    *  Defaults to the configured port for callers that never set it. */
@@ -954,6 +988,10 @@ export class DirectBridge {
             this.persist();
           }
 
+          // A restored pane holds its resume command until its new shell has
+          // finished printing; every chunk pushes that back.
+          if (this.pendingResumes.size) this.noteResumeOutput(id);
+
           sess.ring.write(data);
           this.pubsub.publish(id, { type: 'output', data });
         }
@@ -969,6 +1007,7 @@ export class DirectBridge {
         this.sessions.delete(id);
         this.pendingOsc99.delete(id);
         this.pendingOscNotifications.delete(id);
+        this.cancelAgentResume(id);
         this.persist();
         logger.debug(`Session exited: ${id}`);
       },
@@ -1551,6 +1590,9 @@ export class DirectBridge {
   // ── I/O ──────────────────────────────────────────────────────────────────
 
   sendInput(sessionId: string, data: string): void {
+    // Someone is at the keyboard, so a queued resume is no longer ours to send:
+    // it would land in the middle of whatever they are typing.
+    if (this.pendingResumes.size) this.cancelAgentResume(sessionId);
     this.daemon.sendFire({ type: 'write', id: sessionId, data });
 
     const stripped = stripEscapeSequences(data);
@@ -1597,6 +1639,54 @@ export class DirectBridge {
     if (!sess) return;
     this.daemon.sendFire({ type: 'resize', id: sessionId, cols, rows });
     sess.cols = cols; sess.rows = rows;
+  }
+
+  // ── Bringing an agent back after the machine restarted ─────────────────
+
+  /**
+   * Queue the resume command for a pane that came back with a fresh shell.
+   *
+   * It is not written straight away, the way an init command is: that shell was
+   * spawned a moment ago and is still sourcing rc files, so the command is held
+   * until its output goes quiet (or the deadline passes). Anything the person
+   * does to the pane first — typing in it, closing it — cancels it, because at
+   * that point they are driving and an injected line would land in the middle
+   * of what they wrote.
+   */
+  private scheduleAgentResume(id: string, command: string): void {
+    this.cancelAgentResume(id);
+    this.pendingResumes.set(id, {
+      command,
+      deadline: Date.now() + RESUME_DEADLINE_MS,
+      timer: setTimeout(() => this.fireAgentResume(id), RESUME_SETTLE_MS),
+    });
+  }
+
+  /** Output arrived: push the resume back, so it lands after the prompt. */
+  private noteResumeOutput(id: string): void {
+    const pending = this.pendingResumes.get(id);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    // Never past the deadline: a shell that keeps printing (a login banner on
+    // a loop, a background job) would otherwise defer the resume forever.
+    const wait = Math.max(0, Math.min(RESUME_SETTLE_MS, pending.deadline - Date.now()));
+    pending.timer = setTimeout(() => this.fireAgentResume(id), wait);
+  }
+
+  private fireAgentResume(id: string): void {
+    const pending = this.pendingResumes.get(id);
+    if (!pending) return;
+    this.cancelAgentResume(id);
+    if (!this.sessions.has(id)) return;
+    logger.info(`Restarting agent in ${id}: ${pending.command}`);
+    this.daemon.sendFire({ type: 'write', id, data: pending.command + '\r' });
+  }
+
+  private cancelAgentResume(id: string): void {
+    const pending = this.pendingResumes.get(id);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingResumes.delete(id);
   }
 
   async sendKeys(sessionId: string, command: string): Promise<void> {
@@ -1927,6 +2017,11 @@ export class DirectBridge {
     } catch {}
     const daemonMap = new Map(daemonSessions.map(s => [s.id, s]));
 
+    // Read once for the whole restore rather than per session: it is one file
+    // read, and a setting that changed halfway through would resume some panes
+    // and not others.
+    const resumeAgents = readAiConfig().resumeAgents;
+
     for (const [id, info] of entries) {
       // The agent keeps running across a server restart, so a "busy" it
       // reported before we went down is still true — that is the point of
@@ -1995,6 +2090,13 @@ export class DirectBridge {
           const num = parseInt(id.replace('direct-', ''), 10);
           if (num >= this.nextId) this.nextId = num + 1;
           logger.info(`Restored session (fresh shell): ${id} (${info.name}) at ${info.path}`);
+          // The shell is fresh, so whatever agent was running in this pane is
+          // gone with the machine. `sessionType` is the last agent seen in it,
+          // and its conversation is still on disk — start it again on the pane's
+          // own directory. A headless pane is sheepit's own singleton PTY, not
+          // somebody's work, so it is left alone.
+          const resume = info.sessionType ? AGENT_RESUME_COMMANDS[info.sessionType] : undefined;
+          if (resume && !info.isHeadless && resumeAgents) this.scheduleAgentResume(id, resume);
         } catch (e) {
           logger.debug(`Failed to restore session ${id}: ${e}`);
         }

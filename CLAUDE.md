@@ -945,6 +945,37 @@ Two things now stand between that mistake and your sessions, and both matter:
   It still replaces a stale daemon that holds nothing, which is the case the
   check was written for.
 
+### When the shell dies with the machine, the agent comes back
+
+A session outlives a server restart because the daemon holds its fd; it does
+not outlive the daemon. When `restoreSessions` finds a saved session the daemon
+no longer has, it recreates it with a fresh shell in the pane's own directory
+and replays the ring — so the pane looks exactly as it did, and holds a bare
+`/bin/zsh -l` with the agent gone.
+
+The conversation is not gone, though: it is on disk, in the pane's directory.
+So a pane whose persisted `sessionType` is `claude` gets
+`claude --dangerously-skip-permissions -c` typed into its new shell
+(`AGENT_RESUME_COMMANDS`, `aiResumeAgents` in `config.json`, toggled under
+Settings → AI Features). `-c` continues the most recent conversation *in that
+directory*, which is the one that was running there — no session id to keep, and
+nothing to get wrong if the pane was moved.
+
+**Only Claude Code is in that map.** It is the one agent with a "continue the
+last conversation here" flag; for the others a guess would resume the wrong
+work, and a pane that looks restored and is not is worse than a pane with a
+prompt in it.
+
+The command is **not written straight away**, unlike `init_command` on a new
+session. That shell was spawned a moment ago and is still sourcing rc files, and
+a prompt drawn *after* the command lands is a prompt with half a command on it.
+So the write waits for the pane's output to go quiet (`RESUME_SETTLE_MS`), with
+`RESUME_DEADLINE_MS` as the backstop for a shell that never does — which is what
+makes it survive a machine bringing twenty slow-starting shells up at once.
+Two things cancel a queued resume: the pane exiting, and **anybody typing into
+it**. Past that point they are driving, and an injected line would land in the
+middle of what they wrote.
+
 ## Legacy names — don't rename, just document
 
 Nothing in the shipped product carries the old name any more. `src/paths.ts`

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, Loader, RotateCw, Tag } from 'lucide-react';
+import { Check, Loader, RotateCw, Tag, RefreshCw } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
 
@@ -13,6 +13,7 @@ import { Button } from './ui/button';
 interface NamingConfig {
   autoNaming: boolean;
   autoNamingIntervalSecs: number;
+  resumeAgents: boolean;
 }
 
 type AsyncState = 'idle' | 'loading' | 'ok' | 'error';
@@ -99,6 +100,35 @@ export function AIFeaturesContent() {
               />
               <span className="text-xs text-muted-foreground">seconds</span>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2 pt-1 border-t border-border">
+            <div className="flex items-center gap-2 pt-3">
+              <RefreshCw size={13} className="text-muted-foreground" />
+              <span className="text-xs font-semibold text-foreground">Bring agents back</span>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              A sheep keeps its shell across a sheepit restart. It loses it when the machine
+              does — the pen comes back holding a bare shell, with the conversation still on
+              disk and nobody asking for it. Sheepit can type{' '}
+              <code className="font-mono text-[11px] text-foreground">claude --dangerously-skip-permissions -c</code>{' '}
+              into each pen that was running Claude Code, in its own directory, once its new
+              shell has settled. Type in the pen first and it leaves that one alone.
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Only Claude Code: it is the one agent with a "continue the last conversation
+              here" flag, so for anything else a guess would resume the wrong work.
+            </p>
+
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={cfg.resumeAgents}
+                onChange={e => setCfg({ ...cfg, resumeAgents: e.target.checked })}
+                className="rounded"
+              />
+              <span className="text-xs font-medium text-foreground">Restart Claude Code in restored pens</span>
+            </label>
           </div>
 
           {saveState === 'error' && (
