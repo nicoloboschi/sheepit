@@ -914,6 +914,29 @@ load-bearing:
   GitHub once is the point; the cookies are on disk, so they survive a server
   restart. It never touches the user's own browser profile — two processes
   cannot share a `--user-data-dir` anyway.
+- **It is headless, and stays headless.** A Chrome in the Dock — in the app
+  switcher, stealing focus, drawing a window on somebody's screen — is the
+  thing this feature exists to avoid, so "run it windowed but off-screen" is
+  not an answer, even though it works and was tried. The cost is real and worth
+  naming: headless Chrome calls itself `HeadlessChrome` in its user agent, and
+  sign-in flows that refuse automated browsers read that first — Google answers
+  "this browser or app may not be secure" and stops. So:
+  - **Pages are told a plain `Chrome/…`** (`Emulation.setUserAgentOverride`,
+    per page rather than as a launch flag, so a re-attached browser gets it too
+    and the browser's own requests keep their real name). The engine, the
+    version and every capability are identical to the Chrome beside it in the
+    Dock; that word was the only difference being reported. It is the cheap
+    half of the problem, not a disguise that survives real fingerprinting.
+  - **`SHEEPIT_BROWSER_HEADFUL=1`** runs a windowed browser for as long as it
+    takes to sign in to something that refuses anyway. The cookies land in the
+    profile on disk and stay there when it goes back to headless, so it is a
+    one-off rather than a mode to live in.
+- **A leftover browser is kept unless it is the wrong kind.** Re-attaching to
+  the browser a previous start left running is the default — its pages are open
+  and somebody may be reading them — but a headless one when `HEADFUL=1` was
+  asked for (or a windowed one when it was not) is closed and replaced, or
+  flipping that variable would appear to do nothing. `Browser.close` rather
+  than a signal: it needs no pid, and the profile is written out properly.
 - **Every view gets its own window** (`Target.createTarget({newWindow: true})`)
   plus `Emulation.setFocusEmulationEnabled`. This is not a detail — it is what
   lets more than one pane show a live page at all. Screencast is the
