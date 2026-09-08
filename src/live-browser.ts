@@ -201,6 +201,38 @@ function clearProfileLocks(): void {
   }
 }
 
+/**
+ * Injected into every page so it can say what the cursor over it should be.
+ *
+ * A streamed page is a picture, and a picture has no cursor: every link looked
+ * like plain text and every text field looked like nothing, because the pane
+ * showed one arrow over all of it. CDP has no "what is the cursor here"
+ * question to ask, so the page answers it instead.
+ *
+ * A listener inside the page rather than a query per mouse move: a round trip
+ * for every pointer sample would be hundreds a second, nearly all of them
+ * repeating the last answer. This reports only on *change*, which for a page
+ * you are reading is a handful of messages a minute.
+ */
+const CURSOR_REPORTER = `(() => {
+  if (window.__sheepitCursor) return;
+  window.__sheepitCursor = true;
+  let last = '';
+  const report = (value) => {
+    if (value === last) return;
+    last = value;
+    try { window.sheepitCursor(value); } catch (e) { /* binding gone */ }
+  };
+  const look = (e) => {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    report(el ? getComputedStyle(el).cursor : 'auto');
+  };
+  addEventListener('mousemove', look, true);
+  addEventListener('mousedown', look, true);
+  addEventListener('mouseup', look, true);
+  addEventListener('mouseout', () => report('auto'), true);
+})()`;
+
 export interface ViewFrame {
   /** base64 JPEG. */
   data: string;
@@ -231,6 +263,7 @@ interface View {
   onFrame: (frame: ViewFrame) => void;
   onState: (state: ViewState) => void;
   onActive: (active: boolean) => void;
+  onCursor: (cursor: string) => void;
   casting: boolean;
   lastUrl: string;
   lastTitle: string;
@@ -418,6 +451,12 @@ export class LiveBrowser {
     cdp.on('Page.frameStartedLoading', setLoading(true));
     cdp.on('Page.frameStoppedLoading', setLoading(false));
 
+    cdp.on('Runtime.bindingCalled', (params, sessionId) => {
+      if (params.name !== 'sheepitCursor') return;
+      const view = sessionId ? this.viewBySession(sessionId) : undefined;
+      view?.onCursor(String(params.payload ?? 'auto'));
+    });
+
     cdp.on('__closed__', () => { this.cdp = null; this.views.clear(); });
     return cdp;
   }
@@ -457,6 +496,7 @@ export class LiveBrowser {
     onFrame: (frame: ViewFrame) => void;
     onState: (state: ViewState) => void;
     onActive: (active: boolean) => void;
+    onCursor: (cursor: string) => void;
   }): Promise<void> {
     const cdp = await this.connection();
     await this.closeView(opts.id);
@@ -495,13 +535,21 @@ export class LiveBrowser {
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
+      onCursor: opts.onCursor,
       mainFrameId: null, loading: false,
       casting: false, lastUrl: '', lastTitle: '',
     };
     this.views.set(opts.id, view);
 
     await cdp.send('Page.enable', {}, sessionId);
+    await cdp.send('Runtime.enable', {}, sessionId).catch(() => {});
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
+    // The cursor reporter: a binding for the page to call, the script that
+    // calls it on every future document, and one evaluation for the document
+    // that is already here.
+    await cdp.send('Runtime.addBinding', { name: 'sheepitCursor' }, sessionId).catch(() => {});
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CURSOR_REPORTER }, sessionId).catch(() => {});
+    await cdp.send('Runtime.evaluate', { expression: CURSOR_REPORTER }, sessionId).catch(() => {});
     // Per page rather than as a launch flag: a flag would also rewrite the UA
     // of the browser's own requests, and this way a re-attached browser gets it
     // too without being restarted.
@@ -631,6 +679,49 @@ export class LiveBrowser {
     if (!view) return;
     if (!method.startsWith('Input.')) return;
     this.cdp?.post(method, params, view.sessionId);
+  }
+
+  /**
+   * What is selected in the page, so the client can put it on the *machine's*
+   * clipboard.
+   *
+   * ⌘C in a streamed page copies into the browser's own clipboard, on the
+   * host, where nobody can reach it — the keystroke works perfectly and the
+   * text goes somewhere useless. There is no clipboard domain in CDP to read
+   * back, and asking for `navigator.clipboard.readText()` would need a
+   * permission grant for a value we already have a better source for: the
+   * selection itself.
+   *
+   * `window.getSelection()` does not see inside a text field, so those are
+   * read from the field, which is where half of what anyone copies lives.
+   */
+  async selection(id: string): Promise<string> {
+    const view = this.views.get(id);
+    const cdp = this.cdp;
+    if (!view || !cdp) return '';
+    const expression = `(() => {
+      const a = document.activeElement;
+      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.selectionStart !== a.selectionEnd) {
+        return a.value.slice(a.selectionStart, a.selectionEnd);
+      }
+      return String(window.getSelection() || '');
+    })()`;
+    try {
+      const res = await cdp.send<{ result: { value?: string } }>(
+        'Runtime.evaluate', { expression, returnByValue: true }, view.sessionId);
+      return res.result.value ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** The other direction: text from the machine's clipboard, typed in. Typed
+   *  rather than pasted, because a paste would read the browser's own
+   *  clipboard, which is not the one the text came from. */
+  paste(id: string, text: string): void {
+    const view = this.views.get(id);
+    if (!view || !text) return;
+    this.cdp?.post('Input.insertText', { text }, view.sessionId);
   }
 
   async closeView(id: string): Promise<void> {

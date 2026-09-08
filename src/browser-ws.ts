@@ -34,6 +34,8 @@ type ClientMessage =
   | { type: 'back' }
   | { type: 'forward' }
   | { type: 'focus'; scale?: number }
+  | { type: 'copy'; id: number }
+  | { type: 'paste'; text: string }
   | { type: 'input'; method: string; params: Record<string, unknown> };
 
 /** `noServer`, and the caller routes upgrades to it — see the comment on the
@@ -77,6 +79,8 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
               // Only one pane streams at a time (see LiveBrowser.activeViewId),
               // so a pane has to be able to say why it went still.
               onActive: active => send({ type: 'active', active }),
+              // What the page says the pointer should look like over it.
+              onCursor: cursor => send({ type: 'cursor', cursor }),
             });
             send({ type: 'ready' });
             break;
@@ -85,6 +89,11 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
             await browser.resizeView(viewId, msg.width, msg.height, msg.scale ?? 1);
             break;
           case 'focus':    await browser.activate(viewId, msg.scale ?? 1); break;
+          // Answered with the id it was asked with: the client is holding a
+          // clipboard write open on a user gesture and cannot wait on a
+          // message it is not sure is its own.
+          case 'copy':     send({ type: 'copied', id: msg.id, text: await browser.selection(viewId) }); break;
+          case 'paste':    browser.paste(viewId, msg.text); break;
           case 'navigate': browser.navigate(viewId, msg.url); break;
           case 'reload':   browser.reload(viewId); break;
           case 'back':     await browser.history(viewId, -1); break;

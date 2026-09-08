@@ -23,6 +23,25 @@ function modifierBits(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; 
 
 const BUTTONS = ['left', 'middle', 'right'] as const;
 
+/** The cursors a page may ask this pane to show. An allowlist, because the
+ *  value arrives from the page being viewed and `cursor` accepts `url(...)` —
+ *  which would have a page nobody vouched for fetching an image through the
+ *  viewer's own browser. Every keyword CSS defines is here; anything else
+ *  becomes the default. */
+const CURSORS = new Set([
+  'auto', 'default', 'none', 'context-menu', 'help', 'pointer', 'progress', 'wait',
+  'cell', 'crosshair', 'text', 'vertical-text', 'alias', 'copy', 'move', 'no-drop',
+  'not-allowed', 'grab', 'grabbing', 'all-scroll', 'col-resize', 'row-resize',
+  'n-resize', 'e-resize', 's-resize', 'w-resize', 'ne-resize', 'nw-resize',
+  'se-resize', 'sw-resize', 'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize',
+  'zoom-in', 'zoom-out',
+]);
+
+function safeCursor(value: string): string {
+  const first = value.split(',').pop()?.trim() ?? '';
+  return CURSORS.has(first) ? first : 'default';
+}
+
 /** Which button a *move* is carrying, read from the `buttons` bitmask rather
  *  than from `button` — which is 0 (meaning "left") on every mousemove, held
  *  or not. Chromium decides a move is a drag from this: sent as 'none', a
@@ -98,6 +117,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     loading: false, status: 'connecting', error: null, streaming: false,
   });
   const [paused, setPaused] = useState(false);
+  const [cursor, setCursor] = useState('default');
   const report = useCallback((patch: Partial<LiveBrowserState>) => {
     stateRef.current = { ...stateRef.current, ...patch };
     onStateRef.current(stateRef.current);
@@ -176,6 +196,11 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           // The box is certainly laid out by now; the one sent with `open` may
           // have been measured before the split had settled.
           syncSize();
+        } else if (msg.type === 'cursor') {
+          setCursor(safeCursor(String(msg.cursor ?? 'default')));
+        } else if (msg.type === 'copied') {
+          const resolve = copyReplyRef.current.get(msg.id);
+          if (resolve) { copyReplyRef.current.delete(msg.id); resolve(String(msg.text ?? '')); }
         } else if (msg.type === 'error') {
           report({ status: 'error', error: msg.message });
         }
@@ -285,11 +310,64 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     };
   }, [mouse]);
 
+  /** ⌘C / ⌘X / ⌘V, which have to be handled here rather than forwarded.
+   *
+   *  The page's own copy works — into the *browser's* clipboard, on the host,
+   *  where nothing on this machine can reach it. So a copy asks the server what
+   *  is selected and writes that to the clipboard in front of you, inside the
+   *  keydown, which is the gesture the browser requires for a clipboard write.
+   *  A paste is the mirror: read this machine's clipboard and have the page
+   *  type it, since the page pasting would read the wrong clipboard.
+   *
+   *  Cut is copy plus the keystroke: the page still has to remove the text. */
+  const copyReplyRef = useRef(new Map<number, (text: string) => void>());
+  const copyIdRef = useRef(1);
+  const askForSelection = useCallback(() => new Promise<string>(resolve => {
+    const id = copyIdRef.current++;
+    copyReplyRef.current.set(id, resolve);
+    send({ type: 'copy', id });
+    // A page that never answers must not leave the clipboard promise hanging.
+    setTimeout(() => {
+      if (copyReplyRef.current.delete(id)) resolve('');
+    }, 1500);
+  }), [send]);
+
+  const clipboard = useCallback(async (e: React.KeyboardEvent): Promise<boolean> => {
+    const accel = e.metaKey || e.ctrlKey;
+    if (!accel || e.altKey) return false;
+    const key = e.key.toLowerCase();
+    if (key === 'c' || key === 'x') {
+      const text = await askForSelection();
+      if (text) { try { await navigator.clipboard.writeText(text); } catch { /* denied */ } }
+      // Cut still needs the page to do the removing.
+      return key === 'c';
+    }
+    if (key === 'v') {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) send({ type: 'paste', text });
+      } catch { /* denied: nothing to paste, and the page cannot help */ }
+      return true;
+    }
+    return false;
+  }, [askForSelection, send]);
+
   const onKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
     // The page has the keyboard while it is focused — including ⌘R, which
     // should reload the page and not the whole of sheepit.
     e.preventDefault();
     e.stopPropagation();
+    // Copy and paste are this machine's, not the page's — and they are settled
+    // before anything is forwarded, so the page never sees a copy it would
+    // answer into a clipboard nobody can read.
+    if (down && (e.metaKey || e.ctrlKey)) {
+      void clipboard(e).then(handled => { if (!handled) forwardKey(e, true); });
+      return;
+    }
+    forwardKey(e, down);
+  }, [clipboard]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const forwardKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
     const text = printable ? e.key : KEY_TEXT[e.key];
     // The event's own keyCode is the virtual key code; the table is only for
@@ -316,6 +394,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     <div
       ref={surfaceRef}
       className="live-browser-surface"
+      style={{ cursor }}
       tabIndex={0}
       onMouseDown={e => {
         (e.currentTarget as HTMLElement).focus();

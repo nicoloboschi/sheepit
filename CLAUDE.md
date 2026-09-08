@@ -990,6 +990,26 @@ translation are not optional:
   does carry text (`\r`), and without it Enter raised a keydown that no form
   ever submitted on.
 
+**Copy and paste cross the machine boundary by hand.** ⌘C in a streamed page
+works perfectly and puts the text on the *host's* clipboard, where nothing on
+the viewing machine can reach it. So the shortcut is caught in the pane, never
+forwarded: a copy asks the server what is selected (`window.getSelection()`,
+plus the text field's own selection, which the Selection API does not see) and
+writes it to the clipboard inside the keydown, which is the gesture browsers
+require for a clipboard write. Paste is the mirror — read this machine's
+clipboard, have the page type it with `Input.insertText` — because a paste
+inside the page would read the wrong clipboard. Cut is copy plus the keystroke,
+since the page still has to do the removing.
+
+**The page reports its own cursor.** A picture of a page has no cursor, so
+every link looked like prose and every field like nothing. CDP has no "what is
+the cursor here" question, so a small script is injected into every document
+(`CURSOR_REPORTER`) that watches the pointer and calls a binding *when the
+cursor changes* — a handful of messages a minute, rather than a round trip per
+pointer sample. The client keeps an allowlist of CSS cursor keywords: the value
+comes from the page, and `cursor` accepts `url(...)`, which would have an
+untrusted page fetching an image through the viewer's browser.
+
 **The socket reconnects, with backoff.** The backend restarts — a deploy, a
 code change in dev — and each restart used to take every browser pane with it:
 the socket closed, nothing reopened it, and the pane sat on a black rectangle
