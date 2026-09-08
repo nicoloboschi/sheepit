@@ -141,33 +141,6 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
    * are still forwarded as key events from `keydown`.
    */
   const keySinkRef = useRef<HTMLTextAreaElement | null>(null);
-  // TEMPORARY: which instance is speaking, and whether it is the same one
-  // across a keystroke. A remount here destroys a composition in flight.
-  const whoRef = useRef(Math.random().toString(36).slice(2, 6));
-  // TEMPORARY: does the whole WINDOW lose focus? `same element: true` on a
-  // blur is that signature — when a window blurs, document.activeElement keeps
-  // its value — and it would explain a keystroke that produces a macOS beep
-  // and reaches no listener at all.
-  useEffect(() => {
-    const onWin = (e: Event) => {
-      // eslint-disable-next-line no-console
-      console.log('[sheepit window]', e.type, '| document.hasFocus():', document.hasFocus(),
-        '| activeElement:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
-    };
-    window.addEventListener('blur', onWin);
-    window.addEventListener('focus', onWin);
-    return () => {
-      window.removeEventListener('blur', onWin);
-      window.removeEventListener('focus', onWin);
-    };
-  }, []);
-
-  useEffect(() => {
-    const who = whoRef.current;
-    // eslint-disable-next-line no-console
-    console.log('[sheepit surface] MOUNTED', who, '— live surfaces now:', document.querySelectorAll('.live-browser-key-sink').length + 1);
-    return () => { console.log('[sheepit surface] UNMOUNTED', who); }; // eslint-disable-line no-console
-  }, []);
   const imgRef = useRef<HTMLImageElement | null>(null);
   // The last frame's own size, so a click maps correctly even in the moment
   // between a resize and the first frame that is actually the new size.
@@ -414,13 +387,6 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   }, [askForSelection, send]);
 
   const onKey = useCallback((e: KeyboardEvent, down: boolean) => {
-    // TEMPORARY, for diagnosing a key that never arrives: a modifier chord is
-    // rare enough to log, and whether a line appears at all is the whole
-    // question. Remove once ⌥ò is settled.
-    // eslint-disable-next-line no-console
-    console.log('[sheepit key]', down ? 'down' : 'up  ',
-      JSON.stringify({ key: e.key, code: e.code, alt: e.altKey, keyCode: e.keyCode, composing: e.isComposing }),
-      'focus:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
     // Anything the input method is in the middle of composing belongs to it.
     if (e.isComposing || e.keyCode === 229) return;
 
@@ -513,33 +479,6 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // keystroke going missing somewhere else in the app — so while you are not
     // in a browser pane, it is not there at all.
     if (!focused) return;
-    // TEMPORARY A/B: `localStorage.setItem('sheepit:nokeys','1')` and reload to
-    // run the pane with NO key handling of ours at all. The sink still types
-    // (its own `input` event carries the text), so if ⌥ò composes with this on
-    // and not with it off, the fault is in here and nowhere else.
-    if (localStorage.getItem('sheepit:nokeys') === '1') {
-      // eslint-disable-next-line no-console
-      console.log('[sheepit] key handling DISABLED for this test');
-      return;
-    }
-    // TEMPORARY: the earliest a page can see anything. If ⌥ò logs here but not
-    // in onKey, our guard is dropping it; if it logs nowhere, the browser took
-    // it before the page.
-    const edge = (e: KeyboardEvent) => {
-      // eslint-disable-next-line no-console
-      console.log('[sheepit edge]', e.type, JSON.stringify({ key: e.key, code: e.code, alt: e.altKey }));
-    };
-    document.addEventListener('keydown', edge, true);
-    document.addEventListener('keyup', edge, true);
-    // What the sink itself sees, which is the only thing that proves the OS
-    // composed the character rather than handing the chord to the browser.
-    const typed = (e: Event) => {
-      // eslint-disable-next-line no-console
-      console.log('[sheepit sink]', e.type, JSON.stringify((e as InputEvent).data ?? (e.target as HTMLTextAreaElement).value));
-    };
-    keySinkRef.current?.addEventListener('beforeinput', typed);
-    keySinkRef.current?.addEventListener('compositionstart', typed);
-    keySinkRef.current?.addEventListener('compositionend', typed);
     const handle = (down: boolean) => (e: KeyboardEvent) => {
       if (document.activeElement !== keySinkRef.current) return;
       onKey(e, down);
@@ -548,13 +487,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     const up = handle(false);
     window.addEventListener('keydown', down, true);
     window.addEventListener('keyup', up, true);
-    const sink = keySinkRef.current;
     return () => {
-      sink?.removeEventListener('beforeinput', typed);
-      sink?.removeEventListener('compositionstart', typed);
-      sink?.removeEventListener('compositionend', typed);
-      document.removeEventListener('keyup', edge, true);
-      document.removeEventListener('keydown', edge, true);
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
     };
@@ -618,11 +551,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        onFocus={() => {
-          // eslint-disable-next-line no-console
-          console.log('[sheepit focus]', whoRef.current);
-          setFocused(true); claim();
-        }}
+        onFocus={() => { setFocused(true); claim(); }}
         onBlur={() => {
           // Focus that goes *nowhere* — to the body, or to nothing at all — is
           // not somebody choosing another control; it is the pane dropping the
@@ -630,14 +559,6 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           // shortcut instead of into the page. Take it back.
           const next = document.activeElement;
           const wentNowhere = !next || next === document.body;
-          // A blur caused by JS shows a stack; a blur caused by the OS or the
-          // window losing focus shows only the event dispatch.
-          console.trace('[sheepit blur stack]'); // eslint-disable-line no-console
-          // eslint-disable-next-line no-console
-          console.log('[sheepit blur]', whoRef.current, 'focus went to:',
-            (next as HTMLElement | null)?.className || next?.tagName || 'nothing',
-            '| same element:', next === keySinkRef.current,
-            '| sinks on page:', document.querySelectorAll('.live-browser-key-sink').length);
           if (wentNowhere && hoveringRef.current) {
             keySinkRef.current?.focus({ preventScroll: true });
             return;
