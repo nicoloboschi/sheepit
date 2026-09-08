@@ -144,6 +144,24 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   // TEMPORARY: which instance is speaking, and whether it is the same one
   // across a keystroke. A remount here destroys a composition in flight.
   const whoRef = useRef(Math.random().toString(36).slice(2, 6));
+  // TEMPORARY: does the whole WINDOW lose focus? `same element: true` on a
+  // blur is that signature — when a window blurs, document.activeElement keeps
+  // its value — and it would explain a keystroke that produces a macOS beep
+  // and reaches no listener at all.
+  useEffect(() => {
+    const onWin = (e: Event) => {
+      // eslint-disable-next-line no-console
+      console.log('[sheepit window]', e.type, '| document.hasFocus():', document.hasFocus(),
+        '| activeElement:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
+    };
+    window.addEventListener('blur', onWin);
+    window.addEventListener('focus', onWin);
+    return () => {
+      window.removeEventListener('blur', onWin);
+      window.removeEventListener('focus', onWin);
+    };
+  }, []);
+
   useEffect(() => {
     const who = whoRef.current;
     // eslint-disable-next-line no-console
