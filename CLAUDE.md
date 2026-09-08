@@ -417,6 +417,39 @@ is where you read for minutes at a time — the last place to put the brand
 colour around the text — and being the only lit thing over a dimmed grid is
 already all the emphasis it needs.
 
+**Switching pens in zen changes what is in the frame, not the frame.** The
+box does not move between one pen and the next, so anything that animates,
+re-runs or resizes on the way is the pane appearing to be torn down and put
+back — which is what it looked like. Four things had to stop:
+
+- **The entrance plays once per *opening*.** `zenOpenSeq` (bumped only when
+  `toggleZen` turns zen on from off — never by `setCurrentSessionId` or
+  `setActivePane`) and the module-level `playedZenOpen` in `TerminalCell`
+  agree on that between panes: the pane taking over does not replay what the
+  pane handing over already ran. It is read during render, not in an effect,
+  or the pane shows at full size for a frame and *then* fades in from nothing.
+  It is sticky while a pane is zen because an inline `animation` that vanished
+  on the next render — and a pane renders on every burst of output — would cut
+  the fade off part-way.
+- **The backdrop is one of those animations.** It is rendered by whichever
+  pane is zen, so a switch tears one down and puts an identical one up in the
+  same commit. Invisible — unless it fades itself back in.
+- **The zen pane and the shown workspace move in one `set`.** They were two,
+  and the state between them pointed zen at a pane whose workspace was still
+  `display: none`, which hides a `position: fixed` child.
+- **The PTY is only told a size that changed.** Every resize is a SIGWINCH and
+  a full-screen app answers one by repainting its whole frame; four fits
+  converge on one newly-visible pane (the zen effect, the ResizeObserver's
+  50ms and 200ms passes, the tab-active handler) and they mostly agree on the
+  answer, so a switch cost three or four repaints of an agent's UI.
+  `sendResize` in `TerminalCell` drops the repeats, and forgets what it sent
+  on `__ws_open__`, where a reconnected server has to be told again.
+
+The zen refit's two `requestAnimationFrame` ids live in a ref rather than on
+`window` for the same reason: a switch runs that effect on *two* panes, and one
+global slot meant the pane handing zen over cancelled the fit of the pane
+taking it.
+
 Zen insets the pane by **24px**, not the 40px it used to. It exists to read
 one pane, so most of the window should be pane — but it still has to read as
 an overlay floating over the grid rather than a mode that replaced it. 40px

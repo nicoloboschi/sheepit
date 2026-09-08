@@ -419,6 +419,27 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   const handleWebLinkRef = useRef(handleWebLink);
   handleWebLinkRef.current = handleWebLink;
 
+  /** The size the PTY was last told about, so an unchanged one is not resent.
+   *  Cleared on a reconnect, where the server has to be told again. */
+  const sentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+
+  /** Tell the PTY this pane's size — but only when it actually moved.
+   *
+   *  Every resize is a SIGWINCH, and a full-screen app answers one by
+   *  repainting its whole frame. Several fits converge on one visible pane
+   *  (the zen effect, the ResizeObserver's 50ms and 200ms passes, the
+   *  tab-active handler), and they mostly agree on the answer, so sending each
+   *  one made a pen switch in zen cost three or four repaints of an agent's
+   *  UI — which is most of what reads as the pane being rebuilt. */
+  const sendResize = () => {
+    const t = termRef.current;
+    if (!t) return;
+    const last = sentSizeRef.current;
+    if (last && last.cols === t.cols && last.rows === t.rows) return;
+    sentSizeRef.current = { cols: t.cols, rows: t.rows };
+    sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+  };
+
   /** Safe fit — bails out if container isn't visible or terminal isn't mounted.
    *  Swallows all errors since xterm's async refresh can crash on "dimensions". */
   const safeFit = () => {
@@ -611,8 +632,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
           if (!cur || !f || cur.clientWidth < 1 || cur.clientHeight < 1) return;
           try {
             f.fit();
-            const t = termRef.current;
-            if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+            sendResize();
           } catch { /* noop */ }
         });
       });
@@ -895,6 +915,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     const unsubGlobal = sharedWs.subscribeGlobal((msg) => {
       if (msg.type === '__ws_open__') {
         pendingResetRef.current = true;
+        // A reconnected server has to be told the size again, whatever we
+        // last sent the old connection.
+        sentSizeRef.current = null;
         outputBufRef.current = '';
         cprGuardUntilRef.current = Date.now() + 1500;
       }
@@ -919,8 +942,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         safeFit();
-        const term = termRef.current;
-        if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
+        sendResize();
       }, 80);
     };
     window.addEventListener('resize', handleResize);
@@ -937,8 +959,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     // Small delay so xterm can measure the new font before fitting
     const id = setTimeout(() => {
       safeFit();
-      const t = termRef.current;
-      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      sendResize();
     }, 20);
     return () => clearTimeout(id);
   }, [zoom]);
@@ -964,7 +985,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       const t = termRef.current;
       if (!t) return;
       t.refresh(0, t.rows - 1);
-      sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      sendResize();
     }, 20);
     return () => clearTimeout(id);
   }, [fontFamily]);
@@ -977,8 +998,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     let followup: ReturnType<typeof setTimeout> | null = null;
     const doFit = () => {
       safeFit();
-      const t = termRef.current;
-      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      sendResize();
     };
     const ro = new ResizeObserver(() => {
       // Going from 0×0 back to a real size means this pane's workspace just
@@ -1018,8 +1038,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       if (!isActive) return;
       safeFit();
       termRef.current?.focus();
-      const term = termRef.current;
-      if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
+      sendResize();
     };
     window.addEventListener('sheepit:terminal-tab-active', handler);
     return () => window.removeEventListener('sheepit:terminal-tab-active', handler);
@@ -1038,8 +1057,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     const id = setTimeout(() => {
       safeFit();
       if (isActive) termRef.current?.focus();
-      const term = termRef.current;
-      if (term) sendRef.current({ type: 'resize', cols: term.cols, rows: term.rows });
+      sendResize();
     }, 60);
     return () => clearTimeout(id);
   }, [view, isActive, stacked]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1065,8 +1083,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       window.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       safeFit();
-      const t = termRef.current;
-      if (t) sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
+      sendResize();
       // Persist once on release (not during the drag) to avoid localStorage churn.
       setTermPct(pct => { saveSplitPct(sessionId, pct); return pct; });
     };
@@ -1086,23 +1103,27 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   // erase sequences were computed for narrow wrapping and no longer line up.
   // Instead, let xterm reflow its existing buffer on resize and let the app's
   // natural SIGWINCH repaint stream in — cursor math lines up at the new width.
+  //
+  // The two frames are held in a ref, not on `window`. They were global, and a
+  // pen switch in zen runs this effect on two panes at once — the one handing
+  // zen over and the one taking it. The second overwrote the first's id, and
+  // the first's cleanup then cancelled the second's fit, so the pane you had
+  // just opened was left at the size it happened to have and only got straight
+  // by the ResizeObserver's later passes.
+  const zenFitRafRef = useRef<{ a: number; b: number }>({ a: 0, b: 0 });
   useEffect(() => {
     // Two frames: one for layout, one for fit after xterm's renderer catches up
-    const id1 = requestAnimationFrame(() => {
-      const id2 = requestAnimationFrame(() => {
+    const frames = zenFitRafRef.current;
+    frames.a = requestAnimationFrame(() => {
+      frames.b = requestAnimationFrame(() => {
         safeFit();
-        const t = termRef.current;
-        if (t) {
-          sendRef.current({ type: 'resize', cols: t.cols, rows: t.rows });
-          t.focus();
-        }
+        sendResize();
+        termRef.current?.focus();
       });
-      (window as any).__zenRafId = id2;
     });
     return () => {
-      cancelAnimationFrame(id1);
-      const id2 = (window as any).__zenRafId;
-      if (id2) cancelAnimationFrame(id2);
+      cancelAnimationFrame(frames.a);
+      cancelAnimationFrame(frames.b);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isZen]);

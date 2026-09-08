@@ -34,6 +34,8 @@ describe('useStore', () => {
       selectedFieldId: null,
       workspaceZooms: {},
       wsStatus: 'connecting',
+      zenSessionId: null,
+      zenOpenSeq: 0,
       sheetOpen: false,
       confirm: null,
     })
@@ -161,6 +163,55 @@ describe('useStore', () => {
 
       useStore.getState().setCurrentSessionId('$0')
       expect(useStore.getState().sessionHasUnseen['$0']).toBeFalsy()
+    })
+  })
+
+  describe('zen', () => {
+    const twoPens = () => {
+      useStore.setState({
+        workspaces: {
+          w1: { id: 'w1', cells: ['a'], activeCell: 0, layout: 'single', fieldId: 'f' } as unknown as Workspace,
+          w2: { id: 'w2', cells: ['b', 'c'], activeCell: 1, layout: 'horizontal', fieldId: 'f' } as unknown as Workspace,
+        },
+        workspaceOrder: ['w1', 'w2'],
+        currentSessionId: 'w1',
+      })
+    }
+
+    it('counts an opening, not a move between pens', () => {
+      twoPens()
+      const before = useStore.getState().zenOpenSeq
+
+      useStore.getState().toggleZen('a')
+      const opened = useStore.getState().zenOpenSeq
+      expect(opened).toBe(before + 1)
+      expect(useStore.getState().zenSessionId).toBe('a')
+
+      // Picking another pen keeps zen on and follows its active pane — and is
+      // not an opening, so nothing has an entrance to play.
+      useStore.getState().setCurrentSessionId('w2')
+      expect(useStore.getState().zenSessionId).toBe('c')
+      expect(useStore.getState().zenOpenSeq).toBe(opened)
+
+      // Walking panes within the pen is not an opening either.
+      useStore.getState().setActivePane('w2', 0)
+      expect(useStore.getState().zenSessionId).toBe('b')
+      expect(useStore.getState().zenOpenSeq).toBe(opened)
+
+      // Closing and opening again is.
+      useStore.getState().toggleZen('b')
+      expect(useStore.getState().zenSessionId).toBeNull()
+      expect(useStore.getState().zenOpenSeq).toBe(opened)
+      useStore.getState().toggleZen('b')
+      expect(useStore.getState().zenOpenSeq).toBe(opened + 1)
+    })
+
+    it('leaves zen alone when it is not on', () => {
+      twoPens()
+      const seq = useStore.getState().zenOpenSeq
+      useStore.getState().setCurrentSessionId('w2')
+      expect(useStore.getState().zenSessionId).toBeNull()
+      expect(useStore.getState().zenOpenSeq).toBe(seq)
     })
   })
 
