@@ -795,7 +795,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
     <>
       <header
         className="md:hidden flex flex-col shrink-0 border-b"
-        style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
+        style={{ background: 'var(--chrome)', borderColor: 'var(--chrome-line)' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >

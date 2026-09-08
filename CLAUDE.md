@@ -125,6 +125,32 @@ because the meadow tones vanish against a pale page. It also flips
 `--primary-foreground` to white; in dark it is the near-black `#0b0d0a`, since
 the gradient fill itself is the light surface there.
 
+### Chrome is not green
+
+The **sidebar and the bars along the top** — the flock column, the workspace
+bar above the grid, the mobile header, and a pane's own chrome bar — are
+**neutral graphite** (`--chrome`, `--chrome-line`), not the olive the other
+surfaces are tinted with. They were olive, on the reasoning that the sidebar is
+the pasture the flock stands in. But chrome is the furniture around every pane,
+in peripheral vision for the whole working day, and a green field held there is
+tiring in a way a green button is not.
+
+So green now has to *say* something to appear: buttons, the fence, the sheep,
+the activity dots, every status colour. It no longer tints the furniture. In
+particular:
+
+- `--pane-chrome-active` is a **lift, not a hue** — the same graphite a few
+  steps brighter. It was a green wash, which put the loudest colour on screen
+  directly behind the thing you spend the day reading. The pane's border and
+  ring already carry the brand.
+- The **selected pen** is a lift out of the column too. Its brand-coloured
+  signal is its fence coming into the light (`.session-item.active
+  .pen-fence`), which is a drawn thing about that one pen, rather than a green
+  card behind every row you scan.
+- The **grass stays green** — the footer strip and the floor of every pen. That
+  is a picture of something, and it reads better against grey than it did
+  against olive.
+
 ### CSS variables (defined in `ui/src/style.css`)
 
 | var                        | value                                       | use for                          |
@@ -137,6 +163,8 @@ the gradient fill itself is the light surface there.
 | `--primary-tint`           | 10% alpha version of the gradient           | soft backgrounds                 |
 | `--dark-surface-gradient`  | `linear-gradient(135deg, #151a13, #10130f)` | control-plane backdrops          |
 | `--ring`                   | `#9cbc7f`                                   | focus outlines                   |
+| `--chrome`                 | `#15171a` (dark) / `#eef0f3` (light)        | sidebar + top bars (neutral)     |
+| `--chrome-line`            | white/ink at ~7–10% alpha                   | the hairlines between them       |
 | `--success`                | `#9CBC7F`                                   | healthy / additions / clean tree |
 | `--warning`                | `#D9B84A`                                   | amber — dirty tree, unseen output|
 | `--destructive`            | `#E0907B`                                   | terracotta — errors, deletions   |
@@ -383,7 +411,9 @@ alone on screen there is no neighbour to keep it off.
   for the text — never a literal `#fff`, which disappears on the light fill.
 - **Soft tinted backgrounds** → `var(--primary-tint)`.
 - **Surfaces** are olive-tinted near-blacks, not neutral greys:
-  `#0b0d0a` page, `#111411` card, `#181c16` sidebar/popover, `#232820` accent.
+  `#0b0d0a` page, `#111411` card, `#181c16` popover, `#232820` accent.
+- **Chrome is the exception, and it is neutral** — see [Chrome is not
+  green](#chrome-is-not-green).
 - **ANSI palette** (`ui/src/theme.ts`) is tuned to the same pasture range —
   sage green, amber yellow, terracotta red, muted mauve. Editing it restyles a
   running Claude/Codex session without sending it any bytes.

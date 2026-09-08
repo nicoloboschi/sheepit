@@ -140,12 +140,25 @@
   --bleating:               #8EBFA2;
   --grazing:                #9CBC7F;
 
+  /* Chrome — the sidebar and the bars along the top of things. These are
+     NEUTRAL graphite, not the olive the rest of the surfaces are tinted with.
+     Chrome is what surrounds every pane and is therefore in view all day, and
+     a green field held at the edge of vision for hours is tiring in a way a
+     green button is not. The brand still reads everywhere it says something:
+     buttons, the fence, the sheep, every status colour. It just no longer
+     tints the furniture. */
+  --chrome:                 #15171a;
+  --chrome-line:            rgba(255, 255, 255, 0.07);
+
   /* Pane chrome — the header above a terminal and the status bar below it are
      the two halves of one frame, so they share a gradient rather than each
      inventing their own. PaneHeader reads these; there is no longer a second
      bar under the terminal to keep in step with it. */
-  --pane-chrome:            linear-gradient(115deg, rgba(24, 28, 22, 0.72), rgba(17, 20, 17, 0.92));
-  --pane-chrome-active:     linear-gradient(115deg, rgba(124, 168, 96, 0.22), rgba(78, 132, 108, 0.12) 62%, rgba(17, 20, 17, 0.96)), #10130f;
+  --pane-chrome:            linear-gradient(115deg, rgba(30, 33, 38, 0.72), rgba(19, 21, 25, 0.92));
+  /* Active is a *lift*, not a hue: the same graphite a few steps brighter. The
+     pane's own border and ring already carry the brand, and a green wash here
+     put the loudest colour on screen behind the thing you read most. */
+  --pane-chrome-active:     linear-gradient(115deg, rgba(62, 68, 78, 0.55), rgba(32, 36, 42, 0.85) 62%, rgba(19, 21, 25, 0.96)), #131519;
   /* Diff add/remove rows. Semantic green/red, but the surface has to flip with
      the theme or the diff renders as dark blocks on a light page. */
   --diff-add-bg:            #1a2916;
@@ -192,14 +205,16 @@
   --diff-add-fg:            #14290a;
   --diff-del-bg:            #fbeae5;
   --diff-del-fg:            #4a170c;
-  --pane-chrome:            var(--secondary);
-  --pane-chrome-active:     linear-gradient(115deg, rgba(78, 122, 59, 0.16), rgba(47, 107, 85, 0.08) 62%, var(--card));
+  --chrome:                 #eef0f3;
+  --chrome-line:            rgba(34, 41, 31, 0.10);
+  --pane-chrome:            #eef0f3;
+  --pane-chrome-active:     linear-gradient(115deg, rgba(120, 131, 148, 0.20), rgba(160, 170, 184, 0.10) 62%, var(--card));
 }
 
 :root[data-theme='light'] .sidebar-shell,
 :root[data-theme='light'] .sidebar-shell-collapsed {
-  border-right-color: rgba(34, 41, 31, 0.12);
-  box-shadow: inset -1px 0 rgba(78, 122, 59, 0.14), 10px 0 28px rgba(34, 41, 31, 0.08);
+  border-right-color: var(--chrome-line);
+  box-shadow: inset -1px 0 rgba(34, 41, 31, 0.10), 10px 0 28px rgba(34, 41, 31, 0.08);
 }
 :root[data-theme='light'] .terminal-pane { background: var(--card); }
 :root[data-theme='light'] .pane-header { color: var(--foreground); }
@@ -261,36 +276,40 @@
 .flock-sep { padding: 0 3px; opacity: 0.5; }
 
 /* ── Workspace sidebar (the flock) ─────────────────────────────────────────
-   The sidebar is a navigation instrument, not a second terminal surface. It
-   reads as the pasture the flock stands in: a flat olive field with a faint
-   dot texture, so the pen cards on top of it stay the brightest thing in the
-   column and workspace state is easy to scan. */
+   The sidebar is a navigation instrument, not a second terminal surface. It is
+   neutral graphite with a faint dot texture, so the pen cards on top of it
+   stay the brightest thing in the column and workspace state is easy to scan.
+
+   It used to be an olive field, on the reasoning that the sidebar is the
+   pasture the flock stands in. The grass is still down there in the footer
+   strip and inside every pen, where it is a picture of something; as a wash
+   over the whole column it was only a hue, and a green one held in peripheral
+   vision all day is tiring. The pasture reads better against grey anyway. */
 .sidebar-shell {
   isolation: isolate;
   background:
-    radial-gradient(circle at 1px 1px, rgba(156, 188, 127, 0.055) 1px, transparent 1.6px) 0 0 / 9px 9px,
-    radial-gradient(ellipse 90% 30% at 22% -10%, rgba(156, 188, 127, 0.10), transparent 70%),
-    var(--sidebar-field, #181c16);
-  border-right: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: inset -1px 0 rgba(111, 169, 140, 0.12), 10px 0 28px rgba(0, 0, 0, 0.16);
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    radial-gradient(ellipse 90% 30% at 22% -10%, rgba(255, 255, 255, 0.055), transparent 70%),
+    var(--sidebar-field, #15171a);
+  border-right: 1px solid var(--chrome-line);
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.06), 10px 0 28px rgba(0, 0, 0, 0.16);
 }
 .sidebar-shell-collapsed {
   background:
-    radial-gradient(circle at 1px 1px, rgba(156, 188, 127, 0.055) 1px, transparent 1.6px) 0 0 / 9px 9px,
-    var(--sidebar-field, #181c16);
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    var(--sidebar-field, #15171a);
 }
-:root { --sidebar-field: #181c16; }
+:root { --sidebar-field: var(--chrome); }
 /* How wide the flock list is, and how much of it is actually on screen. The
    sidebar publishes the raw number (see Sidebar.tsx); below Tailwind's `md`
    the list is a sheet rather than a column, so nothing is beside it there and
    the effective width is zero. */
 :root { --flock-width-raw: 256px; --flock-width: 0px; }
 @media (min-width: 768px) { :root { --flock-width: var(--flock-width-raw); } }
-:root[data-theme='light'] { --sidebar-field: #f6faf1; }
 :root[data-theme='light'] .sidebar-shell,
 :root[data-theme='light'] .sidebar-shell-collapsed {
   background:
-    radial-gradient(circle at 1px 1px, rgba(78, 122, 59, 0.07) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    radial-gradient(circle at 1px 1px, rgba(34, 41, 31, 0.06) 1px, transparent 1.6px) 0 0 / 9px 9px,
     var(--sidebar-field);
 }
 .sidebar-header,
@@ -299,8 +318,8 @@
   border-color: rgba(255, 255, 255, 0.08) !important;
 }
 .sidebar-header {
-  background: linear-gradient(90deg, rgba(156, 188, 127, 0.06), transparent 66%);
-  box-shadow: inset 0 -1px rgba(111, 169, 140, 0.07);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent 66%);
+  box-shadow: inset 0 -1px rgba(255, 255, 255, 0.05);
 }
 .sidebar-footer {
   background: rgba(0, 0, 0, 0.10);
@@ -958,7 +977,7 @@
 }
 .session-item:hover {
   background: linear-gradient(105deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
-  border-color: rgba(156, 188, 127, 0.22);
+  border-color: rgba(255, 255, 255, 0.14);
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.025);
   transform: translateY(-1px);
 }
@@ -1019,10 +1038,14 @@
 .session-item.active .pen-fence { opacity: 0.95; }
 
 .session-item.active {
-  /* Selected row: surface and border carry the state without a menu-like rail. */
-  background: linear-gradient(105deg, rgba(156, 188, 127, 0.18), rgba(111, 169, 140, 0.075));
-  border-color: transparent;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(142, 191, 162, 0.08);
+  /* Selected row: a lift out of the column, not a green field. The pen you are
+     in is also the one whose fence is in the light (.session-item.active
+     .pen-fence), so selection still has a brand-coloured signal — it is just
+     the fence saying it, which is a drawn thing, rather than the card behind
+     every row you scan. */
+  background: linear-gradient(105deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.035));
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(255, 255, 255, 0.07);
 }
 
 /* ── Unseen notification ────────────────────────────────────────────────────
