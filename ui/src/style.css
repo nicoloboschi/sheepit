@@ -2478,24 +2478,39 @@
   .preview-loading { animation: none; background-position: 0 0; background-size: 100% 100%; opacity: 0.5; }
 }
 
-/* The live browser's keyboard sink — invisible, but a real text field.
-   Focusing a div gives the OS no text input context, and without one macOS
-   never composes: `@` is ⌥ò on an Italian layout, and the raw chord fell
-   through to the browser's own shortcuts instead of becoming a character.
-   Dead keys, IME candidates and the emoji picker need the same context. */
+/* The live browser's keyboard sink — invisible, but a *real* text field.
+   Two things it has to be, and the second one cost a day:
+
+   - Focused, so the OS has a text input context. Focus a plain div and macOS
+     never runs the input method, so `@` (⌥ò on an Italian layout) is never
+     composed and the raw chord falls through to the browser's shortcuts.
+   - Actually laid out and painted. This was `opacity: 0` at 1×1, which is
+     focusable but has no usable caret rectangle — and a composition needs one
+     to place its candidate window. macOS would start the chord, find nowhere
+     to put it, abandon it, and the key would come back as an unhandled key
+     equivalent: a beep, and no character. Pressing both keys fast enough beat
+     the composition and worked, which is what gave it away.
+
+   So it is full size and fully transparent instead of invisible: `color`,
+   `background` and `caret-color` transparent, opacity untouched. Nothing to
+   see, everything to compose into. `pointer-events: none` keeps the mouse on
+   the pane underneath. */
 .live-browser-key-sink {
   position: absolute;
   top: 0;
   left: 0;
-  width: 1px;
-  height: 1px;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
   border: 0;
-  opacity: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
   resize: none;
   outline: none;
   overflow: hidden;
+  white-space: pre;
   z-index: 1;
-  /* Never eat a click meant for the page. */
   pointer-events: none;
 }
