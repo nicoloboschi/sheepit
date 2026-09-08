@@ -374,6 +374,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   }, [askForSelection, send]);
 
   const onKey = useCallback((e: KeyboardEvent, down: boolean) => {
+    // TEMPORARY, for diagnosing a key that never arrives: a modifier chord is
+    // rare enough to log, and whether a line appears at all is the whole
+    // question. Remove once ⌥ò is settled.
+    if (e.altKey) {
+      // eslint-disable-next-line no-console
+      console.log('[sheepit key]', down ? 'down' : 'up  ',
+        JSON.stringify({ key: e.key, code: e.code, alt: e.altKey, keyCode: e.keyCode, composing: e.isComposing }),
+        'focus:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
+    }
     // Anything the input method is in the middle of composing belongs to it.
     if (e.isComposing || e.keyCode === 229) return;
 
@@ -461,6 +470,13 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // keystroke going missing somewhere else in the app — so while you are not
     // in a browser pane, it is not there at all.
     if (!focused) return;
+    // TEMPORARY: the earliest a page can see anything. If ⌥ò logs here but not
+    // in onKey, our guard is dropping it; if it logs nowhere, the browser took
+    // it before the page.
+    const edge = (e: KeyboardEvent) => {
+      if (e.altKey) console.log('[sheepit edge]', e.type, e.key, e.code); // eslint-disable-line no-console
+    };
+    document.addEventListener('keydown', edge, true);
     const handle = (down: boolean) => (e: KeyboardEvent) => {
       if (document.activeElement !== keySinkRef.current) return;
       onKey(e, down);
@@ -470,6 +486,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     window.addEventListener('keydown', down, true);
     window.addEventListener('keyup', up, true);
     return () => {
+      document.removeEventListener('keydown', edge, true);
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
     };
