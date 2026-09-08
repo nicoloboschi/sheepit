@@ -417,6 +417,23 @@ is where you read for minutes at a time — the last place to put the brand
 colour around the text — and being the only lit thing over a dimmed grid is
 already all the emphasis it needs.
 
+That frame is set **outside** the `isZen` spread in `TerminalCell`'s style
+object, and must stay there. A key written after a spread wins even when its
+value is `undefined`, so `background`, `boxShadow` and `outline` — which come
+after it — silently erased what the spread had set, and zen lost both the
+hairline and the shadow to a `background: isZen ? undefined : …` that read like
+it was deferring to the block above. Each of the three branches on `isZen`
+itself now, where the ordering cannot bite.
+
+The **selection ring is off in zen**, like the glow and the dimming beside it.
+The outline was the one of the three that never got the `!isZen` guard, so zen
+came up ringed in brand green — but only on a pen holding more than one sheep,
+since the condition is `isMultiPane && isActive`. That is why it looked
+arbitrary: same tab, same mode, and the ring depended on how many sheep the pen
+you happened to zen into was holding. A **file drop still outlines a zen
+pane** — that is feedback about what is under the cursor, not a statement about
+which pane is selected, and in zen there is no grid to pick a pane out of.
+
 **Switching pens in zen changes what is in the frame, not the frame.** The
 box does not move between one pen and the next, so anything that animates,
 re-runs or resizes on the way is the pane appearing to be torn down and put

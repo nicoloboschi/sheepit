@@ -1470,27 +1470,40 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             zIndex: 1000,
             borderRadius: 4,
             padding: 1,
-            // A hairline and a shadow, not a lit green frame. Zen is where you
-            // read for minutes at a time, so it is the last place that should
-            // put the brand colour around the text; being the only lit thing
-            // over a dimmed grid is already all the emphasis it needs.
-            background: 'var(--border)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
             // Entrance only — see zenEntering. Switching pens in zen leaves
             // the frame exactly where it is and changes what is inside it.
             animation: zenEntering ? 'zen-enter 0.25s ease-out' : undefined,
+            // `background` and `boxShadow` are NOT set here. A key after a
+            // spread wins even when its value is `undefined`, so the three
+            // below would silently erase whatever this block set — which is
+            // exactly what happened to zen's frame. They branch on isZen
+            // themselves instead, where the ordering cannot bite.
           } : {}),
           display: 'flex', flexDirection: 'column',
-          background: isZen ? undefined : 'var(--background)',
+          // In zen this 1px of padding is the frame, so the colour behind it
+          // is the hairline.
+          background: isZen ? 'var(--border)' : 'var(--background)',
           overflow: 'hidden',
           outline: (fileDragOver || isPaneDragOver)
             ? '2px solid var(--primary)'
-            : isMultiPane && isActive
+            // A file drop still outlines a zen pane — that is feedback about
+            // what is under the cursor. Selection does not: zen shows one pane
+            // and there is no grid to pick it out of, so the brand ring would
+            // be a lit green frame around the text you are reading for
+            // minutes, which is the one thing zen's frame exists to avoid.
+            // The shadow and the dimming below always had this guard; the
+            // outline was simply missed, so a pen holding one sheep read as a
+            // plain card and a pen holding several came up ringed in green.
+            : !isZen && isMultiPane && isActive
               ? '1.5px solid var(--primary)'
               : 'none',
-          boxShadow: !isZen && isMultiPane && isActive && !fileDragOver && !isPaneDragOver
-            ? '0 0 20px rgba(156, 188, 127,0.25), inset 0 0 20px rgba(156, 188, 127,0.05)'
-            : 'none',
+          boxShadow: isZen
+            // A hairline and a shadow, not a lit green frame. Being the only
+            // lit thing over a dimmed grid is all the emphasis it needs.
+            ? '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)'
+            : isMultiPane && isActive && !fileDragOver && !isPaneDragOver
+              ? '0 0 20px rgba(156, 188, 127,0.25), inset 0 0 20px rgba(156, 188, 127,0.05)'
+              : 'none',
           opacity: !isZen && isMultiPane && !isActive ? 0.45 : 1,
           transition: 'outline 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease',
         }}
