@@ -387,12 +387,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // TEMPORARY, for diagnosing a key that never arrives: a modifier chord is
     // rare enough to log, and whether a line appears at all is the whole
     // question. Remove once ⌥ò is settled.
-    if (e.altKey) {
-      // eslint-disable-next-line no-console
-      console.log('[sheepit key]', down ? 'down' : 'up  ',
-        JSON.stringify({ key: e.key, code: e.code, alt: e.altKey, keyCode: e.keyCode, composing: e.isComposing }),
-        'focus:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
-    }
+    // eslint-disable-next-line no-console
+    console.log('[sheepit key]', down ? 'down' : 'up  ',
+      JSON.stringify({ key: e.key, code: e.code, alt: e.altKey, keyCode: e.keyCode, composing: e.isComposing }),
+      'focus:', (document.activeElement as HTMLElement | null)?.className || document.activeElement?.tagName);
     // Anything the input method is in the middle of composing belongs to it.
     if (e.isComposing || e.keyCode === 229) return;
 
@@ -489,9 +487,20 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // in onKey, our guard is dropping it; if it logs nowhere, the browser took
     // it before the page.
     const edge = (e: KeyboardEvent) => {
-      if (e.altKey) console.log('[sheepit edge]', e.type, e.key, e.code); // eslint-disable-line no-console
+      // eslint-disable-next-line no-console
+      console.log('[sheepit edge]', e.type, JSON.stringify({ key: e.key, code: e.code, alt: e.altKey }));
     };
     document.addEventListener('keydown', edge, true);
+    document.addEventListener('keyup', edge, true);
+    // What the sink itself sees, which is the only thing that proves the OS
+    // composed the character rather than handing the chord to the browser.
+    const typed = (e: Event) => {
+      // eslint-disable-next-line no-console
+      console.log('[sheepit sink]', e.type, JSON.stringify((e as InputEvent).data ?? (e.target as HTMLTextAreaElement).value));
+    };
+    keySinkRef.current?.addEventListener('beforeinput', typed);
+    keySinkRef.current?.addEventListener('compositionstart', typed);
+    keySinkRef.current?.addEventListener('compositionend', typed);
     const handle = (down: boolean) => (e: KeyboardEvent) => {
       if (document.activeElement !== keySinkRef.current) return;
       onKey(e, down);
@@ -500,7 +509,12 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     const up = handle(false);
     window.addEventListener('keydown', down, true);
     window.addEventListener('keyup', up, true);
+    const sink = keySinkRef.current;
     return () => {
+      sink?.removeEventListener('beforeinput', typed);
+      sink?.removeEventListener('compositionstart', typed);
+      sink?.removeEventListener('compositionend', typed);
+      document.removeEventListener('keyup', edge, true);
       document.removeEventListener('keydown', edge, true);
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
