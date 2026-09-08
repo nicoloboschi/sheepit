@@ -832,6 +832,16 @@ A page arrives one of two ways, and the difference is worth keeping straight:
 - **through sheepit** — `/api/preview` fetches it and returns it without the
   headers that refused the frame.
 
+**Neither path remembers a login.** Direct frames use the *browser's* cookie
+jar, subject to its own third-party rules — so a signed-in session may or may
+not reach a cross-site frame, and nothing about it belongs to sheepit. The
+proxy path has no jar at all: the server `fetch` sends no cookies, keeps none
+between requests, and `forwardableHeaders` strips `set-cookie` on the way back,
+because a proxied response arrives over sheepit's own origin and its cookies
+would be filed under sheepit's name and sent back to it forever after. Sheepit
+stores no browser state anywhere — no profile, no jar, no origin data — which
+is the same statement as "this is not a browser".
+
 Which one is **asked, not guessed**: `/api/preview/probe` reports whether
 `x-frame-options` or a CSP `frame-ancestors` would refuse. You cannot detect a
 refusal from inside the page — a blocked iframe still fires `load` — so

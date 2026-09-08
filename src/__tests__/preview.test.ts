@@ -77,6 +77,17 @@ describe('forwardableHeaders', () => {
     expect(out['content-security-policy']).toBeUndefined()
   })
 
+  // A proxied page is served from sheepit's origin, so an upstream cookie
+  // would be stored against sheepit and sent back to it on every later call.
+  it('drops cookies the proxied site tried to set', () => {
+    const out = forwardableHeaders(headers({
+      'content-type': 'text/html',
+      'set-cookie': 'session=abc; Path=/; HttpOnly',
+    }))
+    expect(out['set-cookie']).toBeUndefined()
+    expect(out['content-type']).toBe('text/html')
+  })
+
   // The body is re-encoded on the way through, so its old description is a lie.
   it('drops the headers that describe a body we rewrote', () => {
     const out = forwardableHeaders(headers({ 'content-length': '1234', 'content-encoding': 'gzip' }))

@@ -30,6 +30,14 @@ export const FRAMING_HEADERS = [
  *  which would make the browser mis-read what we send. */
 const BODY_HEADERS = ['content-length', 'content-encoding', 'transfer-encoding'];
 
+/** A proxied response comes back over sheepit's own origin, so a `set-cookie`
+ *  from the site being viewed would be stored as a cookie *for sheepit* and
+ *  ridden along on every later request to it — including the app's own
+ *  `/api/*` calls. The proxy has no cookie jar and never sends one upstream
+ *  (see the `/api/preview` fetch), so nothing downstream wants these either:
+ *  they are a stranger's cookie filed under your terminal's name. */
+const COOKIE_HEADERS = ['set-cookie', 'set-cookie2'];
+
 /**
  * What the address bar typed means, or null if it is not something we will
  * load.
@@ -101,7 +109,7 @@ export function forwardableHeaders(headers: { forEach(cb: (v: string, k: string)
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
     const k = key.toLowerCase();
-    if (FRAMING_HEADERS.includes(k) || BODY_HEADERS.includes(k)) return;
+    if (FRAMING_HEADERS.includes(k) || BODY_HEADERS.includes(k) || COOKIE_HEADERS.includes(k)) return;
     out[k] = value;
   });
   return out;
