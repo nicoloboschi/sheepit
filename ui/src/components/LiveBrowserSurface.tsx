@@ -330,6 +330,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   // this, leaving the pane mid-selection left the page believing the button
   // was still down.
   const draggingRef = useRef(false);
+  /** Whether the pointer is over this pane, so a focus that fell off nothing
+   *  can be handed back to the pane the user is actually looking at. */
+  const hoveringRef = useRef(false);
   useEffect(() => {
     const move = (e: MouseEvent) => { if (draggingRef.current) mouse('mouseMoved', e); };
     const up = (e: MouseEvent) => {
@@ -543,8 +546,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       // Release and drag are followed on the window (see above); this element
       // only has to report the moves that happen while no button is down.
       onMouseMove={e => { if (!draggingRef.current) mouse('mouseMoved', e); }}
+      onMouseLeave={() => { hoveringRef.current = false; }}
       onContextMenu={e => e.preventDefault()}
       onMouseEnter={() => {
+        hoveringRef.current = true;
         // Nothing steals focus on hover — but if the pane already had it and
         // something took it (a re-render, a dialog closing), coming back to the
         // pane should put the keyboard back where the eyes are.
@@ -578,7 +583,21 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         autoCorrect="off"
         spellCheck={false}
         onFocus={() => { setFocused(true); claim(); }}
-        onBlur={() => setFocused(false)}
+        onBlur={() => {
+          // Focus that goes *nowhere* — to the body, or to nothing at all — is
+          // not somebody choosing another control; it is the pane dropping the
+          // keyboard, and the next keystroke would go to the browser as a
+          // shortcut instead of into the page. Take it back.
+          const next = document.activeElement;
+          const wentNowhere = !next || next === document.body;
+          // eslint-disable-next-line no-console
+          console.log('[sheepit blur] focus went to:', (next as HTMLElement | null)?.className || next?.tagName || 'nothing');
+          if (wentNowhere && hoveringRef.current) {
+            keySinkRef.current?.focus({ preventScroll: true });
+            return;
+          }
+          setFocused(false);
+        }}
         onInput={e => {
           const el = e.currentTarget;
           const text = el.value;
