@@ -43,10 +43,15 @@ function isLoopbackTarget(raw: string): boolean {
   } catch { return false; }
 }
 
-export default function PreviewPane({ sessionId, initialUrl }: {
+export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   sessionId: string;
-  /** Opened from the file tree, e.g. an .html file. */
+  /** Opened from the file tree, e.g. an .html file, or clicked in the pane's
+   *  own terminal — see handleWebLink in TerminalCell. */
   initialUrl?: string | null;
+  /** Bumped on every open, so clicking the same link twice loads it twice.
+   *  Without it, going back to a URL you had navigated away from inside the
+   *  frame would do nothing at all: the prop never changed. */
+  navSeq?: number;
 }): React.ReactElement {
   const [draft, setDraft] = useState(initialUrl ?? '');
   const [src, setSrc] = useState<string | null>(null);
@@ -106,7 +111,7 @@ export default function PreviewPane({ sessionId, initialUrl }: {
   }, []);
 
   // Opened with a file from the tree.
-  useEffect(() => { if (initialUrl) { setDraft(initialUrl); void load(initialUrl); } }, [initialUrl, load]);
+  useEffect(() => { if (initialUrl) { setDraft(initialUrl); void load(initialUrl); } }, [initialUrl, navSeq, load]);
 
   const openHref = target && !target.startsWith('/api/')
     ? (/^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? target : `http://${target}`)

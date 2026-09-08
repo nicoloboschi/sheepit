@@ -272,6 +272,8 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** Counts openings, not URLs — see handleWebLink. */
+  const [previewNav, setPreviewNav] = useState(0);
   /** The terminal is sharing the pane with something — files or the browser. */
   const isSplit = view === 'split' || view === 'split-preview';
   const openFileRef = useRef<((path: string) => void) | null>(null);
@@ -369,6 +371,33 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   const handleFileLinkRef = useRef(handleFileLink);
   handleFileLinkRef.current = handleFileLink;
 
+  /** A URL printed in this pane opens in the pane's own browser, beside the
+   *  terminal that printed it — the agent starts a dev server, or prints the
+   *  PR it just opened, and looking at it should not mean leaving the app for
+   *  a window that knows nothing about which pane sent you there.
+   *
+   *  Three things still go to the real browser, because the embedded one is
+   *  deliberately not a browser (no tabs, no history, no cookies, no login):
+   *  a modifier click, anything that is not http(s), and sheepit's own origin,
+   *  which would nest the app inside itself. The preview bar's own "open
+   *  externally" button is the fourth way out, after you have looked. */
+  const handleWebLink = useCallback((event: MouseEvent | undefined, rawUrl: string) => {
+    const external = () => window.open(rawUrl, '_blank', 'noopener');
+    if (event?.metaKey || event?.ctrlKey || event?.shiftKey) { external(); return; }
+    let parsed: URL;
+    try { parsed = new URL(rawUrl); } catch { external(); return; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { external(); return; }
+    if (parsed.host === window.location.host) { external(); return; }
+    setPreviewUrl(rawUrl);
+    // Bumped even when the URL is unchanged: after you have clicked through to
+    // somewhere else inside the pane browser, clicking the same link again
+    // means "take me back there", and a prop that did not change says nothing.
+    setPreviewNav(n => n + 1);
+    setView('split-preview');
+  }, []);
+  const handleWebLinkRef = useRef(handleWebLink);
+  handleWebLinkRef.current = handleWebLink;
+
   /** Safe fit — bails out if container isn't visible or terminal isn't mounted.
    *  Swallows all errors since xterm's async refresh can crash on "dimensions". */
   const safeFit = () => {
@@ -438,18 +467,19 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       // externally. `allowNonHttpProtocols` is required for `file:` to reach us.
       linkHandler: {
         allowNonHttpProtocols: true,
-        activate(_event: MouseEvent, uri: string) {
+        activate(event: MouseEvent, uri: string) {
           const filePath = fileUriToPath(uri);
           if (filePath) { handleFileLinkRef.current(filePath); return; }
-          // Real URL scheme (http:, https:, mailto:, …) → open externally.
-          if (/^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) { window.open(uri, '_blank', 'noopener'); return; }
+          // Real URL scheme (http:, https:, mailto:, …) → the web-link path,
+          // which keeps http(s) in this pane and sends the rest outside.
+          if (/^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) { handleWebLinkRef.current(event, uri); return; }
           // Otherwise it's a bare/relative path → resolve against the app's cwd.
           handleFileLinkRef.current(uri);
         },
       },
     });
     const fit = new FitAddon();
-    const links = new WebLinksAddon((_: MouseEvent, url: string) => window.open(url, '_blank', 'noopener'));
+    const links = new WebLinksAddon((event: MouseEvent, url: string) => handleWebLinkRef.current(event, url));
     term.loadAddon(fit);
     term.loadAddon(links);
     termRef.current = term;
@@ -1565,7 +1595,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
                 }}
               />
             ) : (
-              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} />
+              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
             )}
           </div>
         </>

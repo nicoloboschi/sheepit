@@ -804,6 +804,26 @@ It shows what the work produces: a dev server, or an `.html` file from the
 tree. Not a real browser and not pretending to be — no tabs, no history, no
 cookies, no login.
 
+**A URL clicked in the terminal opens here**, not in the system browser
+(`handleWebLink` in `TerminalCell.tsx`, wired into both `WebLinksAddon` and the
+OSC 8 `linkHandler` so a bare URL and a Claude Code hyperlink behave the same).
+The agent starts a dev server or prints the PR it just opened, and looking at
+it should not mean leaving the app for a window that knows nothing about which
+pane sent you there.
+
+Three things still go outside, because this is deliberately not a browser —
+no tabs, no history, no cookies, no login:
+
+- a **modifier click** (⌘/Ctrl/Shift), which is the escape hatch for anything
+  that needs a real browser, a sign-in above all;
+- anything that is **not http(s)** — `mailto:`, `vscode:`, and the rest;
+- **sheepit's own origin**, which would nest the app inside itself.
+
+The preview bar's "open externally" button is the fourth way out, after you
+have looked. `navSeq` counts openings rather than URLs, so clicking the same
+link again after wandering off inside the frame takes you back to it — a prop
+that has not changed says nothing.
+
 A page arrives one of two ways, and the difference is worth keeping straight:
 
 - **direct** — the URL goes into the iframe as-is, so the page keeps its own
