@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  parsePreviewUrl, isLoopback, refusesFraming, forwardableHeaders,
+  parsePreviewUrl, isLoopback, forwardableHeaders,
   injectBase, rewriteLoopbackPaths, isHtml,
 } from '../preview.js'
 
@@ -43,25 +43,6 @@ describe('isLoopback', () => {
     for (const u of ['https://react.dev', 'http://192.168.1.10:3000']) {
       expect(isLoopback(new URL(u)), u).toBe(false)
     }
-  })
-})
-
-describe('refusesFraming', () => {
-  // Checked against the real headers of the sites this will be pointed at.
-  it('matches what google and github actually send', () => {
-    expect(refusesFraming(headers({ 'x-frame-options': 'SAMEORIGIN' }))).toBe(true)
-    expect(refusesFraming(headers({ 'x-frame-options': 'deny' }))).toBe(true)
-    expect(refusesFraming(headers({ 'content-security-policy': "default-src 'none'; frame-ancestors 'none'" }))).toBe(true)
-    expect(refusesFraming(headers({ 'content-security-policy': "frame-ancestors 'self'" }))).toBe(true)
-  })
-
-  it('lets through a page that does not mind being framed', () => {
-    expect(refusesFraming(headers({}))).toBe(false)
-    expect(refusesFraming(headers({ 'content-type': 'text/html' }))).toBe(false)
-    // A CSP without frame-ancestors says nothing about framing.
-    expect(refusesFraming(headers({ 'content-security-policy': "default-src 'self'; script-src 'self'" }))).toBe(false)
-    // And one that explicitly allows anyone.
-    expect(refusesFraming(headers({ 'content-security-policy': 'frame-ancestors *' }))).toBe(false)
   })
 })
 

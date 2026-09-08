@@ -175,6 +175,7 @@ interface View {
   onFrame: (frame: ViewFrame) => void;
   onState: (state: ViewState) => void;
   onActive: (active: boolean) => void;
+  casting: boolean;
   lastUrl: string;
   lastTitle: string;
 }
@@ -184,22 +185,6 @@ export class LiveBrowser {
   private cdp: CdpConnection | null = null;
   private starting: Promise<CdpConnection> | null = null;
   private views = new Map<string, View>();
-  /**
-   * Only one tab can stream at a time, so this is which one.
-   *
-   * Headless Chromium casts the *active* page and nothing else: measured,
-   * `Page.startScreencast` on a freshly launched browser fails outright with
-   * "Not attached to an active page" until `Target.activateTarget` has been
-   * called, and activating a second tab stops the first one's frames dead —
-   * even across a reload. Frames follow activation exactly, and switching back
-   * resumes it.
-   *
-   * So a pane streams while you are in it, and the others hold their last
-   * frame until you click into them — which is what a background tab does in
-   * any browser. What must never happen is silence with no explanation, so the
-   * pane that loses the stream is told (`onActive(false)`) and says so.
-   */
-  private activeViewId: string | null = null;
   private log: (msg: string) => void;
 
   constructor(log: (msg: string) => void = () => {}) { this.log = log; }
@@ -368,7 +353,23 @@ export class LiveBrowser {
     const cdp = await this.connection();
     await this.closeView(opts.id);
 
-    const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: 'about:blank' });
+    // ── Why every view gets its own WINDOW ────────────────────────────────
+    // Screencast is the compositor's output, and a page the compositor treats
+    // as not visible produces no frames. Tabs in one window share a visibility:
+    // exactly one is active, so with tabs, opening a second pane's page stopped
+    // the first pane's frames dead — even across a reload. Measured.
+    //
+    // A window has its own active tab, so one window per view means every pane
+    // composites at once: three of them measured at 20 fps each, simultaneously,
+    // on a page repainting every 50ms.
+    //
+    // `setFocusEmulationEnabled` below is the second half. It makes the page
+    // believe it is focused even when the OS says no window is, which keeps
+    // `:focus`, autofocus, carets and focus-driven scripts behaving in every
+    // pane rather than only in the last one opened.
+    const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', {
+      url: 'about:blank', newWindow: true,
+    });
     const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
 
     const view: View = {
@@ -376,33 +377,28 @@ export class LiveBrowser {
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
-      lastUrl: '', lastTitle: '',
+      casting: false, lastUrl: '', lastTitle: '',
     };
     this.views.set(opts.id, view);
 
     await cdp.send('Page.enable', {}, sessionId);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
     await this.applyMetrics(view, opts.scale);
     if (opts.url) await cdp.send('Page.navigate', { url: opts.url }, sessionId).catch(() => {});
     await this.activate(opts.id, opts.scale);
   }
 
-  /** Make this view the one that streams. Everything else stops, because the
-   *  browser only casts its active page — see `activeViewId`. */
+  /** Bring this view's window to the front of the browser's own idea of
+   *  front, which is required once before it will cast at all: a target that
+   *  has never been activated answers `startScreencast` with "Not attached to
+   *  an active page". It does NOT stop any other view — each has its own
+   *  window, and they all composite together. */
   async activate(id: string, scale = 1): Promise<void> {
     const view = this.views.get(id);
     const cdp = this.cdp;
     if (!view || !cdp) return;
-    if (this.activeViewId === id) return;
-
-    const previous = this.activeViewId ? this.views.get(this.activeViewId) : undefined;
-    this.activeViewId = id;
-    if (previous && previous.id !== id) {
-      await cdp.send('Page.stopScreencast', {}, previous.sessionId).catch(() => {});
-      previous.onActive(false);
-    }
     await cdp.send('Target.activateTarget', { targetId: view.targetId }).catch(() => {});
-    await this.startCast(view, scale);
-    view.onActive(true);
+    if (!view.casting) await this.startCast(view, scale);
   }
 
   private async applyMetrics(view: View, scale: number): Promise<void> {
@@ -420,6 +416,20 @@ export class LiveBrowser {
   private async startCast(view: View, scale: number): Promise<void> {
     const cdp = this.cdp;
     if (!cdp) return;
+    try {
+      await this.castOnce(view, scale, cdp);
+      view.casting = true;
+      view.onActive(true);
+    } catch (err) {
+      // A pane showing a still page with no explanation reads as a hang, so
+      // say it is not streaming rather than letting it look frozen.
+      view.casting = false;
+      view.onActive(false);
+      this.log(`live browser: screencast refused for ${view.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async castOnce(view: View, scale: number, cdp: CdpConnection): Promise<void> {
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
       // Text has to stay readable — this is a page you read, not a video —
@@ -438,6 +448,7 @@ export class LiveBrowser {
     if (!view || !cdp) return;
     view.width = Math.max(200, Math.round(width));
     view.height = Math.max(200, Math.round(height));
+    view.casting = false;
     await cdp.send('Page.stopScreencast', {}, view.sessionId).catch(() => {});
     await this.applyMetrics(view, scale);
     await this.startCast(view, scale);
@@ -446,9 +457,9 @@ export class LiveBrowser {
   navigate(id: string, url: string): void {
     const view = this.views.get(id);
     if (!view) return;
-    // Typing an address is using the pane, so it takes the stream too —
-    // otherwise the page would load where you cannot see it.
-    void this.activate(id);
+    // Activation is only needed until this view has cast once; after that
+    // navigating is just navigating.
+    if (!view.casting) void this.activate(id);
     this.cdp?.post('Page.navigate', { url }, view.sessionId);
   }
 
@@ -483,13 +494,6 @@ export class LiveBrowser {
     const view = this.views.get(id);
     if (!view) return;
     this.views.delete(id);
-    if (this.activeViewId === id) {
-      this.activeViewId = null;
-      // Hand the stream to whoever is left rather than leaving every open pane
-      // frozen because the one that closed was the active one.
-      const next = this.views.keys().next();
-      if (!next.done) void this.activate(next.value);
-    }
     try { await this.cdp?.send('Target.closeTarget', { targetId: view.targetId }); } catch { /* gone */ }
   }
 

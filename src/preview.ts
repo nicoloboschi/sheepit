@@ -80,28 +80,6 @@ export function isLoopback(url: URL): boolean {
     || /^127\./.test(h) || h.endsWith('.localhost');
 }
 
-/**
- * Would this response refuse to be framed?
- *
- * Asked of the server rather than guessed at in the browser, because a blocked
- * iframe still fires `load` and gives the page no way to tell. `frame-ancestors
- * *` is the one CSP that permits us; `'self'`, `'none'` and a host list all
- * refuse, since sheepit is never the same origin as what it is showing.
- */
-export function refusesFraming(headers: { get(name: string): string | null }): boolean {
-  const xfo = headers.get('x-frame-options');
-  if (xfo && xfo.trim()) return true;
-
-  for (const name of ['content-security-policy', 'content-security-policy-report-only']) {
-    const csp = headers.get(name);
-    if (!csp) continue;
-    const directive = csp.split(';').map(d => d.trim()).find(d => d.toLowerCase().startsWith('frame-ancestors'));
-    if (!directive) continue;
-    const sources = directive.split(/\s+/).slice(1);
-    if (!sources.includes('*')) return true;
-  }
-  return false;
-}
 
 /** The response headers to pass on: everything except the ones that refused
  *  the frame and the ones describing a body we have rewritten. */

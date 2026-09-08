@@ -12,7 +12,7 @@ import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
 import {
-  parsePreviewUrl, refusesFraming, forwardableHeaders, injectBase,
+  parsePreviewUrl, forwardableHeaders, injectBase,
   rewriteLoopbackPaths, isLoopback, isHtml,
 } from './preview.js';
 import {
@@ -1669,27 +1669,6 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.get('/browser/status', (_req, res) => {
     const binary = findBrowser();
     res.json({ available: binary !== null, binary });
-  });
-
-  router.get('/preview/probe', async (req, res) => {
-    const url = parsePreviewUrl(String(req.query.url ?? ''), { selfPort: bridge.getListenPort() });
-    if (!url) return res.status(400).json({ ok: false, error: 'Not a URL we can open' });
-    try {
-      const upstream = await fetch(url.href, {
-        redirect: 'follow',
-        signal: AbortSignal.timeout(10_000),
-        headers: { 'user-agent': 'sheepit-preview' },
-      });
-      res.json({
-        ok: upstream.ok,
-        status: upstream.status,
-        framable: !refusesFraming(upstream.headers),
-        finalUrl: upstream.url || url.href,
-        contentType: upstream.headers.get('content-type'),
-      });
-    } catch (e) {
-      res.json({ ok: false, framable: false, error: String(e instanceof Error ? e.message : e) });
-    }
   });
 
   /**

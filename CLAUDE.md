@@ -824,28 +824,28 @@ have looked. `navSeq` counts openings rather than URLs, so clicking the same
 link again after wandering off inside the frame takes you back to it — a prop
 that has not changed says nothing.
 
-A page arrives one of **three** ways, and the difference is worth keeping
-straight — they are not three renderings of the same thing. **The live browser
-is the default wherever the machine has one**, and the other two are what is
-left when it does not:
+**It is the real browser on the machine** — a Chromium driven over CDP and
+streamed into the pane as frames, with clicks and keys sent back
+(`live-browser.ts`, `browser-ws.ts`, `LiveBrowserSurface.tsx`). See [The live
+browser](#the-live-browser).
 
-- **direct** — the URL goes into the iframe as-is, so the page keeps its own
-  origin, its websockets and the *viewing browser's* cookies, and hot reload
-  still works. Still on the pill, for the two things it is better at: native
-  rendering (crisp text, no stream, no CPU), and several panes showing pages at
-  once, since only one pane can hold the live stream.
-- **through sheepit** — `/api/preview` fetches it and returns it without the
-  headers that refused the frame. A cookie-less photocopy: it shows, but forms
-  go nowhere and nothing is signed in.
-- **live** — a real Chromium on the machine, driven over CDP and streamed in as
-  frames, with clicks and keys sent back (`live-browser.ts`, `browser-ws.ts`,
-  `LiveBrowserSurface.tsx`). **The default.** It is the only one of the three
-  that is actually a browser: cookies, logins, forms, popups, a page that
-  navigates itself. Choosing it needs no probe, so an open is one round-trip
-  shorter — and it is the answer to loopback-from-a-phone, which used to force
-  the proxy, because the browser runs on this machine and `localhost:3000`
-  therefore means this machine's port whatever device you are holding. See
-  [The live browser](#the-live-browser).
+There was a **direct** route that put the URL straight into an iframe. It
+rendered natively and cost nothing, and it is gone, because it was not a
+browser: no session of yours, forms that went nowhere, nothing at all on a site
+that refuses to be framed, and `localhost:3000` meaning the phone you were
+holding rather than this machine. Two answers to "show me this page" also meant
+every open paid for a probe first — asking whether an iframe would be refused —
+and could still land on the crippled one. `/api/preview/probe` and
+`refusesFraming` went with it: framing is not a question anything asks any
+more. Stripping those headers on the proxy path stays, because the fallback
+below is still an iframe.
+
+One fallback remains, for a machine with no Chromium to run:
+
+- **through sheepit** — `/api/preview` fetches the page and returns it without
+  the headers that refused the frame, in a sandboxed iframe. A cookie-less
+  photocopy: it shows, but forms go nowhere and nothing is signed in. Local
+  `.html` files from the tree come this way too, since sheepit serves them.
 
 **Neither path remembers a login.** Direct frames use the *browser's* cookie
 jar, subject to its own third-party rules — so a signed-in session may or may
@@ -856,13 +856,6 @@ because a proxied response arrives over sheepit's own origin and its cookies
 would be filed under sheepit's name and sent back to it forever after. Sheepit
 stores no browser state anywhere — no profile, no jar, no origin data — which
 is the same statement as "this is not a browser".
-
-Which one is **asked, not guessed**: `/api/preview/probe` reports whether
-`x-frame-options` or a CSP `frame-ancestors` would refuse. You cannot detect a
-refusal from inside the page — a blocked iframe still fires `load` — so
-probing is the only honest way to choose. Measured against the real thing:
-vite and `react.dev` frame directly; `google.com` (`SAMEORIGIN`) and
-`github.com` (`deny`) do not.
 
 **Sub-resources.** Proxied HTML gets a `<base href>` so images, CSS and scripts
 load **directly from the origin server** and only the top document is proxied —
@@ -885,14 +878,22 @@ load-bearing:
   GitHub once is the point; the cookies are on disk, so they survive a server
   restart. It never touches the user's own browser profile — two processes
   cannot share a `--user-data-dir` anyway.
-- **Only one pane streams at a time.** Headless Chromium casts its *active*
-  page and no other: `Page.startScreencast` on a freshly launched browser fails
-  outright with "Not attached to an active page" until `Target.activateTarget`
-  has been called, and activating a second tab stops the first one's frames
-  dead, even across a reload. Measured, both directions. So a pane claims the
-  stream when you click, scroll, type or navigate in it, and the pane that
-  loses it is told and says "Paused — click to resume". A still page with no
-  explanation reads as a hang.
+- **Every view gets its own window** (`Target.createTarget({newWindow: true})`)
+  plus `Emulation.setFocusEmulationEnabled`. This is not a detail — it is what
+  lets more than one pane show a live page at all. Screencast is the
+  compositor's output, and a page the compositor treats as not visible produces
+  no frames; tabs in one window share a visibility, so exactly one casts and
+  opening a second pane's page stopped the first pane's frames dead, even
+  across a reload. A window has its own active tab. Measured: three panes at
+  20 fps each, simultaneously, against a page repainting every 50 ms, with
+  typing landing correctly in a background one. Focus emulation is the other
+  half — it keeps `:focus`, autofocus and carets behaving in a pane the OS
+  considers unfocused.
+- **A target must be activated once before it will cast at all.**
+  `Page.startScreencast` on a never-activated target fails with "Not attached
+  to an active page", which is what an empty pane looks like. `activate()` is
+  called on open and again if a view is somehow not casting; it no longer stops
+  anybody else.
 - **We keep our own note of the browser we started** (`browser.json`: pid and
   port). Chromium's `DevToolsActivePort` is gone after anything but a clean
   exit, and what is left then is the worst state there is — a live browser
@@ -923,16 +924,14 @@ can browse through this machine, including hosts only this machine can see.
 That was a considered choice, not an oversight. Three things keep it bounded,
 and all three are load-bearing:
 
-- **Nothing is fetched that was not asked for.** Direct is tried first, and the
-  proxy is used only when the probe says framing is refused or the user clicks
-  "via sheepit". Nothing here follows links on its own.
+- **Nothing is fetched that was not asked for.** The proxy is reached only on a
+  machine with no browser to run, or when the user clicks "via sheepit".
+  Nothing here follows links on its own.
 - **Proxied and local-file HTML is sandboxed** — `allow-scripts allow-forms
   allow-popups allow-modals`, deliberately *without* `allow-same-origin`. This
   is the one that matters. Proxied bytes are served from sheepit's own origin,
   so without the sandbox a proxied page's scripts would sit inside that origin
-  and could call `/api/*`. An opaque origin removes it. A direct iframe needs
-  no sandbox — it is already cross-origin — and sandboxing it would break the
-  page for nothing.
+  and could call `/api/*`. An opaque origin removes it.
 - **`parsePreviewUrl` refuses the rest**: anything that is not http(s) (`file:`
   would read the disk through the server) and sheepit's own port, which would
   nest the proxy inside itself until something gave up.

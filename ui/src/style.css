@@ -2421,8 +2421,13 @@
    click at (x, y) here is a click at (x, y) there and there is no mapping to
    get wrong. */
 .live-browser-surface {
-  position: relative;
-  flex: 1; min-height: 0; min-width: 0;
+  /* Fills .preview-body, which is `position: relative` but NOT a flex
+     container — so `flex: 1` here did nothing and the box took its height from
+     the image's intrinsic size. The page was then laid out to that wrong
+     height and came back cut off. The iframe never showed this because
+     .preview-frame sets width/height explicitly; this does the same. */
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   background: var(--card);
   outline: none;

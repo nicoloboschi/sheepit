@@ -184,6 +184,11 @@ export interface StoreState {
   workspaceOrder: string[];
   /** Session id of the pane currently in zen (fullscreen) mode, or null. */
   zenSessionId: string | null;
+  /** Bumped each time zen is *opened*, and never when it moves from one pane
+   *  to another. It is what tells a pane whether to play zen's entrance: the
+   *  frame stays exactly where it is across a switch, so replaying it there
+   *  made picking another pen look like the pane was torn down and put back. */
+  zenOpenSeq: number;
   /** Global terminal font size — applies to every pane in every workspace. */
   fontSize: number;
   /** Global terminal font stack — applies to every pane in every workspace.
@@ -805,6 +810,7 @@ const useStore = create<StoreState>((set, get) => ({
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
   selectedFieldId: null,
   zenSessionId: null,
+  zenOpenSeq: 0,
   fontSize: loadFontSize(),
   terminalFontFamily: readTerminalFont(),
   theme: readTheme(),
@@ -1034,18 +1040,24 @@ const useStore = create<StoreState>((set, get) => ({
     // and left `/zen:` in the URL pointing at a pane nobody was looking at.
     // Now it moves with you — pick a pen from the sidebar and you read that
     // pen, still in zen, which is the whole reason the sidebar stays visible.
+    //
+    // The zen pane and the workspace move in ONE set. A hidden workspace sits
+    // under `display: none`, which hides a `position: fixed` child too, so a
+    // commit that pointed zen at the incoming pen before that pen was the
+    // shown one would paint a frame with no zen pane in it — the flicker that
+    // reads as the pane being removed and put back.
+    const { zenSessionId, workspaces } = get();
+    let nextZen = zenSessionId;
     if (id) {
-      const { zenSessionId, workspaces } = get();
       if (zenSessionId) {
         const ws = workspaces[id];
-        const next = ws ? (ws.cells[ws.activeCell] ?? ws.cells[0] ?? id) : id;
-        if (next !== zenSessionId) set({ zenSessionId: next });
+        nextZen = ws ? (ws.cells[ws.activeCell] ?? ws.cells[0] ?? id) : id;
       }
-    } else if (get().zenSessionId) {
+    } else {
       // Nothing selected — there is no pane to be zen on.
-      set({ zenSessionId: null });
+      nextZen = null;
     }
-    set({ currentSessionId: id });
+    set(nextZen === zenSessionId ? { currentSessionId: id } : { currentSessionId: id, zenSessionId: nextZen });
   },
 
   setOpenPaneMap(panes: (string | null)[]) {
@@ -1667,7 +1679,12 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   toggleZen(sessionId: string) {
-    set(s => ({ zenSessionId: s.zenSessionId === sessionId ? null : sessionId }));
+    set(s => {
+      const next = s.zenSessionId === sessionId ? null : sessionId;
+      // Only an opening counts: zen moving between panes (setCurrentSessionId,
+      // setActivePane) leaves the seq alone, so nothing animates on a switch.
+      return { zenSessionId: next, zenOpenSeq: s.zenSessionId === null && next ? s.zenOpenSeq + 1 : s.zenOpenSeq };
+    });
   },
 
   exitZen() {

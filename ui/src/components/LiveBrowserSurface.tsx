@@ -43,8 +43,9 @@ export interface LiveBrowserState {
   url: string; title: string; canGoBack: boolean; canGoForward: boolean;
   status: 'connecting' | 'ready' | 'error';
   error: string | null;
-  /** Whether this pane currently holds the stream. Only one can — headless
-   *  Chromium casts its active page and no other. */
+  /** Whether frames are flowing. Normally true for every open pane — each gets
+   *  its own browser window, so they all composite at once — and false only
+   *  when the browser refused to cast this one. */
   streaming: boolean;
 }
 
@@ -94,6 +95,12 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     };
   }, []);
 
+  /** The page is laid out at exactly this box, so a size measured before the
+   *  pane had one — or a resize that happened while the socket was still
+   *  connecting, which `send` drops on the floor — leaves the page rendering
+   *  to the wrong height for good. Re-send it once the view exists. */
+  const syncSize = useCallback(() => send({ type: 'resize', ...measure() }), [measure, send]);
+
   // One socket per open pane: the view lives exactly as long as the connection,
   // so a closed pane cannot leave a headless page running with nobody looking.
   useEffect(() => {
@@ -114,6 +121,9 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
         report({ streaming: Boolean(msg.active) });
       } else if (msg.type === 'ready') {
         report({ status: 'ready' });
+        // The box is certainly laid out by now; the one sent with `open` may
+        // have been measured before the split had settled.
+        syncSize();
       } else if (msg.type === 'error') {
         report({ status: 'error', error: msg.message });
       }
@@ -153,15 +163,16 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       // Chromium re-lays-out and restarts the cast on every resize, so a drag
       // would otherwise send one of those per frame.
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => send({ type: 'resize', ...measure() }), 120);
+      timer = setTimeout(syncSize, 120);
     });
     ro.observe(el);
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, [measure, send]);
 
-  /** Take the stream. Sent on the gestures that mean "I am working in this
-   *  pane" — not on mousemove, which would have two panes trading it back and
-   *  forth as the pointer crossed them. */
+  /** Nudge the browser to activate this view's window. Needed once, because a
+   *  target that has never been activated will not start casting; after that
+   *  it is a no-op and panes do not compete for it. Not sent on mousemove —
+   *  there is nothing to win, and it would be a message per pointer sample. */
   const claim = useCallback(() => {
     if (!stateRef.current.streaming) {
       send({ type: 'focus', scale: Math.min(2, window.devicePixelRatio || 1) });
@@ -235,7 +246,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       <img ref={imgRef} className="live-browser-frame" alt="" draggable={false} />
       {/* A still page with no explanation reads as a hang. The browser can only
           cast one tab, so say which state this one is in. */}
-      {paused && <div className="live-browser-paused">Paused — click to resume</div>}
+      {paused && <div className="live-browser-paused">Not streaming — click to retry</div>}
     </div>
   );
 }

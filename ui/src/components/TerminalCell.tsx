@@ -246,6 +246,15 @@ interface TerminalCellProps {
   onClose: () => void;
 }
 
+/** The zen opening whose entrance has already been played.
+ *
+ *  Module-level because it is one animation for the whole app rather than one
+ *  per pane: when zen moves from one pen to another the frame does not move,
+ *  so the pane taking over must not replay what the pane handing over already
+ *  ran. Replaying it is what made switching pens in zen look like the pane was
+ *  removed and added back. */
+let playedZenOpen = -1;
+
 export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isActive, onActivate, onClose }: TerminalCellProps) {
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
@@ -258,6 +267,18 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   });
   const isZen = useStore(s => s.zenSessionId === sessionId);
   const toggleZen = useStore(s => s.toggleZen);
+  const zenOpenSeq = useStore(s => s.zenOpenSeq);
+  // Zen's entrance belongs to the *opening*, not to the pane. Read at render
+  // rather than in an effect so the animation is on the first painted frame —
+  // an effect would show the pane at its final size for one frame and then
+  // fade it in from nothing, which is the pop it exists to avoid. Sticky
+  // while this pane is zen, because an inline `animation` that vanished on
+  // the next render (and this component renders on every burst of output)
+  // would cut the fade off part-way.
+  const zenEnterRef = useRef(false);
+  if (!isZen) zenEnterRef.current = false;
+  else if (playedZenOpen !== zenOpenSeq) { playedZenOpen = zenOpenSeq; zenEnterRef.current = true; }
+  const zenEntering = zenEnterRef.current;
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1373,7 +1394,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             position: 'fixed', top: 0, right: 0, bottom: 0, left: 'var(--flock-width, 0px)', zIndex: 999,
             background: 'radial-gradient(ellipse at center, rgba(6,10,6,0.92) 0%, rgba(0,0,0,0.98) 100%)',
             backdropFilter: 'blur(8px)',
-            animation: 'zen-enter 0.2s ease-out',
+            // Only on the way in. The backdrop is rendered by whichever pane
+            // is zen, so a switch tears one down and puts an identical one up
+            // in the same commit — invisible, unless it fades itself back in.
+            animation: zenEntering ? 'zen-enter 0.2s ease-out' : undefined,
           }}
           onClick={() => toggleZen(sessionId)}
         />
@@ -1405,7 +1429,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             // over a dimmed grid is already all the emphasis it needs.
             background: 'var(--border)',
             boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
-            animation: 'zen-enter 0.25s ease-out',
+            // Entrance only — see zenEntering. Switching pens in zen leaves
+            // the frame exactly where it is and changes what is inside it.
+            animation: zenEntering ? 'zen-enter 0.25s ease-out' : undefined,
           } : {}),
           display: 'flex', flexDirection: 'column',
           background: isZen ? undefined : 'var(--background)',

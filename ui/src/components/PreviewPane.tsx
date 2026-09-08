@@ -1,19 +1,24 @@
 /**
- * A browser in the pane — one address bar over three quite different ways of
- * getting a page, chosen by asking the server rather than by guessing:
+ * A browser in the pane. **It is the real browser on the machine** — a
+ * Chromium driven over CDP and streamed in as frames, with your clicks and
+ * keys sent back (`LiveBrowserSurface`). It has a persistent profile, so a
+ * site you are logged into stays logged in, which is what makes reading a pull
+ * request, opening Files changed and leaving a comment possible in a pane.
  *
- *   - **direct** — the URL goes straight into the iframe, so the page keeps
- *     its own origin, its cookies and its websockets, and a dev server's
- *     hot reload still works. This is the good path and the default.
- *   - **through sheepit** — a one-document proxy, for a loopback port seen
- *     from another device, where the browser's own 127.0.0.1 is not this
- *     machine. No cookies, sandboxed, and the page's own forms go nowhere.
- *   - **live** — a real Chromium on the machine, streamed in as frames with
- *     your clicks and keys sent back (`LiveBrowserSurface`). It has a
- *     persistent profile, so a site you are logged into stays logged in: this
- *     is the one that can read a pull request, open Files changed and leave a
- *     comment. It is picked automatically when a page refuses to be framed,
- *     which is exactly the case the proxy handled worst.
+ * There used to be a `direct` route that put the URL straight into an iframe.
+ * It rendered natively and cost nothing, and it is gone anyway, because it was
+ * not a browser: no session of yours, forms that go nowhere, nothing at all on
+ * a site that refuses to be framed, and `localhost:3000` meaning the phone you
+ * were holding rather than this machine. Two answers to "show me this page"
+ * also meant every open paid for a probe first and could still land on the
+ * crippled one.
+ *
+ * What is left beside it is a fallback for a machine with no Chromium at all:
+ *
+ *   - **through sheepit** — a one-document proxy (`/api/preview`). No cookies,
+ *     sandboxed, forms go nowhere. It shows a page; it is not a browser. Local
+ *     `.html` files from the tree come this way too, since sheepit serves them
+ *     itself.
  *
  * Anything that comes back through sheepit is served from sheepit's origin, so
  * it is rendered in a sandbox WITHOUT `allow-same-origin`. That is the line
@@ -21,43 +26,29 @@
  * sheepit's own origin and could call its API.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, Globe, ServerCog, ShieldAlert, ArrowLeft, ArrowRight, MonitorPlay } from 'lucide-react';
+import { RotateCw, ExternalLink, ServerCog, ShieldAlert, ArrowLeft, ArrowRight, MonitorPlay } from 'lucide-react';
 import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
 
 interface Listener { port: number; pid: number; name: string }
 
 /** How the current page is being loaded. */
-type Route = 'direct' | 'proxy' | 'live';
-
-/** Is the browser looking at this from another machine? A loopback URL means
- *  something different there, and has to come through the server. */
-function browsingRemotely(): boolean {
-  const h = window.location.hostname;
-  return !(h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]');
-}
+type Route = 'live' | 'proxy';
 
 const ROUTE_LABEL: Record<Route, string> = {
-  direct: 'direct',
-  proxy: 'via sheepit',
   live: 'live',
+  proxy: 'via sheepit',
 };
 
 const ROUTE_HELP: Record<Route, string> = {
-  live: 'A real browser on this machine, with its own profile — signed-in sites stay signed in. Click to frame the page directly instead.',
-  direct: 'Framed directly: native rendering, no stream, and several panes at once — but the page has no session of yours. Click to route it through sheepit.',
-  proxy: 'Coming through sheepit: headers stripped, sandboxed, no cookies, forms go nowhere. Click for the browser on the machine.',
+  live: 'The real browser on this machine, with its own profile — signed-in sites stay signed in. Click to fetch the page through sheepit instead.',
+  proxy: 'Coming through sheepit: headers stripped, sandboxed, no cookies, forms go nowhere. Click for the real browser.',
 };
 
-/** live → direct → via sheepit → live, in that order because that is the order
- *  you would want them: the real browser, then the iframe when you want native
- *  rendering (crisp text, no stream, and two panes at once — only one pane can
- *  hold the live stream), then the proxy, which is the one that is nobody's
- *  first choice. Cycling rather than a menu: three items, and the pill is 60px
- *  wide. Live is skipped where no browser was found. */
+/** A switch, not a cycle: the real browser, or the proxy for the machine that
+ *  has no Chromium to run. */
 function nextRoute(current: Route, liveAvailable: boolean): Route {
-  const order: Route[] = liveAvailable ? ['live', 'direct', 'proxy'] : ['direct', 'proxy'];
-  const at = order.indexOf(current);
-  return order[(at + 1) % order.length] ?? order[0]!;
+  if (!liveAvailable) return 'proxy';
+  return current === 'live' ? 'proxy' : 'live';
 }
 
 /** What someone typing in the address bar meant. `load` gets this from the
@@ -74,14 +65,6 @@ function normalizeTyped(raw: string): string {
   return `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`;
 }
 
-function isLoopbackTarget(raw: string): boolean {
-  try {
-    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
-    const h = u.hostname.toLowerCase();
-    return h === 'localhost' || h === '::1' || h === '0.0.0.0' || h.startsWith('127.');
-  } catch { return false; }
-}
-
 export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   sessionId: string;
   /** Opened from the file tree, e.g. an .html file, or clicked in the pane's
@@ -94,7 +77,7 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
 }): React.ReactElement {
   const [draft, setDraft] = useState(initialUrl ?? '');
   const [src, setSrc] = useState<string | null>(null);
-  const [route, setRoute] = useState<Route>('direct');
+  const [route, setRoute] = useState<Route>('live');
   const [target, setTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -165,25 +148,12 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       return;
     }
 
-    try {
-      const probe = await fetch(`/api/preview/probe?url=${encodeURIComponent(url)}`).then(r => r.json());
-      if (probe.error && !probe.framable) setError(probe.error);
-      // With no browser on the machine we are back to the old pair. Loopback
-      // seen from another device has to come through the server whatever the
-      // probe says: the frame would resolve 127.0.0.1 to the device you are
-      // holding.
-      const mustProxy = isLoopbackTarget(url) && browsingRemotely();
-      const chosen: Route = force ?? (probe.framable && !mustProxy ? 'direct' : 'proxy');
-      setRoute(chosen);
-      const href = probe.finalUrl ?? (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`);
-      if (chosen === 'live') { setSrc(href); setLiveNav(n => n + 1); }
-      else setSrc(chosen === 'direct' ? href : `/api/preview?url=${encodeURIComponent(href)}`);
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-      setSrc(null);
-    } finally {
-      setBusy(false);
-    }
+    // The proxy: no browser on this machine, or the pill asked for it. There is
+    // no probe any more — its only question was whether an iframe would be
+    // refused, and there is no iframe left to refuse it.
+    setRoute('proxy');
+    setSrc(`/api/preview?url=${encodeURIComponent(normalizeTyped(url))}`);
+    setBusy(false);
   }, []);
 
   // Opened with a file from the tree.
@@ -252,12 +222,12 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
             no cookies and no login, and you should not have to wonder which
             you are looking at. Only its word goes; the icon says it too. */}
         {/* Which of the three you are looking at. It never leaves, however
-            narrow the pane: they are genuinely different things — one is the
-            real page, one is a cookie-less photocopy of it, one is a browser
-            with your logins in it — and you should not have to wonder which.
-            Only the word goes; the icon says it too. */}
+            narrow the pane: a real browser with your logins in it and a
+            cookie-less photocopy of a page are genuinely different things, and
+            you should not have to wonder which one you are looking at. Only
+            the word goes; the icon says it too. */}
         <button
-          className={`preview-route${route === 'direct' ? '' : ' preview-route-on'}`}
+          className={`preview-route${route === 'live' ? '' : ' preview-route-on'}`}
           title={ROUTE_HELP[route]}
           onClick={() => {
             const next = nextRoute(route, liveAvailable);
@@ -266,7 +236,7 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
             void load(target, next);
           }}
         >
-          {route === 'live' ? <MonitorPlay size={12} /> : route === 'proxy' ? <ServerCog size={12} /> : <Globe size={12} />}
+          {route === 'live' ? <MonitorPlay size={12} /> : <ServerCog size={12} />}
           <span className="preview-route-label">{ROUTE_LABEL[route]}</span>
         </button>
         <a
