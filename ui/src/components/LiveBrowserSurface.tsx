@@ -513,6 +513,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     // keystroke going missing somewhere else in the app — so while you are not
     // in a browser pane, it is not there at all.
     if (!focused) return;
+    // TEMPORARY A/B: `localStorage.setItem('sheepit:nokeys','1')` and reload to
+    // run the pane with NO key handling of ours at all. The sink still types
+    // (its own `input` event carries the text), so if ⌥ò composes with this on
+    // and not with it off, the fault is in here and nowhere else.
+    if (localStorage.getItem('sheepit:nokeys') === '1') {
+      // eslint-disable-next-line no-console
+      console.log('[sheepit] key handling DISABLED for this test');
+      return;
+    }
     // TEMPORARY: the earliest a page can see anything. If ⌥ò logs here but not
     // in onKey, our guard is dropping it; if it logs nowhere, the browser took
     // it before the page.
