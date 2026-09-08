@@ -19,9 +19,15 @@
  *    across server restarts, because the cookies are on disk and not in this
  *    process. It is a *separate* profile from the user's own browser — we
  *    never touch that one, and two processes cannot share a user-data-dir.
- *  - **It is headless**, because the point is looking at it from somewhere
- *    else. A window opening on the host would be a window nobody is sitting in
- *    front of.
+ *  - **It is headless.** The point is looking at it from somewhere else, and a
+ *    Chrome in the Dock — stealing focus, sitting in the app switcher, showing
+ *    up on the host's screen — is the thing this feature exists to avoid. It
+ *    is a real cost: headless Chrome names itself `HeadlessChrome` in the user
+ *    agent, and some sign-in flows (Google's above all) refuse it. The user
+ *    agent is rewritten to drop that word, which is enough for most sites; for
+ *    a login that still refuses, `SHEEPIT_BROWSER_HEADFUL=1` runs a real
+ *    windowed browser for as long as it takes to sign in — the cookies land in
+ *    the profile and stay there when it goes back to headless.
  *
  * Security, stated plainly: anything that can reach sheepit can drive this
  * browser and is therefore inside every session it holds. That is a real
@@ -79,6 +85,32 @@ export function findBrowser(): string | null {
   return candidatePaths().find(p => existsSync(p)) ?? null;
 }
 
+/** Off the edge of any real screen. The window is real — that is the point —
+ *  but nobody has to look at it. */
+const OFFSCREEN = { left: -32000, top: -32000, width: 1400, height: 900 };
+
+/** Headless unless someone deliberately asks otherwise, and only where there
+ *  is a desktop to put a window on. The opt-in exists for one job: signing in
+ *  to a site that refuses headless browsers. */
+function wantsHeadful(): boolean {
+  if (process.env.SHEEPIT_BROWSER_HEADFUL !== '1') return false;
+  if (platform() === 'darwin' || platform() === 'win32') return true;
+  return Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+}
+
+/** A user agent without the word that gets a browser turned away.
+ *
+ *  Headless Chrome reports `HeadlessChrome/152.0.0.0`, and sites that refuse
+ *  automated browsers look there first — Google's sign-in answers "this
+ *  browser or app may not be secure" and stops. The engine, the version and
+ *  every other capability are identical to the browser beside it in the Dock,
+ *  so the word is the only difference being reported. It is not a disguise
+ *  that survives real fingerprinting; it is the cheap half of the problem. */
+function presentableUserAgent(reported: string): string | null {
+  if (!/headless/i.test(reported)) return null;
+  return reported.replace(/HeadlessChrome/gi, 'Chrome');
+}
+
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
@@ -91,14 +123,33 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function debuggerUrl(port: number): Promise<string | null> {
+interface BrowserInfo { wsUrl: string; userAgent: string }
+
+async function browserInfo(port: number): Promise<BrowserInfo | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
     if (!res.ok) return null;
-    const info = await res.json() as { webSocketDebuggerUrl?: string };
-    return info.webSocketDebuggerUrl ?? null;
+    const info = await res.json() as { webSocketDebuggerUrl?: string; 'User-Agent'?: string };
+    if (!info.webSocketDebuggerUrl) return null;
+    return { wsUrl: info.webSocketDebuggerUrl, userAgent: info['User-Agent'] ?? '' };
   } catch {
     return null;
+  }
+}
+
+/** Ask a browser to shut down, and wait until it has. Politer than a signal
+ *  (the profile is written out properly) and needs no pid, which matters when
+ *  the only thing we know about it is a port. */
+async function closeBrowser(info: BrowserInfo, port: number): Promise<void> {
+  try {
+    const cdp = new CdpConnection(info.wsUrl);
+    await cdp.ready;
+    cdp.post('Browser.close');
+    cdp.close();
+  } catch { /* it will be killed by the caller's next move if it survives */ }
+  for (let i = 0; i < 40; i++) {
+    if (!(await browserInfo(port))) return;
+    await new Promise(r => setTimeout(r, 100));
   }
 }
 
@@ -190,6 +241,10 @@ export class LiveBrowser {
   private cdp: CdpConnection | null = null;
   private starting: Promise<CdpConnection> | null = null;
   private views = new Map<string, View>();
+  /** Whether the browser we are talking to has real windows to place. */
+  private headful = false;
+  /** What pages should say they are, when the truth would get them refused. */
+  private userAgent: string | null = null;
   private log: (msg: string) => void;
 
   constructor(log: (msg: string) => void = () => {}) { this.log = log; }
@@ -212,11 +267,28 @@ export class LiveBrowser {
     const record = readRecord();
     for (const port of [record?.port, portFromProfile()]) {
       if (!port) continue;
-      const url = await debuggerUrl(port);
-      if (url) {
-        this.log(`live browser: re-attached on port ${port}`);
-        return this.connect(url);
+      const info = await browserInfo(port);
+      if (!info) continue;
+      // A browser left over from before this build may be the headless one,
+      // and a headless browser cannot sign in to Google — which is most of why
+      // the feature exists. Re-attaching to it would mean the fix never
+      // arrives on a machine that keeps its browser running. It costs the
+      // pages that are open; it does not cost the logins, which are on disk.
+      // A browser left running from before is kept — its pages are open and
+      // somebody may be reading them — unless it is the wrong kind. Headful
+      // when headless was asked for means a window on somebody's screen;
+      // headless when headful was asked for means the sign-in they are in the
+      // middle of cannot work. Either way, replace it once. The pages go; the
+      // logins do not, because those are on disk.
+      if (/headless/i.test(info.userAgent) === wantsHeadful()) {
+        this.log(`live browser: replacing the ${wantsHeadful() ? 'headless' : 'windowed'} browser left from a previous run`);
+        await closeBrowser(info, port);
+        break;
       }
+      this.log(`live browser: re-attached on port ${port}`);
+      this.headful = !/headless/i.test(info.userAgent);
+      this.userAgent = presentableUserAgent(info.userAgent);
+      return this.connect(info.wsUrl);
     }
 
     // Nothing answers. If the browser we started is nonetheless still running,
@@ -237,16 +309,32 @@ export class LiveBrowser {
     mkdirSync(profile, { recursive: true });
     const port = await freePort();
 
+    const headful = wantsHeadful();
+    this.headful = headful;
     this.proc = spawn(binary, [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
-      // The point is to look at it from elsewhere, so there is no window.
-      '--headless=new',
+      ...(headful
+        ? [
+          // A real browser, parked off-screen. See the note at the top of this
+          // file: headless is what Google's sign-in refuses.
+          `--window-position=${OFFSCREEN.left},${OFFSCREEN.top}`,
+          `--window-size=${OFFSCREEN.width},${OFFSCREEN.height}`,
+          // Nothing opens until a pane asks for a page, so starting sheepit
+          // does not throw a window (or the focus) at whoever is at the
+          // keyboard.
+          '--no-startup-window',
+          // A window nobody can see is a window the OS calls occluded, and an
+          // occluded window is one Chromium stops painting — which would stop
+          // the stream this whole feature is made of.
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-features=CalculateNativeWinOcclusion,Translate,MediaRouter',
+        ]
+        : ['--headless=new', '--disable-features=Translate,MediaRouter', 'about:blank']),
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-features=Translate,MediaRouter',
       '--hide-crash-restore-bubble',
-      'about:blank',
     ], { stdio: ['ignore', 'ignore', 'pipe'], detached: false });
     // Chromium's own reason for refusing to start — a profile another process
     // still holds, a missing sandbox — is on stderr and nowhere else, and a
@@ -271,14 +359,15 @@ export class LiveBrowser {
     // rather than guessing a delay.
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
-      const url = await debuggerUrl(port);
-      if (url) {
-        this.log(`live browser: started ${binary} on port ${port}`);
+      const info = await browserInfo(port);
+      if (info) {
+        this.log(`live browser: started ${binary} on port ${port} (${headful ? 'windowed' : 'headless'})`);
+        this.userAgent = presentableUserAgent(info.userAgent);
         const pid = this.proc?.pid;
         if (pid) {
           try { writeFileSync(browserRecordFile(), JSON.stringify({ pid, port })); } catch { /* best effort */ }
         }
-        return this.connect(url);
+        return this.connect(info.wsUrl);
       }
       // A browser that has already exited will not start answering.
       if (!this.proc) break;
@@ -391,6 +480,16 @@ export class LiveBrowser {
     });
     const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
 
+    // A new window lands wherever Chromium likes, which on a headful browser is
+    // in the middle of somebody's screen. Move it out of sight; the page is
+    // sized by `setDeviceMetricsOverride` regardless of the window it is in.
+    if (this.headful) {
+      try {
+        const { windowId } = await cdp.send<{ windowId: number }>('Browser.getWindowForTarget', { targetId });
+        await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...OFFSCREEN } });
+      } catch { /* an older browser, or a target with no window of its own */ }
+    }
+
     const view: View = {
       id: opts.id, targetId, sessionId,
       width: Math.max(200, Math.round(opts.width)),
@@ -403,6 +502,12 @@ export class LiveBrowser {
 
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
+    // Per page rather than as a launch flag: a flag would also rewrite the UA
+    // of the browser's own requests, and this way a re-attached browser gets it
+    // too without being restarted.
+    if (this.userAgent) {
+      await cdp.send('Emulation.setUserAgentOverride', { userAgent: this.userAgent }, sessionId).catch(() => {});
+    }
     try {
       const tree = await cdp.send<{ frameTree: { frame: { id: string } } }>('Page.getFrameTree', {}, sessionId);
       view.mainFrameId = tree.frameTree.frame.id;

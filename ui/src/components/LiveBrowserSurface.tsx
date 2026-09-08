@@ -23,6 +23,18 @@ function modifierBits(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; 
 
 const BUTTONS = ['left', 'middle', 'right'] as const;
 
+/** Which button a *move* is carrying, read from the `buttons` bitmask rather
+ *  than from `button` — which is 0 (meaning "left") on every mousemove, held
+ *  or not. Chromium decides a move is a drag from this: sent as 'none', a
+ *  press-move-release reads as a hover with a click at each end, which is why
+ *  selecting text with the mouse did nothing at all. */
+function heldButton(buttons: number): 'none' | 'left' | 'middle' | 'right' {
+  if (buttons & 1) return 'left';
+  if (buttons & 2) return 'right';
+  if (buttons & 4) return 'middle';
+  return 'none';
+}
+
 /** Virtual key codes for the keys a browser event may report as 0 — an IME
  *  commit, a synthetic event. Everything else uses the event's own `keyCode`,
  *  which IS the Windows virtual key code CDP wants (190 for `.`, 188 for `,`),
@@ -231,7 +243,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     }
   }, [send]);
 
-  const pointFrom = useCallback((e: React.MouseEvent | React.WheelEvent) => {
+  const pointFrom = useCallback((e: React.MouseEvent | React.WheelEvent | MouseEvent) => {
     const box = surfaceRef.current?.getBoundingClientRect();
     if (!box) return { x: 0, y: 0 };
     const { w, h } = frameSizeRef.current;
@@ -240,17 +252,38 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     return { x: Math.round((e.clientX - box.left) * sx), y: Math.round((e.clientY - box.top) * sy) };
   }, []);
 
-  const mouse = useCallback((type: string, e: React.MouseEvent, clickCount = 0) => {
+  const mouse = useCallback((type: string, e: React.MouseEvent | MouseEvent, clickCount = 0) => {
     const { x, y } = pointFrom(e);
     send({
       type: 'input', method: 'Input.dispatchMouseEvent',
       params: {
         type, x, y,
-        button: type === 'mouseMoved' ? 'none' : (BUTTONS[e.button] ?? 'left'),
+        button: type === 'mouseMoved' ? heldButton(e.buttons) : (BUTTONS[e.button] ?? 'left'),
         clickCount, modifiers: modifierBits(e), buttons: e.buttons,
       },
     });
   }, [pointFrom, send]);
+
+  // A selection does not stop at the edge of the pane: you press inside, drag
+  // past it, and let go somewhere else entirely. React's handlers only fire
+  // over this element, so the drag is followed on the window instead — without
+  // this, leaving the pane mid-selection left the page believing the button
+  // was still down.
+  const draggingRef = useRef(false);
+  useEffect(() => {
+    const move = (e: MouseEvent) => { if (draggingRef.current) mouse('mouseMoved', e); };
+    const up = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      mouse('mouseReleased', e, e.detail || 1);
+    };
+    window.addEventListener('mousemove', move, true);
+    window.addEventListener('mouseup', up, true);
+    return () => {
+      window.removeEventListener('mousemove', move, true);
+      window.removeEventListener('mouseup', up, true);
+    };
+  }, [mouse]);
 
   const onKey = useCallback((e: React.KeyboardEvent, down: boolean) => {
     // The page has the keyboard while it is focused — including ⌘R, which
@@ -284,9 +317,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       ref={surfaceRef}
       className="live-browser-surface"
       tabIndex={0}
-      onMouseDown={e => { (e.currentTarget as HTMLElement).focus(); claim(); mouse('mousePressed', e, e.detail || 1); }}
-      onMouseUp={e => mouse('mouseReleased', e, e.detail || 1)}
-      onMouseMove={e => mouse('mouseMoved', e)}
+      onMouseDown={e => {
+        (e.currentTarget as HTMLElement).focus();
+        claim();
+        draggingRef.current = true;
+        mouse('mousePressed', e, e.detail || 1);
+      }}
+      // Release and drag are followed on the window (see above); this element
+      // only has to report the moves that happen while no button is down.
+      onMouseMove={e => { if (!draggingRef.current) mouse('mouseMoved', e); }}
       onContextMenu={e => e.preventDefault()}
       onWheel={e => {
         claim();
