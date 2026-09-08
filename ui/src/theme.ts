@@ -27,6 +27,21 @@ export const TERMINAL_FONT_KEY = 'sheepit:terminal-font';
 
 export const DEFAULT_TERMINAL_FONT = '"JetBrains Mono", monospace';
 
+/**
+ * Row height, as a multiple of the font's own line box.
+ *
+ * `1` is not "no leading" — xterm multiplies the *measured* natural line
+ * height (ascent + descent + leading, which for a monospace face runs about
+ * 1.2x the point size), not the font size. So this is the same row height a
+ * native terminal gives you, and it is what iTerm calls Vertical Spacing 1.0.
+ *
+ * It was 1.2, which stacked that leading on top of the font's own and made
+ * every pane about a fifth taller per row than the same font in iTerm beside
+ * it — visible as fewer rows in a pane and text that reads looser than the
+ * terminal it is standing in for.
+ */
+export const TERMINAL_LINE_HEIGHT = 1;
+
 export interface TerminalFontPreset {
   /** What the picker shows. */
   label: string;

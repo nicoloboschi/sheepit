@@ -10,7 +10,7 @@ import PaneHeader from './PaneHeader';
 import GitDiffPane from './GitDiffPane';
 import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
-import { TERMINAL_THEMES } from '../theme';
+import { TERMINAL_THEMES, TERMINAL_LINE_HEIGHT } from '../theme';
 import type { AppTheme } from '../theme';
 
 /**
@@ -508,7 +508,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       cursorBlink: !isMobile,
       fontFamily: useStore.getState().terminalFontFamily,
       fontSize: initialFontSize,
-      lineHeight: 1.2,
+      lineHeight: TERMINAL_LINE_HEIGHT,
       scrollback: isMobile ? 1000 : 5000,
       theme: TERMINAL_THEMES[theme],
       // OSC 8 hyperlinks (Claude Code emits file references as these). A local
@@ -1255,7 +1255,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       lastTouchTime = now;
       totalDy += dy;
       accPx += dy;
-      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? 1.2);
+      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? TERMINAL_LINE_HEIGHT);
       const lines = Math.trunc(accPx / lineH);
       if (lines !== 0) {
         accPx -= lines * lineH;
@@ -1271,7 +1271,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
 
       const term = termRef.current;
       if (!term) return;
-      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? 1.2);
+      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? TERMINAL_LINE_HEIGHT);
       let v = velocity * 16; // convert px/ms to px/frame (~16ms)
       let residual = 0;
       const FRICTION = 0.95;
@@ -1293,7 +1293,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     const onWheel = (e: WheelEvent): void => {
       const term = termRef.current;
       if (!term) return;
-      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? 1.2);
+      const lineH = (term.options?.fontSize ?? 14) * (term.options?.lineHeight ?? TERMINAL_LINE_HEIGHT);
       let lines: number;
       if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
         lines = Math.round(e.deltaY);

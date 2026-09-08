@@ -1,4 +1,5 @@
 import type { Terminal } from 'xterm';
+import { TERMINAL_LINE_HEIGHT } from '../theme';
 import useStore, { activeTerminalSend } from '../store';
 
 interface KeyDef {
@@ -53,7 +54,7 @@ export default function MobileKeybar({ termRef }: MobileKeybarProps) {
     const vp = document.querySelector('.terminal-pane .xterm-viewport') as HTMLElement | null;
     if (!vp) return;
     const term = termRef?.current;
-    const lineH = (term?.options?.fontSize ?? 14) * (term?.options?.lineHeight ?? 1.2);
+    const lineH = (term?.options?.fontSize ?? 14) * (term?.options?.lineHeight ?? TERMINAL_LINE_HEIGHT);
     const lines = term ? Math.max(1, term.rows - 1) : 20;
     vp.scrollTop = Math.max(0, Math.min(
       vp.scrollTop + direction * lines * lineH,

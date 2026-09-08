@@ -705,6 +705,30 @@ A reload always looked correct, because a fresh `Terminal` is constructed with
 the right family and rasterises from scratch. "It works after a reload" is the
 signature of this bug, not evidence against it.
 
+### Row height matches a native terminal
+
+`TERMINAL_LINE_HEIGHT` is **1**, and that is not "no leading": xterm multiplies
+the font's *measured* line box — ascent + descent + leading, about 1.2x the
+point size for a monospace face — not the point size. So 1 is the row height a
+native terminal gives you, and the same thing iTerm calls Vertical Spacing 1.0.
+
+It was 1.2, which stacked that leading on top of the font's own: every row came
+out about a fifth taller than the same font in a real terminal beside it, which
+costs rows in a pane and reads looser than the thing sheepit is standing in for.
+
+It lives in `theme.ts` because five places need to agree on it. Four are the
+wheel-scroll distance calculations (`TerminalCell`, `TerminalPane`,
+`MobileKeybar`), which read `term.options.lineHeight` and fall back to the
+constant when there is no terminal yet — a fallback that disagreed with the
+constructor would compute a row height no pane has. The fifth is the font
+preview in Appearance, which is CSS and therefore takes **`line-height:
+normal`**, not `1`: CSS multiplies the font size, xterm multiplies the line
+box, and `normal` is the line box. Using `1` there would draw a preview tighter
+than any pane.
+
+Only a new `Terminal` picks this up — it is a constructor option, so a running
+pane keeps the height it opened with until a reload.
+
 ## Nothing reads the terminal as text
 
 Two things used to be derived by reading the output as prose. Both are gone,

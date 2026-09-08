@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { TERMINAL_LINE_HEIGHT } from '../theme';
 import { SquareTerminal } from 'lucide-react';
 import useStore from '../store';
 import { notify } from '../utils';
@@ -102,9 +103,9 @@ export default function TerminalPane({ termRef, fitAddonRef, sendRef, sessionId:
       const vp = getVp() as HTMLElement | null;
       if (!vp) return;
       const deltaPx = e.deltaMode === WheelEvent.DOM_DELTA_LINE
-        ? e.deltaY * ((termRef.current?.options?.fontSize ?? 14) * (termRef.current?.options?.lineHeight ?? 1.2))
+        ? e.deltaY * ((termRef.current?.options?.fontSize ?? 14) * (termRef.current?.options?.lineHeight ?? TERMINAL_LINE_HEIGHT))
         : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? e.deltaY * (termRef.current?.rows ?? 20) * ((termRef.current?.options?.fontSize ?? 14) * (termRef.current?.options?.lineHeight ?? 1.2))
+          ? e.deltaY * (termRef.current?.rows ?? 20) * ((termRef.current?.options?.fontSize ?? 14) * (termRef.current?.options?.lineHeight ?? TERMINAL_LINE_HEIGHT))
           : e.deltaY; // DOM_DELTA_PIXEL — pass through directly
       vp.scrollTop = Math.max(0, Math.min(vp.scrollTop + deltaPx, vp.scrollHeight - vp.clientHeight));
     };

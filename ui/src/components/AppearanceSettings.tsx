@@ -194,7 +194,10 @@ export function AppearanceContent() {
           style={{ borderColor: 'var(--border)', background: term.background }}
         >
           <div className="text-[10px] mb-1.5" style={{ color: 'var(--muted-foreground)' }}>Preview</div>
-          <div style={{ fontFamily, fontSize, lineHeight: 1.2, color: term.foreground, whiteSpace: 'pre' }}>
+          {/* `normal`, not a number: CSS multiplies the font *size*, while xterm's
+              lineHeight multiplies the font's natural line box. `normal` is
+              that box, so the preview stacks its rows the way a pane does. */}
+          <div style={{ fontFamily, fontSize, lineHeight: 'normal', color: term.foreground, whiteSpace: 'pre' }}>
             {SAMPLE}
           </div>
         </div>
