@@ -1,0 +1,1525 @@
+<!doctype html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sheepit — you are the shepherd</title>
+<meta name="description" content="A whole flock of coding agents, penned, fenced and watched from one browser tab. Real shells on your machine, no tmux.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%91%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@400;500;600;700&family=Karla:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   sheepit — The Shepherd's Field
+
+   One idea, carried the whole way down: a fence is what turns ground into a
+   pen, and a pen is what turns twenty running agents into something you can
+   watch. So the fence is not decoration here — it is the page's structure.
+   Every section is divided by a rail on posts, the hero is a real field with
+   real enclosures in it, and you are the shepherd standing in it: move the
+   cursor and the flock turns to look at you.
+
+   Colours are the product's own (ui/src/style.css): meadow → moss, amber for
+   wants-attention, terracotta for errors, and --fence, the weathered
+   amber-grey the app paints its rails in.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --ground:     #0b0d0a;   /* the page — olive-tinted near-black, not grey */
+  --soil:       #101410;   /* one step up, for alternating bands */
+  --dusk:       #232f1c;   /* the sky just above the horizon */
+  --meadow:     #9cbc7f;
+  --moss:       #6fa98c;
+  --fence:      #a29e79;   /* weathered rail: amber 26% into muted */
+  --fence-dark: #6d6a4f;
+  --bleating:   #8ebfa2;
+  --amber:      #d9b84a;
+  --terracotta: #e0907b;
+  --parchment:  #eae8dd;   /* text: warm, never pure white */
+  --muted:      #8e948a;   /* grey biased green — chosen, not inherited */
+  --dim:        #c6c8bd;
+  --rule:       rgba(234, 232, 221, 0.12);
+  --rule-soft:  rgba(234, 232, 221, 0.06);
+
+  --display: "Zilla Slab", "Bitter", Georgia, serif;
+  --body:    "Karla", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--parchment);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 30px; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--meadow); outline-offset: 3px; }
+
+.lbl {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── The fence, as a rule ──────────────────────────────────────────────────
+   Two rails and a post every 46px. This is the section divider everywhere on
+   the page: sections are pens, and you cross a fence to get from one to the
+   next. */
+.fenceline {
+  height: 26px;
+  position: relative;
+  background-image:
+    /* posts */
+    repeating-linear-gradient(90deg,
+      rgba(162, 158, 121, 0.55) 0 2px,
+      transparent 2px 46px),
+    /* top rail */
+    linear-gradient(180deg, transparent 6px, rgba(162, 158, 121, 0.42) 6px 7px, transparent 7px),
+    /* bottom rail */
+    linear-gradient(180deg, transparent 16px, rgba(162, 158, 121, 0.28) 16px 17px, transparent 17px);
+}
+
+/* ═══ Hero ════════════════════════════════════════════════════════════════ */
+.hero {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 60% at 50% 78%, rgba(111, 169, 140, 0.10), rgba(11, 13, 10, 0) 70%),
+    linear-gradient(176deg, #090b08 0%, #10150e 26%, var(--dusk) 44%, #131a10 54%, #0b0d0a 100%);
+}
+#field {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  z-index: 0;
+  touch-action: pan-y;
+}
+/* The low sun, sitting behind the far fence. */
+.hero::before {
+  content: "";
+  position: absolute;
+  left: 26%; top: 58%;
+  width: 460px; height: 260px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(217, 184, 74, 0.26) 0%, rgba(217, 184, 74, 0.07) 38%, rgba(217, 184, 74, 0) 70%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.topline {
+  position: relative; z-index: 4;
+  display: flex; align-items: center; gap: 14px;
+  padding: 22px 0 0;
+}
+.brand {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  display: flex; align-items: center; gap: 9px;
+}
+.brand .ver { font-family: var(--mono); font-weight: 400; font-size: 11px; color: var(--muted); }
+.topline nav { margin-left: auto; display: flex; gap: 22px; }
+.topline nav a {
+  font-family: var(--mono); font-size: 12px; color: var(--muted); text-decoration: none;
+}
+.topline nav a:hover { color: var(--parchment); }
+
+.hero-copy {
+  position: relative; z-index: 4;
+  padding: 54px 0 34px;
+  max-width: 620px;
+}
+h1 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(40px, 6vw, 68px);
+  line-height: 0.98;
+  letter-spacing: -0.028em;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+h1 .green {
+  background: linear-gradient(135deg, var(--meadow), var(--moss));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.hero-copy p {
+  font-size: 18px;
+  color: var(--dim);
+  margin: 0 0 30px;
+  max-width: 52ch;
+  text-shadow: 0 1px 12px rgba(11, 13, 10, 0.85);
+}
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.install {
+  display: inline-flex; align-items: center; gap: 13px;
+  font-family: var(--mono); font-size: 13.5px;
+  padding: 13px 15px 13px 17px;
+  border: 1px solid rgba(156, 188, 127, 0.4);
+  background: rgba(9, 11, 8, 0.7);
+  backdrop-filter: blur(4px);
+  color: var(--parchment);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.install:hover { border-color: var(--meadow); background: rgba(156, 188, 127, 0.1); }
+.install .dollar { color: var(--moss); }
+.install .copy {
+  font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--muted); border-left: 1px solid var(--rule); padding-left: 13px;
+}
+.install.copied .copy { color: var(--meadow); }
+.ghost {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  text-decoration: none; border-bottom: 1px solid var(--rule); padding-bottom: 3px;
+}
+.ghost:hover { color: var(--parchment); border-color: var(--meadow); }
+
+/* Room under the copy for the field itself to be seen. */
+.hero-floor { height: 470px; position: relative; z-index: 1; pointer-events: none; }
+/* The key to the field: what the dots on the sheep mean, and the one thing
+   you can do out there. */
+.field-key {
+  position: absolute; z-index: 4;
+  left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: 8px 20px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em;
+  color: rgba(142, 148, 138, 0.9);
+  pointer-events: none;
+  padding: 7px 16px;
+  background: rgba(9, 11, 8, 0.6);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(234, 232, 221, 0.07);
+  border-radius: 20px;
+}
+.field-key span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.field-key b {
+  color: var(--meadow); font-weight: 400;
+  padding-left: 20px; border-left: 1px solid rgba(234, 232, 221, 0.12);
+  white-space: nowrap;
+}
+
+/* Each pen in the field is labelled with its own sidebar row — the same card
+   the app draws, floating over the enclosure it describes. Positioned in JS
+   from the projection the field is drawn with, so a row can never drift off
+   the pen it belongs to. */
+.pen-float {
+  position: absolute;
+  z-index: 3;
+  width: 244px;
+  transform: translate(-50%, -100%);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease 0.3s;
+}
+.pen-float.in { opacity: 1; }
+/* Over the field the row is tighter than it would be in a real sidebar: it is
+   a label on an enclosure, and three of them share the sky. */
+.pen-float .pen-row { padding: 7px 9px 8px; border-radius: 6px; }
+.pen-float .pen-head { margin-bottom: 2px; gap: 7px; }
+.pen-float .pen-title { font-size: 12px; }
+.pen-float .pen-meta { font-size: 9px; margin-bottom: 5px; gap: 3px 6px; }
+.pen-float .wt-badge { font-size: 8px; padding: 0 4px; }
+.pen-float .pen-fence { padding: 3px 3px 7px; gap: 3px; }
+.pen-float .sheep-card { min-height: 18px; padding: 3px 6px; font-size: 9px; gap: 5px; }
+.pen-float .sheep-card .hn img, .pen-float .sheep-card .hn svg { width: 9px; }
+.pen-float .dot { width: 6px; height: 6px; }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot.bleat  { background: var(--bleating); animation: pulse 1.7s ease-in-out infinite; }
+.dot.graze  { background: var(--meadow); }
+.dot.unseen { background: var(--amber); }
+.dot.idle   { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ═══ Sections ════════════════════════════════════════════════════════════ */
+section { padding: 62px 0 64px; }
+section.alt { background: var(--soil); }
+
+.head { max-width: 60ch; margin-bottom: 34px; }
+.head h2 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(26px, 3.4vw, 36px);
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  margin: 10px 0 12px;
+  text-wrap: balance;
+}
+.head p { margin: 0; color: var(--muted); font-size: 16px; }
+
+/* The demo, and the flock as the app itself draws it ─────────────────────── */
+.demo-slot {
+  position: relative;
+  max-width: 880px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(162, 158, 121, 0.28);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0d110b;
+  margin: 0 0 34px;
+}
+.demo-slot video { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: cover; background: #0d110b; }
+.demo-ph, .shot-ph, .feat-slot {
+  position: absolute; inset: 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  border: 1px dashed rgba(162, 158, 121, 0.34);
+  border-radius: 3px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+  color: var(--muted); text-align: center; padding: 12px;
+}
+.demo-ph em, .shot-ph em, .feat-slot em {
+  font-style: normal; color: var(--fence);
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.demo-ph em::before, .shot-ph em::before, .feat-slot em::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--terracotta);
+}
+
+/* ── The sidebar, drawn the way the app draws it ────────────────────────────
+   Neutral graphite chrome, a fenced pen body with grass under the pane cards,
+   and cards that stay opaque so the field never shows through the text. */
+.pen-row {
+  background: var(--chrome, #15171a);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  padding: 11px 12px 12px;
+}
+.pen-row.on { background: #1d2119; box-shadow: inset 0 0 0 1px rgba(156, 188, 127, 0.28); }
+.pen-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.pen-title { font-size: 13.5px; font-weight: 600; color: var(--parchment); }
+.pen-meta {
+  display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap;
+  margin-bottom: 9px;
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+}
+.wt-badge {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--fence);
+  border: 1px solid rgba(162, 158, 121, 0.38);
+  border-radius: 3px; padding: 1px 5px;
+}
+.pen-fence {
+  border: 1px solid rgba(162, 158, 121, 0.32);
+  border-radius: 5px;
+  padding: 5px 5px 11px;                 /* deeper below: that is the front strip */
+  background:
+    repeating-linear-gradient(88deg, rgba(156,188,127,0.22) 0 1px, transparent 1px 7px) bottom / 100% 11px no-repeat,
+    linear-gradient(180deg, rgba(156,188,127,0.04), rgba(156,188,127,0.11));
+  display: grid; gap: 4px;
+}
+.pen-fence.g2 { grid-template-columns: 1fr 1fr; }
+.pen-fence.g3 { grid-template-columns: 1fr 1fr; }
+.pen-fence.g3 .sheep-card:first-child { grid-row: span 2; }
+.pen-fence.g4 { grid-template-columns: 1fr 1fr; }
+/* A grid item will not shrink below its content unless it is told it may, and
+   a pane card that refuses to shrink walks straight out of its pen. */
+.pen-fence > * { min-width: 0; }
+.sheep-card {
+  background: #232820;                   /* opaque: the grass is behind it */
+  border-radius: 3px;
+  padding: 6px 8px;
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  min-height: 30px;
+}
+.sheep-card.on { color: var(--parchment); box-shadow: inset 0 0 0 1px var(--meadow); }
+.sheep-card .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheep-card .hn { margin-left: auto; opacity: 0.75; flex-shrink: 0; }
+.sheep-card .hn img, .sheep-card .hn svg { width: 11px; height: auto; display: block; }
+
+/* What it replaces — five things, each with a still of itself */
+.replaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px 36px; }
+.rep h3 { margin: 14px 0 5px; font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+.rep p { margin: 0; font-size: 14.5px; color: var(--muted); }
+.shot {
+  position: relative; aspect-ratio: 16 / 10;
+  border: 1px solid rgba(162, 158, 121, 0.26);
+  border-radius: 5px; overflow: hidden; background: #0d110b;
+}
+.shot img { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* How it works — three posts of one fence */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 44px; }
+.steps li { padding: 20px 0 4px; border-top: 1px solid rgba(162, 158, 121, 0.3); }
+.step-n { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.15em; color: var(--fence); }
+.steps h3 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 8px 0 7px; letter-spacing: -0.01em; }
+.steps p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.steps code, .say code { font-family: var(--mono); font-size: 12.5px; color: var(--parchment); }
+.say strong { color: var(--parchment); font-weight: 600; }
+
+/* Features — each one gets a recording of itself */
+.feats { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 36px 40px; }
+.feat { margin: 0; }
+.feat-media {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border: 1px solid rgba(162, 158, 121, 0.26);
+  border-radius: 5px;
+  overflow: hidden;
+  background: #0d110b;
+}
+.feat-media img { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Works from anywhere — the one block whose picture is a phone, so it gets a
+   portrait frame instead of a slot cropped to landscape. */
+.anywhere {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 268px;
+  gap: 52px;
+  align-items: center;
+  margin-top: 46px;
+  padding-top: 42px;
+  border-top: 1px solid rgba(162, 158, 121, 0.3);
+}
+.anywhere h3 {
+  font-family: var(--display); font-weight: 600;
+  font-size: clamp(22px, 2.6vw, 28px); letter-spacing: -0.02em;
+  margin: 10px 0 12px; text-wrap: balance;
+}
+.anywhere p { margin: 0 0 18px; color: var(--dim); font-size: 15.5px; max-width: 56ch; }
+.anywhere-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.anywhere-list li {
+  position: relative; padding-left: 20px;
+  font-size: 14.5px; color: var(--muted);
+}
+.anywhere-list li::before {
+  content: ""; position: absolute; left: 2px; top: 9px;
+  width: 8px; height: 1px; background: var(--fence);
+}
+.phone {
+  position: relative;
+  aspect-ratio: 9 / 19.5;
+  border: 1px solid rgba(162, 158, 121, 0.34);
+  border-radius: 22px;
+  overflow: hidden;
+  background: #0d110b;
+  padding: 6px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+.phone img { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 16px; }
+.phone-ph {
+  position: absolute; inset: 6px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  border: 1px dashed rgba(162, 158, 121, 0.34);
+  border-radius: 16px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+  color: var(--muted); text-align: center; padding: 14px;
+}
+.phone-ph em {
+  font-style: normal; color: var(--fence);
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.phone-ph em::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--terracotta); }
+
+.feat figcaption h3 { margin: 15px 0 5px; font-family: var(--body); font-size: 16px; font-weight: 600; }
+.feat figcaption p { margin: 0; font-size: 14.5px; color: var(--muted); }
+
+/* The gate — install */
+.gate-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 46px; align-items: start; }
+.cmd {
+  font-family: var(--mono); font-size: 14.5px;
+  background: #0e120c;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--meadow);
+  border-radius: 0 4px 4px 0;
+  padding: 17px 20px;
+  overflow-x: auto; white-space: pre;
+  line-height: 1.85;
+}
+.cmd .dollar { color: var(--moss); user-select: none; }
+.cmd .cmt { color: var(--muted); }
+.warn {
+  border-left: 2px solid var(--terracotta);
+  padding-left: 20px;
+}
+.warn h3 {
+  margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: 0.15em; text-transform: uppercase; color: var(--terracotta); font-weight: 500;
+}
+.warn p { margin: 0 0 10px; font-size: 14.5px; color: #c0bcb2; }
+.warn p:last-child { margin-bottom: 0; }
+code { font-family: var(--mono); font-size: 12.5px; color: var(--parchment); }
+
+
+/* ═══ Looking inside a pane ══════════════════════════════════════════════════
+   Clicking a sheep opens a small card over the field rather than a modal: you
+   are looking at one animal in a pen, not leaving the pasture. It carries the
+   harness that pane is running, what it is doing, and the line it is on. */
+.peek {
+  position: absolute; z-index: 30;
+  width: 268px;
+  transform: translate(-50%, -100%);
+  background: #12160f;
+  border: 1px solid rgba(234, 232, 221, 0.16);
+  border-radius: 7px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  padding: 11px 13px 12px;
+  display: none;
+}
+.peek.open { display: block; }
+/* The tail, pointing back down at the sheep it belongs to. */
+.peek::after {
+  content: "";
+  position: absolute; left: 50%; bottom: -6px;
+  width: 10px; height: 10px;
+  margin-left: -5px;
+  background: #12160f;
+  border-right: 1px solid rgba(234, 232, 221, 0.16);
+  border-bottom: 1px solid rgba(234, 232, 221, 0.16);
+  transform: rotate(45deg);
+}
+.peek-top { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.peek-logo {
+  width: 20px; height: 20px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.peek-logo img, .peek-logo svg { width: 100%; height: auto; display: block; }
+.peek-harness {
+  font-family: var(--mono); font-size: 11px; color: var(--parchment);
+  letter-spacing: 0.02em;
+}
+.peek-state {
+  margin-left: auto;
+  padding-right: 18px;          /* clear of the close button in the corner */
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.peek-title { font-size: 13.5px; font-weight: 600; color: var(--parchment); line-height: 1.35; }
+.peek-cwd { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.peek-note { font-size: 12.5px; color: var(--dim); margin: 9px 0 0; line-height: 1.5; }
+.peek-last {
+  margin-top: 9px; padding-top: 8px;
+  border-top: 1px solid rgba(234, 232, 221, 0.09);
+  font-family: var(--mono); font-size: 10.5px;
+  color: var(--meadow);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.peek-last.wait { color: var(--bleating); }
+.peek-x {
+  position: absolute; top: 6px; right: 7px;
+  border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 4px;
+}
+.peek-x:hover { color: var(--parchment); background: rgba(255, 255, 255, 0.07); }
+
+/* ═══ Footer — the field carries on under the page ════════════════════════ */
+footer { position: relative; overflow: hidden; background: linear-gradient(180deg, var(--ground), #0d1109); }
+.foot-inner {
+  position: relative; z-index: 2;
+  display: flex; flex-wrap: wrap; gap: 16px 30px; align-items: center;
+  padding: 30px 0 104px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.foot-inner a { text-decoration: none; }
+.foot-inner a:hover { color: var(--meadow); }
+.foot-inner .sp { margin-left: auto; }
+#foot-grass { position: absolute; left: 0; right: 0; bottom: 0; height: 76px; z-index: 1; display: block; width: 100%; }
+
+@media (max-width: 900px) {
+  .gate-grid { grid-template-columns: 1fr; gap: 30px; }
+  .anywhere { grid-template-columns: 1fr; gap: 32px; }
+  .phone { max-width: 260px; }
+  .hero-floor { height: 300px; }
+  .pen-float { display: none; }
+  .shepherd-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .dot.bleat { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ Hero: the field ═══════════════════════════════════════════════════ -->
+<header class="hero">
+  <canvas id="field" aria-hidden="true"></canvas>
+
+  <div class="wrap topline">
+    <span class="brand">🐑 sheepit <span class="ver">v1.11.0</span></span>
+    <nav>
+      <a href="#replaces">What it replaces</a>
+      <a href="#demo">Demo</a>
+      <a href="#what">Features</a>
+      <a href="#gate">Install</a>
+      <a href="https://github.com/nicoloboschi/sheepit">GitHub</a>
+    </nav>
+  </div>
+
+  <div class="wrap hero-copy">
+    <h1>You are the <span class="green">shepherd</span> now, ship it.</h1>
+    <p class="say">
+      <strong>sheepit puts every terminal on your machine into one browser tab.</strong>
+      Run one command where your code is, open it from any device on your
+      network, and each shell — each Claude Code, Codex or Hermes session —
+      gets a pen of its own: fenced, named, and honest about whether it is
+      working, finished, or waiting on an answer from you.
+    </p>
+    <div class="actions">
+      <button class="install" id="install" type="button" aria-label="Copy the install command">
+        <span class="dollar">$</span>
+        <span>npx @nicoloboschi/sheepit</span>
+        <span class="copy" id="copy-label">copy</span>
+      </button>
+      <a class="ghost" href="https://github.com/nicoloboschi/sheepit">Source</a>
+      <a class="ghost" href="https://www.npmjs.com/package/@nicoloboschi/sheepit">npm</a>
+    </div>
+  </div>
+
+  <div class="hero-floor"></div>
+  <div class="field-key">
+    <span><span class="dot bleat"></span>bleating — wants an answer</span>
+    <span><span class="dot graze"></span>grazing — still running</span>
+    <span><span class="dot unseen"></span>unread</span>
+    <span><span class="dot idle"></span>idle</span>
+    <b>click a sheep to look inside its pane</b>
+  </div>
+</header>
+
+<div class="fenceline" aria-hidden="true"></div>
+
+<!-- ═══ Pens ══════════════════════════════════════════════════════════════ -->
+<section id="demo">
+  <div class="wrap">
+    <div class="head">
+      <h2>Two minutes, start to finish</h2>
+    </div>
+    <!-- Drop the recording in as docs/media/demo.mp4 and swap the placeholder
+         below for this line:
+         <video src="media/demo.mp4" poster="media/demo-poster.png" controls playsinline preload="metadata"></video> -->
+    <div class="demo-slot">
+      <span class="demo-ph"><em>media/demo.mp4</em>the walkthrough</span>
+    </div>
+  </div>
+</section>
+
+<div class="fenceline" aria-hidden="true"></div>
+
+<!-- ═══ How it works ═════════════════════════════════════════════════════ -->
+<section id="replaces" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <span class="lbl">One tab instead of five apps</span>
+      <h2>A terminal, a runtime for coding agents, a file viewer, an editor and
+        your notes — all in the browser</h2>
+      <p>
+        Not a cloud service and not an editor bolted onto a shell. One npm
+        package, running on the machine your code is on, serving all five of
+        these over your own network.
+      </p>
+    </div>
+    <div class="replaces">
+      <article class="rep">
+        <div class="shot"><img src="media/replaces-terminal.png" alt="" loading="lazy" onerror="this.remove()"><span class="shot-ph"><em>media/replaces-terminal.png</em>a pen of four live shells</span></div>
+        <h3>Your terminal</h3>
+        <p>Real PTYs with full xterm.js — mouse, scrollback, colour, and the ANSI palette recoloured to match the theme without restarting what is running.</p>
+      </article>
+      <article class="rep">
+        <div class="shot"><img src="media/replaces-agents.png" alt="" loading="lazy" onerror="this.remove()"><span class="shot-ph"><em>media/replaces-agents.png</em>Claude Code, Codex and Hermes in one pen</span></div>
+        <h3>A runtime for coding agents</h3>
+        <p>Where Claude Code, Codex and Hermes actually live. Hooks report what each one is doing, so a pane says whether it is working or waiting on you.</p>
+      </article>
+      <article class="rep">
+        <div class="shot"><img src="media/replaces-files.png" alt="" loading="lazy" onerror="this.remove()"><span class="shot-ph"><em>media/replaces-files.png</em>the file tree open beside a terminal</span></div>
+        <h3>Your file viewer</h3>
+        <p>Browse the pane's own directory with syntax highlighting, and watch an open file refresh the moment an agent rewrites it underneath you.</p>
+      </article>
+      <article class="rep">
+        <div class="shot"><img src="media/replaces-ide.png" alt="" loading="lazy" onerror="this.remove()"><span class="shot-ph"><em>media/replaces-ide.png</em>editing a file and reading its diff</span></div>
+        <h3>Enough of an IDE</h3>
+        <p>Edit in place, read the diff, check the branch, open the pull request — the things you leave a terminal for, without leaving it.</p>
+      </article>
+      <article class="rep">
+        <div class="shot"><img src="media/replaces-notes.png" alt="" loading="lazy" onerror="this.remove()"><span class="shot-ph"><em>media/replaces-notes.png</em>a markdown note beside the flock</span></div>
+        <h3>Your notes</h3>
+        <p>Markdown sheets kept alongside the sessions they belong to, so what you worked out at 2am is where the work is rather than in another app.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<div class="fenceline" aria-hidden="true"></div>
+
+<!-- ═══ Capabilities ══════════════════════════════════════════════════════ -->
+<section id="what">
+  <div class="wrap">
+    <div class="head">
+      <span class="lbl">What the fence gets you</span>
+      <h2>Everything you would otherwise leave the terminal for</h2>
+      <p>Each of these is a thing the app does, shown doing it.</p>
+    </div>
+    <div class="feats">
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/persistent-sessions.gif" alt="A build carries on running in a pane while the server restarts" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/persistent-sessions.gif</em>restart the server, the build keeps going</span>
+        </div>
+        <figcaption>
+          <h3>Shells that outlive the server</h3>
+          <p>A PTY daemon holds every session's master fd, so a restart, a deploy or a code change leaves your builds building and your agents mid-run.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/resume-agent.gif" alt="A pane reopens after a reboot and the agent continues its last conversation" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/resume-agent.gif</em>reboot, then the agent picks its conversation back up</span>
+        </div>
+        <figcaption>
+          <h3>An agent comes back with its work</h3>
+          <p>When the machine reboots and the shell is gone, the conversation is not — the pane reopens in its own directory and continues the last one.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/self-naming-panes.gif" alt="A pane renames itself as the agent works" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/self-naming-panes.gif</em>a pane renaming itself mid-turn</span>
+        </div>
+        <figcaption>
+          <h3>Panes that name themselves</h3>
+          <p>Claude Code writes a title for its session every turn and the pane takes it — better than anything a namer could derive from three exchanges, and free.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/search-flock.gif" alt="Command-K searching across every pane's transcripts" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/search-flock.gif</em>⌘K, type a PR number, land on the right pane</span>
+        </div>
+        <figcaption>
+          <h3>Ask which sheep is on it</h3>
+          <p>⌘K searches names, branches, the PR numbers the hooks reported and both agents' own transcripts — 102&nbsp;MB across 24 panes in under 90&nbsp;ms.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/browser-pane.gif" alt="Clicking a URL in the terminal opens a real browser in the next pane" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/browser-pane.gif</em>click a printed URL, it opens in the pane beside it</span>
+        </div>
+        <figcaption>
+          <h3>A real browser in the pane</h3>
+          <p>Not an iframe: a Chromium on your machine over CDP, with a profile that stays signed in. Click a URL in the terminal and it opens next door.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/git-pane.gif" alt="The git pane showing a branch, its diff and its pull request" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/git-pane.gif</em>dirty state → diff → the PR it belongs to</span>
+        </div>
+        <figcaption>
+          <h3>Git where the work is</h3>
+          <p>Branch and dirty state, pull-request links and checks, a diff viewer and worktrees — all against the pane's own directory, not a global one.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="feat">
+        <div class="feat-media">
+          <img src="media/files-and-notes.gif" alt="A file open beside the terminal refreshing as an agent rewrites it" loading="lazy" onerror="this.remove()">
+          <span class="feat-slot"><em>media/files-and-notes.gif</em>an open file refreshing as the agent rewrites it</span>
+        </div>
+        <figcaption>
+          <h3>Files, and somewhere to think</h3>
+          <p>Browse, edit and preview with highlighting; an open file refreshes when an agent rewrites it under you. Markdown notes sit alongside the flock.</p>
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="anywhere">
+      <div>
+        <span class="lbl">Works from anywhere</span>
+        <h3>The machine stays put. You don't.</h3>
+        <p>
+          Your shells live on the computer your code is on, and everything else
+          is just a screen pointed at it. Answer a waiting agent from the sofa,
+          check a build from the kitchen, hand a pane to the tablet already in
+          your hand — the session never moved, so nothing was interrupted.
+        </p>
+        <ul class="anywhere-list">
+          <li>Any device on your network — phone, tablet, the other laptop</li>
+          <li>From outside it over an SSH tunnel, or your own private network</li>
+          <li>Installable to the home screen, with the bleating count in the header</li>
+          <li>Close the tab and the work carries on without you</li>
+        </ul>
+      </div>
+      <div class="phone">
+        <img src="media/mobile.png" alt="sheepit on a phone: the flock, and a live pane" loading="lazy" onerror="this.remove()">
+        <span class="phone-ph"><em>media/mobile.png</em>a phone, portrait</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="fenceline" aria-hidden="true"></div>
+
+<!-- ═══ The gate ══════════════════════════════════════════════════════════ -->
+<section id="gate" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <span class="lbl">Open the gate</span>
+      <h2>One command, then <span style="font-family: var(--mono); font-size: 0.7em">localhost:4444</span></h2>
+      <p>Node, and nothing else. No tmux, no config file, no account.</p>
+    </div>
+    <div class="gate-grid">
+      <div class="cmd"><span class="dollar">$</span> npx @nicoloboschi/sheepit
+<span class="cmt"># or keep it around</span>
+<span class="dollar">$</span> npm install -g @nicoloboschi/sheepit
+<span class="dollar">$</span> sheepit --host 127.0.0.1</div>
+      <div class="warn">
+        <h3>Mind the gate</h3>
+        <p>
+          sheepit hands the browser a real shell on the host and it has
+          <strong>no authentication</strong>. By default it binds
+          <code>0.0.0.0</code> — anyone who can reach the port has your machine.
+        </p>
+        <p>
+          Run it on <code>127.0.0.1</code> and reach it over an SSH tunnel:
+          <code>ssh -L 4444:localhost:4444 you@host</code>. Never put it on the
+          open internet without auth and TLS in front.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <canvas id="foot-grass" aria-hidden="true"></canvas>
+  <div class="wrap foot-inner">
+    <span>🐑 sheepit</span>
+    <span>MIT licensed</span>
+    <span class="sp"><a href="https://github.com/nicoloboschi/sheepit">GitHub</a></span>
+    <a href="https://www.npmjs.com/package/@nicoloboschi/sheepit">npm</a>
+    <a href="https://www.youtube.com/watch?v=kdWoWgU27VA">Demo</a>
+  </div>
+</footer>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   The field.
+
+   A pinhole camera looking across a pasture: a world point (x, y, z) — x
+   across, y up from the ground, z away from you — lands at
+       sx = W/2      + x         * (f / z)
+       sy = horizon  + (camH - y) * (f / z)
+   which is all the perspective this needs, and gives fences that converge on
+   a real vanishing point rather than a fake one.
+
+   Three passes share it: grass (instanced blades), the fences (one static
+   mesh of posts and sagging rails), and the sheep (instanced billboards drawn
+   entirely in the fragment shader — body, head, legs, fleece and the activity
+   dot above them are all signed-distance maths, so there is not one image
+   request on this page).
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  var canvas = document.getElementById('field');
+  var gl = canvas.getContext('webgl2', { antialias: true, alpha: true });
+  if (!gl) { canvas.style.display = 'none'; return; }
+
+  var STILL = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── The pens, in world coordinates ─────────────────────────────────────
+     Each is a rectangle on the ground with a gate in the near rail. They are
+     the whole point of the picture: ground with a fence round it is a pen. */
+  var PENS = [
+    { id: 0, x0: -6.4, x1: -1.4, z0: 16.5, z1: 26.0, chipY: 1.9, name: 'orchard-api',   branch: '4 sheep',
+      dir: '~/dev/orchard-api', gitBranch: 'session-ttl', worktree: true,
+      line: '<span class="ask">?</span> Apply migrations/0042_session_ttl.sql?', state: 'bleat' },
+    { id: 1, x0:  1.4, x1:  6.4, z0: 16.5, z1: 26.0, chipY: 1.9, name: 'lanternfish',   branch: '2 sheep',
+      dir: '~/dev/lanternfish', gitBranch: 'main', worktree: false,
+      line: '<span class="ok">⠹</span> vite — hmr update TideChart.tsx', state: 'graze' },
+    { id: 2, x0: -5.0, x1:  5.0, z0: 32.0, z1: 43.0, chipY: 3.4, name: 'tidepool-docs', branch: '3 sheep',
+      dir: '~/dev/tidepool-docs', gitBranch: 'quickstart-rewrite', worktree: true,
+      line: '<span class="warn">✓</span> built in 6.40s — 2 files changed', state: 'unseen' }
+  ];
+
+  /* ── Shaders ─────────────────────────────────────────────────────────── */
+  var PROJECT = [
+    'uniform vec2  u_res;',
+    'uniform float u_horizon;',
+    'uniform float u_camH;',
+    'uniform float u_f;',
+    'vec4 project(vec3 w) {',
+    '  float invz = u_f / w.z;',
+    '  float sx = u_res.x * 0.5 + w.x * invz;',
+    '  float sy = u_horizon + (u_camH - w.y) * invz;',
+    '  vec2 c = vec2(sx / u_res.x, sy / u_res.y) * 2.0 - 1.0;',
+    '  float zn = clamp((w.z - 4.0) / 90.0, 0.0, 1.0) * 2.0 - 1.0;',
+    '  return vec4(c.x, -c.y, zn, 1.0);',
+    '}'
+  ].join('\n');
+
+  var GRASS_V = ['#version 300 es', 'precision highp float;',
+    'layout(location=0) in vec2 a_vert;',   // side, t
+    'layout(location=1) in vec4 a_inst;',   // x, z, height, phase
+    PROJECT,
+    'uniform float u_time;',
+    'uniform vec3  u_gust;',                // world x, world z, strength
+    'out float v_t; out float v_z; out float v_hue;',
+    'void main() {',
+    '  float t = a_vert.y;',
+    '  float d = distance(vec2(a_inst.x, a_inst.y * 0.35), vec2(u_gust.x, u_gust.y * 0.35));',
+    '  float gust = u_gust.z * exp(-d * d * 0.045);',
+    '  float sway = sin(u_time * 1.15 + a_inst.w + a_inst.x * 0.5) * 0.16',
+    '             + sin(u_time * 2.40 + a_inst.w * 1.7) * 0.05;',
+    '  float bend = (sway + gust * 1.5) * t * t * a_inst.z;',
+    '  vec3 w = vec3(a_inst.x + bend, t * a_inst.z, a_inst.y);',
+    '  vec4 p = project(w);',
+    '  float invz = u_f / w.z;',
+    '  p.x += a_vert.x * (0.030 * invz) * (1.0 - t * 0.85) / u_res.x * 2.0;',
+    '  gl_Position = p;',
+    '  v_t = t; v_z = w.z; v_hue = fract(a_inst.w * 0.41);',
+    '}'].join('\n');
+
+  var GRASS_F = ['#version 300 es', 'precision highp float;',
+    'in float v_t; in float v_z; in float v_hue;',
+    'out vec4 o;',
+    'const vec3 ROOT   = vec3(0.070, 0.106, 0.051);',
+    'const vec3 MEADOW = vec3(0.612, 0.737, 0.498);',
+    'const vec3 MOSS   = vec3(0.435, 0.663, 0.549);',
+    'const vec3 FOG    = vec3(0.055, 0.072, 0.045);',
+    'void main() {',
+    '  vec3 tip = mix(MOSS, MEADOW, v_hue);',
+    '  vec3 c = mix(ROOT, tip, pow(v_t, 0.85));',
+    '  float near = clamp(1.0 - (v_z - 9.0) / 60.0, 0.0, 1.0);',
+    '  c = mix(FOG, c, mix(0.10, 1.0, pow(near, 0.75)));',
+    '  o = vec4(c, 1.0);',
+    '}'].join('\n');
+
+  var FENCE_V = ['#version 300 es', 'precision highp float;',
+    'layout(location=0) in vec3 a_pos;',
+    'layout(location=1) in vec2 a_meta;',   // shade, penId
+    PROJECT,
+    'out float v_shade; out float v_z; out float v_pen;',
+    'void main() {',
+    '  gl_Position = project(a_pos);',
+    '  v_shade = a_meta.x; v_pen = a_meta.y; v_z = a_pos.z;',
+    '}'].join('\n');
+
+  var FENCE_F = ['#version 300 es', 'precision highp float;',
+    'in float v_shade; in float v_z; in float v_pen;',
+    'uniform float u_lit;',
+    'out vec4 o;',
+    'const vec3 WOOD = vec3(0.635, 0.620, 0.475);',   // --fence
+    'const vec3 FOG  = vec3(0.055, 0.072, 0.045);',
+    'void main() {',
+    '  vec3 c = WOOD * v_shade;',
+    '  if (abs(v_pen - u_lit) < 0.5) c = mix(c, vec3(0.78, 0.80, 0.62), 0.55);',
+    '  float near = clamp(1.0 - (v_z - 9.0) / 60.0, 0.0, 1.0);',
+    '  c = mix(FOG, c, mix(0.16, 1.0, pow(near, 0.7)));',
+    '  o = vec4(c, 1.0);',
+    '}'].join('\n');
+
+  var SHEEP_V = ['#version 300 es', 'precision highp float;',
+    'layout(location=0) in vec2 a_vert;',   // unit quad 0..1
+    'layout(location=1) in vec4 a_s;',      // x, z, boxHeight, hop
+    'layout(location=2) in vec4 a_c;',      // stateR, G, B, facing
+    PROJECT,
+    'out vec2 v_uv; out vec3 v_state; out float v_face; out float v_z; out float v_bleat;',
+    'void main() {',
+    '  float invz = u_f / a_s.y;',
+    '  float sx = u_res.x * 0.5 + a_s.x * invz;',
+    '  float feet = u_horizon + u_camH * invz;',
+    '  float box = abs(a_s.z);',
+'  float hpx = box * invz;',
+    '  float wpx = hpx * 1.34;',
+    '  float x = sx + (a_vert.x - 0.5) * wpx;',
+    '  float y = feet - a_vert.y * hpx - a_s.w * invz;',
+    '  vec2 c = vec2(x / u_res.x, y / u_res.y) * 2.0 - 1.0;',
+    '  float zn = clamp((a_s.y - 4.0) / 90.0, 0.0, 1.0) * 2.0 - 1.0;',
+    '  gl_Position = vec4(c.x, -c.y, zn - 0.004, 1.0);',   // a hair in front of its own grass
+    '  v_uv = a_vert; v_state = a_c.xyz; v_face = a_c.w; v_z = a_s.y;',
+    '  v_bleat = a_s.z < 0.0 ? 1.0 : 0.0;',
+    '}'].join('\n');
+
+  /* A sheep, drawn as maths: a bumpy fleece ellipse, a charcoal head with an
+     ear and an eye, four legs, and the activity dot floating above it — the
+     same dot the sidebar puts on the pen. */
+  var SHEEP_F = ['#version 300 es', 'precision highp float;',
+    'in vec2 v_uv; in vec3 v_state; in float v_face; in float v_z; in float v_bleat;',
+    'uniform float u_time;',
+    'out vec4 o;',
+    'float ellipse(vec2 p, vec2 c, vec2 r) { return length((p - c) / r) - 1.0; }',
+    'void main() {',
+    '  float face = v_face < 0.0 ? -1.0 : 1.0;',
+'  float hov  = abs(v_face) - 1.0;',
+'  float X = (v_uv.x - 0.5) * 2.24 * face;',
+    '  float Y = v_uv.y * 1.52;',
+    '  float aa = fwidth(Y) * 1.6;',
+    // fleece: an ellipse with lobes bitten out of its edge
+    '  vec2  bp = vec2(X, Y) - vec2(-0.06, 0.62);',
+    '  float ang = atan(bp.y, bp.x);',
+    '  float lob = 0.052 * sin(ang * 8.0) + 0.030 * sin(ang * 13.0 + 1.7);',
+    '  float body = length(bp / vec2(0.60, 0.36)) - 1.0 - lob;',
+    // head, ear, legs
+    '  float head = ellipse(vec2(X, Y), vec2(0.62, 0.80), vec2(0.20, 0.23));',
+    '  float ear  = ellipse(vec2(X, Y), vec2(0.53, 0.97), vec2(0.07, 0.10));',
+    '  float leg1 = max(abs(X - 0.30) - 0.058, abs(Y - 0.17) - 0.20);',
+    '  float leg2 = max(abs(X + 0.10) - 0.058, abs(Y - 0.15) - 0.18);',
+    '  float leg3 = max(abs(X + 0.34) - 0.058, abs(Y - 0.17) - 0.20);',
+    '  float legs = min(min(leg1, leg2), leg3);',
+    '  float dark = min(min(head, ear), legs);',
+    '  float shape = min(body, dark);',
+    // the dot above, and a ring when it is bleating
+    '  float dot  = length((vec2(X, Y) - vec2(-0.02, 1.36)) / vec2(0.085, 0.085)) - 1.0;',
+    '  float puls = 0.55 + 0.45 * sin(u_time * 4.0);',
+    '  float ringR = 0.15 + 0.16 * puls;',
+    '  float ring = abs(length(vec2(X, Y) - vec2(-0.02, 1.36)) - ringR) - 0.012;',
+    '  float aFleece = 1.0 - smoothstep(-aa, aa, body);',
+    '  float aDark   = 1.0 - smoothstep(-aa, aa, dark);',
+    '  float aDot    = 1.0 - smoothstep(-aa, aa, dot);',
+    '  float aRing   = (1.0 - smoothstep(-aa, aa, ring)) * (1.0 - puls) * 0.9 * v_bleat;',
+    '  float a = max(max(aFleece, aDark), max(aDot, aRing));',
+    '  if (a < 0.02) discard;',
+    '  vec3 fleece = mix(vec3(0.62, 0.63, 0.58), vec3(0.945, 0.937, 0.898), smoothstep(0.25, 0.95, Y));',
+'  fleece += hov * 0.30;',
+    '  vec3 c = fleece;',
+    '  c = mix(c, vec3(0.204, 0.224, 0.192), aDark);',
+    '  c = mix(c, v_state, max(aDot, aRing));',
+    '  float near = clamp(1.0 - (v_z - 9.0) / 60.0, 0.0, 1.0);',
+    '  c = mix(vec3(0.075, 0.092, 0.062), c, mix(0.30, 1.0, pow(near, 0.7)));',
+    '  o = vec4(c, a);',
+    '}'].join('\n');
+
+  function build(vs, fs) {
+    function sh(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s), src);
+      return s;
+    }
+    var p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(p)); return null; }
+    p.u = {};
+    ['u_res', 'u_horizon', 'u_camH', 'u_f', 'u_time', 'u_gust', 'u_lit'].forEach(function (n) {
+      p.u[n] = gl.getUniformLocation(p, n);
+    });
+    return p;
+  }
+  var pGrass = build(GRASS_V, GRASS_F);
+  var pFence = build(FENCE_V, FENCE_F);
+  var pSheep = build(SHEEP_V, SHEEP_F);
+  if (!pGrass || !pFence || !pSheep) { canvas.style.display = 'none'; return; }
+
+  /* ── Grass ───────────────────────────────────────────────────────────── */
+  var SEG = 5, bladeVerts = [];
+  for (var i = 0; i <= SEG; i++) { var t = i / SEG; bladeVerts.push(-1, t, 1, t); }
+  var BLADES = window.innerWidth < 760 ? 2600 : 5600;
+  var gInst = new Float32Array(BLADES * 4);
+  for (var b = 0; b < BLADES; b++) {
+    // Weighted towards the front, where a blade covers far more screen.
+    var z = 12.5 + 76 * Math.pow(Math.random(), 1.7);
+    gInst[b * 4]     = (Math.random() * 2 - 1) * (z * 0.66);
+    gInst[b * 4 + 1] = z;
+    gInst[b * 4 + 2] = 0.19 + Math.random() * 0.25;
+    gInst[b * 4 + 3] = Math.random() * 6.283;
+  }
+  var vaoGrass = gl.createVertexArray();
+  gl.bindVertexArray(vaoGrass);
+  var bufBlade = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufBlade);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bladeVerts), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  var bufGInst = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufGInst);
+  gl.bufferData(gl.ARRAY_BUFFER, gInst, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribDivisor(1, 1);
+
+  /* ── Fences ──────────────────────────────────────────────────────────────
+     Posts every 2.1 units and two rails that sag between them, with a gate cut
+     out of the near side. Built once into one buffer. */
+  var fv = [];
+  function quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, shade, pen) {
+    fv.push(ax, ay, az, shade, pen,  bx, by, bz, shade, pen,  cx, cy, cz, shade, pen);
+    fv.push(ax, ay, az, shade, pen,  cx, cy, cz, shade, pen,  dx, dy, dz, shade, pen);
+  }
+  function post(x, z, h, pen) {
+    var w = 0.075;
+    quad(x - w, 0, z, x + w, 0, z, x + w, h, z, x - w, h, z, 1.0, pen);
+    // a grain hairline down the middle, a shade darker
+    quad(x - 0.012, 0.04, z - 0.001, x + 0.012, 0.04, z - 0.001,
+         x + 0.012, h - 0.06, z - 0.001, x - 0.012, h - 0.06, z - 0.001, 0.62, pen);
+  }
+  function rail(x0, z0, x1, z1, y, sag, pen) {
+    var N = 10, th = 0.045;
+    for (var s = 0; s < N; s++) {
+      var t0 = s / N, t1 = (s + 1) / N;
+      var ax = x0 + (x1 - x0) * t0, az = z0 + (z1 - z0) * t0;
+      var bx = x0 + (x1 - x0) * t1, bz = z0 + (z1 - z0) * t1;
+      var ay = y - sag * Math.sin(Math.PI * t0);
+      var by = y - sag * Math.sin(Math.PI * t1);
+      quad(ax, ay - th, az, bx, by - th, bz, bx, by + th, bz, ax, ay + th, az, 0.86, pen);
+    }
+  }
+  function side(x0, z0, x1, z1, pen, gate) {
+    var len = Math.hypot(x1 - x0, z1 - z0);
+    var n = Math.max(2, Math.round(len / 2.1));
+    var gateFrom = gate ? Math.floor(n / 2) : -1;
+    for (var s = 0; s < n; s++) {
+      var t0 = s / n, t1 = (s + 1) / n;
+      if (s === gateFrom) continue;                       // the way in
+      rail(x0 + (x1 - x0) * t0, z0 + (z1 - z0) * t0,
+           x0 + (x1 - x0) * t1, z0 + (z1 - z0) * t1, 0.62, 0.05, pen);
+      rail(x0 + (x1 - x0) * t0, z0 + (z1 - z0) * t0,
+           x0 + (x1 - x0) * t1, z0 + (z1 - z0) * t1, 1.16, 0.07, pen);
+    }
+    for (var q = 0; q <= n; q++) {
+      var tq = q / n;
+      var tall = (gate && (q === gateFrom || q === gateFrom + 1)) ? 1.72 : 1.42;
+      post(x0 + (x1 - x0) * tq, z0 + (z1 - z0) * tq, tall, pen);
+    }
+  }
+  PENS.forEach(function (p) {
+    side(p.x0, p.z0, p.x1, p.z0, p.id, true);    // near side, with the gate
+    side(p.x0, p.z1, p.x1, p.z1, p.id, false);   // far side
+    side(p.x0, p.z0, p.x0, p.z1, p.id, false);   // left
+    side(p.x1, p.z0, p.x1, p.z1, p.id, false);   // right
+  });
+  // A long boundary fence far back, so the field has an edge.
+  side(-46, 62, 46, 62, -1, false);
+
+  var fenceCount = fv.length / 5;
+  var vaoFence = gl.createVertexArray();
+  gl.bindVertexArray(vaoFence);
+  var bufFence = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufFence);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(fv), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
+
+
+  /* ── What each sheep is actually doing ─────────────────────────────────
+     Nine panes, three agents, three projects. Each is a transcript the
+     dialog plays back: what you asked, what the agent said, the tools it
+     reached for and what came out. A bleating one ends on the question it is
+     waiting on; a grazing one ends on a spinner that never stops. */
+  var AGENTS = {
+    claude: { label: 'Claude Code', logo: '<img src="media/claudecode.svg" alt="">' },
+    codex:  { label: 'Codex',       logo: '<img src="media/openai.png" alt="">' },
+    hermes: { label: 'Hermes',      logo: '<img src="media/hermes.png" alt="">' }
+  };
+
+  /* What each sheep is doing: the harness it runs, the job it was given, and
+     the line it is sitting on right now. */
+  var SESSIONS = [
+    { agent: 'claude', short: 'cookie ttl', title: 'Harden the session cookie', cwd: '~/dev/orchard-api',
+      note: 'Set SameSite=Strict in both places it was set differently, and cut the session ttl to 12 hours. Tests pass — but the rows already in the table still carry the old expiry.',
+      last: '? Apply migrations/0042_session_ttl.sql — y/n' },
+    { agent: 'codex', short: 'rate limiter', title: 'Port the rate limiter off redis', cwd: '~/dev/orchard-api',
+      note: 'Redis was only holding the counter, and the window was already per-instance — so an in-process token bucket keeps the behaviour and drops the dependency.',
+      last: '⠹ npm run test:load — holding 12,400 req/s' },
+    { agent: 'claude', short: 'router split', title: 'Split the router', cwd: '~/dev/orchard-api',
+      note: 'Broke a 912-line routes file into three by resource, keeping the export surface identical so nothing importing it had to change.',
+      last: '✓ built in 3.1s — no type errors' },
+    { agent: 'hermes', short: 'harvest N+1', title: 'Chase the slow harvest query', cwd: '~/dev/orchard-api',
+      note: 'Traced the endpoint twenty times: 94% of four seconds was the database, running 1,204 queries to return 40 rows. An N+1 on harvest.pickers.',
+      last: '⠸ re-running the trace after the join' },
+    { agent: 'codex', short: 'tide chart', title: 'Tide chart breaks under 380px', cwd: '~/dev/lanternfish',
+      note: 'The y-axis gutter was a fixed 44px, so on a narrow phone the plot area computed negative and the path collapsed onto the axis.',
+      last: '⠴ vite — hmr update TideChart.tsx' },
+    { agent: 'claude', short: 'dark tokens', title: 'Dark mode into tokens', cwd: '~/dev/lanternfish',
+      note: 'Thirty-one colour literals across nine files, moved behind CSS variables. The two themes now differ by nine values rather than by nine files.',
+      last: '✓ built in 4.8s' },
+    { agent: 'hermes', short: 'quickstart', title: 'Rewrite the quickstart', cwd: '~/dev/tidepool-docs',
+      note: 'The old page assumed you already had the CLI. Rewritten as a cold start: four commands from nothing to a rendered chart.',
+      last: '✓ built in 6.40s — 2 files changed' },
+    { agent: 'codex', short: 'dead links', title: 'Fix the broken anchors', cwd: '~/dev/tidepool-docs',
+      note: 'Fourteen links 404ed after the restructure, all under the old /guide/* prefix. Redirects rather than rewriting inbound links half the internet owns.',
+      last: '✓ 0 broken · 826 ok' },
+    { agent: 'claude', short: 'page shots', title: 'Screenshot every page', cwd: '~/dev/tidepool-docs',
+      note: 'Driving the browser pane to capture the running docs site, one still per page, straight into the repo.',
+      last: '⠦ capturing docs/media/search.png — 6 of 11' }
+  ];
+
+  /* ── The flock ───────────────────────────────────────────────────────── */
+  var STATE_COLOR = {
+    bleat:  [0.557, 0.749, 0.635],
+    graze:  [0.612, 0.737, 0.498],
+    unseen: [0.851, 0.722, 0.290],
+    idle:   [0.500, 0.520, 0.490]
+  };
+  var flock = [];
+  function addSheep(pen, state) {
+    flock.push({
+      pen: pen, state: state,
+      session: SESSIONS[flock.length],
+      x: pen.x0 + 0.9 + Math.random() * (pen.x1 - pen.x0 - 1.8),
+      z: pen.z0 + 1.2 + Math.random() * (pen.z1 - pen.z0 - 2.4),
+      tx: 0, tz: 0, face: Math.random() < 0.5 ? 1 : -1,
+      phase: Math.random() * 6.283, alert: 0, hover: 0,
+      rect: { x0: 0, y0: 0, x1: 0, y1: 0 }
+    });
+  }
+  addSheep(PENS[0], 'bleat');
+  addSheep(PENS[0], 'graze'); addSheep(PENS[0], 'idle'); addSheep(PENS[0], 'graze');
+  addSheep(PENS[1], 'graze'); addSheep(PENS[1], 'idle');
+  addSheep(PENS[2], 'unseen'); addSheep(PENS[2], 'idle'); addSheep(PENS[2], 'graze');
+  flock.forEach(function (s) { s.tx = s.x; s.tz = s.z; });
+
+  var sInst = new Float32Array(flock.length * 4);
+  var sCol  = new Float32Array(flock.length * 4);
+  var vaoSheep = gl.createVertexArray();
+  gl.bindVertexArray(vaoSheep);
+  var bufQuad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufQuad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 0,1, 1,0, 1,1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  var bufSInst = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufSInst);
+  gl.bufferData(gl.ARRAY_BUFFER, sInst, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribDivisor(1, 1);
+  var bufSCol = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufSCol);
+  gl.bufferData(gl.ARRAY_BUFFER, sCol, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribDivisor(2, 1);
+
+  /* ── Camera, and the pen rows that ride on it ────────────────────────── */
+  var W = 1, H = 1, dpr = 1, HORIZON = 1, F = 1, CAMH = 4.2;
+  var floorEl;
+  function toScreen(x, y, z) {
+    var invz = F / z;
+    return { x: W * 0.5 + x * invz, y: HORIZON + (CAMH - y) * invz };
+  }
+
+  var penFloats = PENS.map(function (p, i) {
+    var el = document.createElement('div');
+    el.className = 'pen-float';
+    el.innerHTML = penRowHTML(p, i === 0);
+    document.querySelector('.hero').appendChild(el);
+    return el;
+  });
+
+  function layout() {
+    var r = canvas.getBoundingClientRect();
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    // The horizon sits just under the copy, so the field is a picture the
+    // page stands on rather than a background the text fights.
+    var floorTop = document.querySelector('.hero-floor').offsetTop;
+    HORIZON = floorTop + 28;
+    F = W * 0.86;
+    // ...and the camera height is then whatever puts the near ground (z = 12)
+    // on the bottom edge, so the framing holds at every window width.
+    CAMH = Math.max(2.6, Math.min(6.5, 12 * (H - HORIZON) / F));
+    // Each row stands over the far rail of the pen it describes.
+    PENS.forEach(function (p, i) {
+      var s = toScreen((p.x0 + p.x1) / 2, p.chipY, p.z1);
+      penFloats[i].style.left = Math.round(s.x) + 'px';
+      penFloats[i].style.top  = Math.round(s.y) + 'px';
+      penFloats[i].classList.add('in');
+    });
+  }
+  layout();
+  window.addEventListener('resize', layout);
+
+  /* ── The shepherd ────────────────────────────────────────────────────────
+     The pointer is a person standing in the field. Un-projecting it back to
+     the ground gives where you are; sheep within a few units stop wandering
+     and turn to look at you, and the pen you are standing in lights its rails.
+     That is the whole conceit of the page made operable in one gesture. */
+  var shepX = 0, shepZ = -99, shepOn = false, litPen = -1;
+  var hero = document.querySelector('.hero');
+  hero.addEventListener('pointermove', function (e) {
+    var r = canvas.getBoundingClientRect();
+    var sx = e.clientX - r.left, sy = e.clientY - r.top;
+    if (sy <= HORIZON + 2) { shepOn = false; return; }
+    var invz = (sy - HORIZON) / CAMH;
+    shepZ = F / invz;
+    shepX = (sx - W * 0.5) / invz;
+    shepOn = shepZ > 6 && shepZ < 70;
+    litPen = -1;
+    for (var i = 0; i < PENS.length; i++) {
+      var p = PENS[i];
+      if (shepX > p.x0 && shepX < p.x1 && shepZ > p.z0 && shepZ < p.z1) { litPen = p.id; break; }
+    }
+  });
+  hero.addEventListener('pointerleave', function () {
+    shepOn = false; litPen = -1;
+    flock.forEach(function (s) { s.hover = 0; });
+    canvas.style.cursor = '';
+  });
+
+  /* Which sheep is under a point. Nearest first, because a sheep in front of
+     another is the one you can see and therefore the one you meant. */
+  function sheepAt(sx, sy) {
+    var best = null;
+    for (var i = 0; i < flock.length; i++) {
+      var s = flock[i], r = s.rect;
+      if (sx >= r.x0 && sx <= r.x1 && sy >= r.y0 && sy <= r.y1) {
+        if (!best || s.z < best.z) best = s;
+      }
+    }
+    return best;
+  }
+  canvas.addEventListener('pointermove', function (e) {
+    var r = canvas.getBoundingClientRect();
+    var hit = sheepAt(e.clientX - r.left, e.clientY - r.top);
+    flock.forEach(function (s) { s.hover += ((s === hit ? 1 : 0) - s.hover) * 0.35; });
+    canvas.style.cursor = hit ? 'pointer' : '';
+  });
+  canvas.addEventListener('click', function (e) {
+    var r = canvas.getBoundingClientRect();
+    var hit = sheepAt(e.clientX - r.left, e.clientY - r.top);
+    if (hit) openPeek(hit); else closePeek();
+  });
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  function setCam(p) {
+    gl.uniform2f(p.u.u_res, W, H);
+    gl.uniform1f(p.u.u_horizon, HORIZON);
+    gl.uniform1f(p.u.u_camH, CAMH);
+    gl.uniform1f(p.u.u_f, F);
+  }
+
+
+
+  /* ── A pen, as the sidebar draws it ─────────────────────────────────────
+     One builder, used for the cards that label the field above. It reads the
+     same PENS and SESSIONS the pasture is drawn from, so a row can never say
+     something the animals in that pen are not doing. */
+  function penRowHTML(pen, selected) {
+    var mine = flock.filter(function (s) { return s.pen === pen; });
+    var worst = mine.some(function (s) { return s.state === 'bleat'; })  ? 'bleat'
+              : mine.some(function (s) { return s.state === 'graze'; })  ? 'graze'
+              : mine.some(function (s) { return s.state === 'unseen'; }) ? 'unseen' : 'idle';
+    var cards = mine.map(function (s, i) {
+      var a = AGENTS[s.session.agent];
+      return '<div class="sheep-card' + (i === 0 && selected ? ' on' : '') + '">' +
+               '<span class="dot ' + s.state + '"></span>' +
+               '<span class="nm">' + s.session.short + '</span>' +
+               '<span class="hn" title="' + a.label + '">' + a.logo + '</span>' +
+             '</div>';
+    }).join('');
+    return '<div class="pen-row' + (selected ? ' on' : '') + '">' +
+             '<div class="pen-head">' +
+               '<span class="dot ' + worst + '"></span>' +
+               '<span class="pen-title">' + pen.name + '</span>' +
+             '</div>' +
+             '<div class="pen-meta">' +
+               (pen.worktree ? '<span class="wt-badge">worktree</span>' : '') +
+               '<span>' + pen.gitBranch + '</span><span>·</span><span>' + mine.length + ' sheep</span>' +
+             '</div>' +
+             '<div class="pen-fence g' + mine.length + '">' + cards + '</div>' +
+           '</div>';
+  }
+
+  /* ── Peeking into a pane ─────────────────────────────────────────────────
+     A card over the field, anchored to the sheep you clicked. It says which
+     harness is in there, what it was asked for and the line it is on — which
+     is the whole question the flock exists to answer. */
+  var STATE_WORD = {
+    bleat:  'bleating',
+    graze:  'grazing',
+    unseen: 'unread',
+    idle:   'idle'
+  };
+  var peek = document.createElement('div');
+  peek.className = 'peek';
+  peek.setAttribute('role', 'dialog');
+  hero.appendChild(peek);
+  var peekOf = null;
+
+  function openPeek(sheep) {
+    var ses = sheep.session, a = AGENTS[ses.agent];
+    peekOf = sheep;
+    peek.innerHTML =
+      '<button class="peek-x" type="button" aria-label="Close">&times;</button>' +
+      '<div class="peek-top">' +
+        '<span class="peek-logo">' + a.logo + '</span>' +
+        '<span class="peek-harness">' + a.label + '</span>' +
+        '<span class="peek-state"><span class="dot ' + sheep.state + '"></span>' + STATE_WORD[sheep.state] + '</span>' +
+      '</div>' +
+      '<div class="peek-title">' + ses.title + '</div>' +
+      '<div class="peek-cwd">' + ses.cwd + '</div>' +
+      '<p class="peek-note">' + ses.note + '</p>' +
+      '<div class="peek-last' + (sheep.state === 'bleat' ? ' wait' : '') + '">' + ses.last + '</div>';
+    peek.querySelector('.peek-x').addEventListener('click', closePeek);
+    peek.classList.add('open');
+    placePeek();
+  }
+
+  /* It follows its sheep — they wander, and a card left behind is pointing at
+     grass. Kept inside the hero's edges so it is never half off-screen. */
+  function placePeek() {
+    if (!peekOf) return;
+    var r = peekOf.rect;
+    var x = (r.x0 + r.x1) / 2;
+    var w = peek.offsetWidth || 268;
+    x = Math.max(w / 2 + 8, Math.min(W - w / 2 - 8, x));
+    peek.style.left = Math.round(x) + 'px';
+    peek.style.top  = Math.round(r.y0 - 12) + 'px';
+  }
+
+  function closePeek() { peekOf = null; peek.classList.remove('open'); }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePeek(); });
+
+  var t0 = performance.now(), lastWander = 0;
+  function frame(now) {
+    var time = STILL ? 3.0 : (now - t0) / 1000;
+
+    // Wander: a new spot inside the pen every few seconds, walked to slowly.
+    if (!STILL && now - lastWander > 2600) {
+      lastWander = now;
+      flock.forEach(function (s) {
+        if (Math.random() < 0.55) {
+          s.tx = s.pen.x0 + 0.9 + Math.random() * (s.pen.x1 - s.pen.x0 - 1.8);
+          s.tz = s.pen.z0 + 1.2 + Math.random() * (s.pen.z1 - s.pen.z0 - 2.4);
+        }
+      });
+    }
+
+    for (var i = 0; i < flock.length; i++) {
+      var s = flock[i];
+      var near = shepOn && Math.hypot(s.x - shepX, s.z - shepZ) < 7.0;
+      s.alert += ((near ? 1 : 0) - s.alert) * 0.12;
+
+      if (!STILL) {
+        if (near) {
+          // They stop and look at you. A sheep noticing the shepherd is the
+          // one animation on this page that has to feel like attention.
+          s.face = (shepX > s.x) ? 1 : -1;
+        } else {
+          var dx = s.tx - s.x, dz = s.tz - s.z;
+          var d = Math.hypot(dx, dz);
+          if (d > 0.06) {
+            s.x += (dx / d) * 0.011;
+            s.z += (dz / d) * 0.011;
+            if (Math.abs(dx) > 0.2) s.face = dx > 0 ? 1 : -1;
+          }
+        }
+      }
+
+      var hop = (s.state === 'bleat' && !STILL)
+        ? Math.max(0, Math.sin(time * 3.4 + s.phase)) * 0.15
+        : Math.sin(time * 1.1 + s.phase) * 0.012;
+
+      var boxH = 1.08 + s.alert * 0.04 + s.hover * 0.10;
+      sInst[i * 4]     = s.x;
+      sInst[i * 4 + 1] = s.z;
+      // Negative box height means bleating: the sign is the flag the shader
+      // reads for the ring, so no extra attribute is needed for one bit.
+      sInst[i * 4 + 2] = s.state === 'bleat' ? -boxH : boxH;
+      sInst[i * 4 + 3] = hop;
+      var c = STATE_COLOR[s.state];
+      sCol[i * 4] = c[0]; sCol[i * 4 + 1] = c[1]; sCol[i * 4 + 2] = c[2];
+      // The sign is which way it is looking; the magnitude above 1 is hover.
+      sCol[i * 4 + 3] = s.face * (1 + s.hover * 0.55);
+
+      // Where it lands on screen, so a click knows which sheep it hit.
+      var iz = F / s.z, cx = W * 0.5 + s.x * iz, feet = HORIZON + CAMH * iz;
+      var hpx = boxH * iz, wpx = hpx * 1.34;
+      s.rect.x0 = cx - wpx * 0.5; s.rect.x1 = cx + wpx * 0.5;
+      s.rect.y0 = feet - hpx - hop * iz; s.rect.y1 = feet + 2;
+    }
+
+    placePeek();
+
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.useProgram(pGrass); setCam(pGrass);
+    gl.uniform1f(pGrass.u.u_time, time);
+    gl.uniform3f(pGrass.u.u_gust, shepX, shepZ, shepOn && !STILL ? 0.5 : 0.0);
+    gl.bindVertexArray(vaoGrass);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (SEG + 1) * 2, BLADES);
+
+    gl.useProgram(pFence); setCam(pFence);
+    gl.uniform1f(pFence.u.u_lit, litPen);
+    gl.bindVertexArray(vaoFence);
+    gl.drawArrays(gl.TRIANGLES, 0, fenceCount);
+
+    gl.useProgram(pSheep); setCam(pSheep);
+    gl.uniform1f(pSheep.u.u_time, time);
+    gl.bindVertexArray(vaoSheep);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufSInst); gl.bufferData(gl.ARRAY_BUFFER, sInst, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufSCol);  gl.bufferData(gl.ARRAY_BUFFER, sCol, gl.DYNAMIC_DRAW);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, flock.length);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ── The footer strip: the same grass, drawn flat, so the page ends in the
+      field it opened in. ─────────────────────────────────────────────────── */
+(function () {
+  var c = document.getElementById('foot-grass');
+  var ctx = c.getContext('2d');
+  function draw() {
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    var w = c.clientWidth, h = c.clientHeight;
+    c.width = w * dpr; c.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    // A fixed integer hash, never Math.random: a field that reshuffles itself
+    // on every resize is a distraction, not decoration.
+    for (var i = 0; i < Math.floor(w / 3); i++) {
+      var seed = (i * 2654435761) % 4294967296;
+      var r1 = ((seed >>> 8) & 255) / 255, r2 = ((seed >>> 16) & 255) / 255;
+      var x = i * 3 + r1 * 3;
+      var bh = 16 + r2 * 30;
+      var lean = (r1 - 0.5) * 12;
+      ctx.strokeStyle = r2 > 0.6 ? 'rgba(156,188,127,0.30)' : 'rgba(111,169,140,0.20)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, h);
+      ctx.quadraticCurveTo(x + lean * 0.4, h - bh * 0.6, x + lean, h - bh);
+      ctx.stroke();
+    }
+  }
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ── Copy the command ──────────────────────────────────────────────────── */
+(function () {
+  var btn = document.getElementById('install');
+  var label = document.getElementById('copy-label');
+  btn.addEventListener('click', function () {
+    var text = 'npx @nicoloboschi/sheepit';
+    var done = function () {
+      btn.classList.add('copied'); label.textContent = 'copied';
+      setTimeout(function () { btn.classList.remove('copied'); label.textContent = 'copy'; }, 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () {});
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      ta.remove();
+    }
+  });
+})();
+</script>
+</body>
+</html>
