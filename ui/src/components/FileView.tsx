@@ -69,7 +69,7 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
     if (line.type !== 'del') nw++;
   }
   return (
-    <div style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: 12 }}>
+    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
         <span style={{ color: '#8EBFA2', userSelect: 'none' }}>{hunk.header}</span>
         {hunk.context && <span style={{ color: 'var(--muted-foreground)' }}>{hunk.context}</span>}
@@ -488,7 +488,7 @@ export default function FileView({
         {isNew ? <FilePlus size={13} color="#9CBC7F" style={{ flexShrink: 0 }} />
           : isDeleted ? <FileMinus size={13} color="#E0907B" style={{ flexShrink: 0 }} />
           : <FileCode size={13} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
-        <span title={shownPath} style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={shownPath} style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: 'var(--font-mono)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
         {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}
@@ -579,21 +579,21 @@ export default function FileView({
                 onChange={setContent}
                 onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 's' && e.metaKey) { e.preventDefault(); if (isDirty) save(); } }}
                 basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true, tabSize: 2, searchKeymap: false }}
-                style={{ fontSize: 13, fontFamily: '"JetBrains Mono",monospace', minHeight: '100%' }}
+                style={{ fontSize: 13, fontFamily: 'var(--font-mono)', minHeight: '100%' }}
               />
             </div>
           )}
           {textFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               {noHighlight ? (
-                <pre style={{ margin: 0, padding: '8px 12px', background: 'var(--background)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace', color: 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                <pre style={{ margin: 0, padding: '8px 12px', background: 'var(--background)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {content}
                 </pre>
               ) : (
                 <SyntaxHighlighter
                   language={getLang(name)} style={vscDarkPlus} showLineNumbers wrapLongLines
                   lineNumberStyle={{ minWidth: '3em', paddingRight: 12, color: 'var(--muted-foreground)', userSelect: 'none' }}
-                  customStyle={{ margin: 0, padding: '8px 0', background: 'var(--background)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace' }}
+                  customStyle={{ margin: 0, padding: '8px 0', background: 'var(--background)', fontSize: 12, fontFamily: 'var(--font-mono)' }}
                   lineProps={highlightLine == null ? undefined : (lineNum: number) => {
                     const isTarget = lineNum === highlightLine;
                     return { ref: isTarget ? (highlightRef as any) : undefined, style: isTarget ? { background: 'rgba(217, 184, 74,0.15)', display: 'block' } : { display: 'block' } };

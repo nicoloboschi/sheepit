@@ -663,7 +663,7 @@ export default function App() {
           marginTop: 'var(--safe-top)',
           transition: 'height 0.25s ease',
           background: 'var(--background)', color: 'var(--foreground)',
-          fontFamily: "'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", fontSize: 13,
+          fontFamily: 'var(--font-sans)', fontSize: 13,
         }}
       >
         <Sidebar onConnect={connectSession} send={send} />

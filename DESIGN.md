@@ -2,10 +2,10 @@
 
 The one design system, for the landing page (`docs/`) and the app (`ui/`).
 
-This file is written **from the website**, because that is where the system was
-worked out in one pass with nothing to be compatible with. The app currently
-disagrees with it in places; [What the app does not do yet](#what-the-app-does-not-do-yet)
-is the list, and it is the work queue.
+This file was written **from the website**, because that is where the system
+was worked out in one pass with nothing to be compatible with, and then applied
+back to the app. [Where the app stands](#where-the-app-stands) records what has
+landed there.
 
 The loop is: **iterate on `docs/index.html` → update this file → apply to
 `ui/`.** A change that lands in one of the three and not the others is how a
@@ -19,14 +19,53 @@ system stops being one.
 
 | role | family | why |
 |---|---|---|
-| Everything that is language | **Outfit** | Geometric sans, OFL, variable. Display and body are the same face. |
-| Everything that is data | **JetBrains Mono** | Paths, commands, branches, ports, counts, terminal, micro-labels. |
+| Everything that is language | **Outfit** | Geometric sans, OFL, variable. Display, body, nav, labels, buttons — all of it. |
+| Only what is literally code | **JetBrains Mono** | The terminal, and the things you could paste into one: commands, paths, branch names, filenames, ports. |
+
+**Outfit is the default; mono is the exception you have to justify.** The test
+is not "is this small" or "is this technical" — it is **could you paste this
+into a shell?** `npx @nicoloboschi/sheepit`, `~/dev/orchard-api`,
+`session-ttl`, `media/demo.mp4`: mono. A nav item, an eyebrow, a button label,
+a state pill, a footer link, an agent's name: Outfit, however small or
+technical it feels.
 
 There is no third face and no display/body split by *typeface*. What separates
 a headline from a paragraph is **weight and tracking**, never a different font.
 A page with two families reads as one system; the moment a third arrives,
 somebody has to decide which of the three a new thing belongs to, and they will
 decide differently from the last person.
+
+### Why the second family is not optional
+
+It would be tidier to set everything in Outfit. The terminal makes that
+impossible, and not as a matter of taste:
+
+**xterm.js renders a character grid.** It measures one reference glyph, fixes
+the cell width from it, and positions every subsequent character on that grid.
+Hand it a proportional face and the glyphs still draw at their own natural
+widths inside fixed cells — an `i` leaves a hole, an `m` overlaps its
+neighbour, and the drift accumulates across a row. Column alignment is the
+entire contract of a terminal, and everything that lives in one depends on it:
+box-drawing characters (`─ │ ┌ ┐ └ ┘`) stop connecting, the braille spinners
+agents print (`⠋⠙⠹⠸`) jitter, `top`, `vim`, `less` and Claude Code's own TUI
+draw over themselves, and `git diff` columns stop lining up.
+
+So sheepit ships a monospace face whatever else it does — `DEFAULT_TERMINAL_FONT`
+in `ui/src/theme.ts` is JetBrains Mono, and it is the bundled default among nine
+presets in the picker. **It is already in the payload and cannot leave.** Given
+that, using it for the handful of places that show pasteable text costs *zero
+additional bytes*, and buys three things Outfit cannot give:
+
+- `0` vs `O` and `1` vs `l` vs `I` stay distinguishable — in a port, a hash, a
+  branch name or `0.0.0.0`, that is the difference between reading a value and
+  guessing it.
+- Numbers line up in columns without `tabular-nums` gymnastics.
+- Text on the page and text in the terminal beside it look like the same kind
+  of thing, because they *are* the same kind of thing.
+
+The honest cost of the pair is that mono creeps: it is easy to reach for it for
+anything small or technical-feeling. That is what the paste test above exists
+to stop.
 
 ### Why Outfit, and what it costs
 
@@ -39,9 +78,12 @@ That same geometry is its weakness. At small sizes `a`, `o`, `e` and `c` all
 carry the same circle, and a single-storey `a` has less to distinguish it than
 a double-storey one. So:
 
-> **Under 12px, use JetBrains Mono, not Outfit.** A mono face keeps its
-> distinctions at sizes where a geometric sans loses them, and everything that
-> small in this product is data anyway — a branch, a port, a path, a count.
+> **Set small lowercase text in uppercase, or set it larger.** Uppercase has no
+> single-storey `a` to lose, so a 9–11px uppercase label in Outfit holds
+> perfectly well; it is 10px *lowercase* Outfit that goes soft. This is why
+> every micro-label on the page is uppercase with heavy tracking rather than
+> being handed to mono — reaching for mono to solve a legibility problem is how
+> a two-family system quietly becomes a mono-first one.
 
 ### The scale
 
@@ -59,9 +101,40 @@ and a 27" display both get a sensible measure.
 | Lede | 18px | 400 | 0 | 1.55 |
 | Body | 16px | 400 | 0 | 1.66 |
 | Secondary / caption | 14.5px | 400 | 0 | 1.5 |
-| **Eyebrow / micro-label** | **mono 10.5px** | 500 | **+0.17em**, uppercase | 1.4 |
-| **Data, inline** | **mono 10.5–13px** | 400–500 | +0.04em | 1.5 |
+| Eyebrow / micro-label | 11px | 500 | **+0.17em**, uppercase | 1.4 |
+| Nav, footer, link buttons | 13.5px | 500 | 0 | 1.5 |
+| **Code, inline** | **mono 10–13px** | 400–500 | +0.04em | 1.5 |
 | Terminal | mono, user's size | 400 | 0 | **1** (see below) |
+
+### The app is the same scale, one tier down
+
+A landing page and a terminal multiplexer cannot share sizes: 16px body is
+right for a page you read and wrong for a sidebar holding thirty rows. The app
+runs the same *system* at density, in **five steps and no others**:
+
+| step | used for | weight |
+|---|---|---|
+| **14px** | dialog titles, the biggest thing in a panel | 600 |
+| **13px** | a row title — a pen name, a pane name | 600 |
+| **12px** | controls, inputs, body text inside a dialog | 400 / 500 |
+| **11px** | captions, secondary meta, most inline code | 400 / mono |
+| **10px** | micro-labels (uppercase, +0.14em), badges, counts, paths | 500 / 600 |
+
+Nothing between the steps. The app had thirteen sizes — 7, 8.5, 9, 9.5, 10,
+10.5, 11, 11.5, 12, 13, 14, 15, 40 — because each was picked next to whatever
+it sat beside rather than from a list. Half of them differed from a neighbour
+by half a pixel, which nobody can see and everybody has to maintain.
+
+Three sizes stay off the scale, deliberately, and each is a picture rather than
+text: `.logo` at 15px is a wordmark, `.placeholder-icon` at 40px is a glyph,
+and `.flock-sheep-baa` (7px) / `.flock-sheep-call` (8.5px) are drawn at sheep
+scale inside the pasture strip — the tag is up to 118px of a ~250px band, and
+sizing them from a text scale would break the animal they belong to.
+
+**700 is for the wordmark and nothing else.** Outfit 700 is a visibly heavier
+face than Space Grotesk 700 was, and at 10px with tracking the difference
+between 600 and 700 is only weight, not emphasis. 600 is the heading weight
+everywhere.
 
 Two rules that fall out of that table:
 
@@ -98,6 +171,19 @@ font size where xterm multiplies the line box.
 - Every stack ends in a real fallback (`-apple-system, BlinkMacSystemFont,
   "Segoe UI", sans-serif` / `ui-monospace, SFMono-Regular, Menlo, monospace`),
   so a failed load degrades instead of disappearing.
+
+**One definition each.** `--font-sans` and `--font-mono` are declared once in
+`:root` in `ui/src/style.css`, and nothing anywhere else names a family. Those
+are also the names Tailwind v4 emits its own defaults under, and our `:root`
+block comes after `@import "tailwindcss"` — so redefining them there means the
+`font-sans` and `font-mono` **utility classes resolve to our stacks too**,
+without a `@theme` entry. That is not a trick, it is the reason to use those
+exact names: before it, three `font-mono` class usages were silently rendering
+in Tailwind's default `ui-monospace` rather than in JetBrains Mono.
+
+The one literal that stays a literal is `DEFAULT_TERMINAL_FONT` in
+`ui/src/theme.ts`. It is a *value*, not a style: it is persisted to
+preferences, shown in the font picker, and handed to xterm.
 
 ---
 
@@ -277,24 +363,31 @@ in anything a user reads.
 
 ---
 
-## What the app does not do yet
+## Where the app stands
 
-The delta between this file and `ui/`, in the order worth doing:
+Applied to `ui/`:
 
-1. **Outfit is not in the app.** It ships Space Grotesk, used for exactly one
-   element (`.logo`). Swap `GOOGLE_CSS` in `scripts/selfhost-fonts.py` to
-   `family=Outfit:wght@400;500;600;700`, re-run it, update the two
-   `<link rel="preload">` lines in `ui/index.html`, and delete the
-   `space-grotesk-*.woff2` files.
-2. **The app has no text face at all.** Nothing sets `font-family` for body
-   text, so it falls through to Tailwind's `system-ui` stack — the UI is
-   currently San Francisco on a Mac and something else everywhere else. Set
-   Outfit once on `body`.
-3. **The type scale is not applied.** Sizes in `ui/src/style.css` are ad-hoc
-   (9px, 10px, 11px, 13px, 14px, 15px). Map them onto the scale above, and move
-   anything under 12px to JetBrains Mono.
-4. **`font-family: monospace`** appears bare in two places
-   (`ui/src/style.css:2090`, `:2282`) and should be the JetBrains Mono stack.
-5. Colour is already close — the tokens in `ui/src/style.css` are the source
-   this file was written from. Check `--fence` and the light-theme values
-   against §2 when touching them.
+- Outfit vendored into `ui/public/fonts` and Space Grotesk deleted, by pointing
+  `GOOGLE_CSS` in `scripts/selfhost-fonts.py` at Outfit and re-running it. The
+  bundle is 16 files, 351 KB.
+- `--font-sans` / `--font-mono` declared once in `:root`; `body` set to
+  `var(--font-sans)`; every other declaration in the app now reads a token.
+  That included 38 hard-coded `"JetBrains Mono", monospace` literals in
+  component inline styles and two bare `font-family: monospace` declarations,
+  which had been picking up whatever the platform called monospace.
+- The paste test applied: the sidebar group heading moved to uppercase Outfit;
+  paths, ports, branches, PR refs, log output and code stayed mono.
+- `ui/index.html` preloads `outfit-500-latin.woff2` instead of the Space
+  Grotesk it no longer ships.
+
+Also applied:
+
+- The type scale, at app density — thirteen ad-hoc sizes collapsed onto the
+  five steps above, with the three picture-not-text exceptions left alone.
+- The weight audit — the three text uses of 700 (`.session-group-label`,
+  `.field-elsewhere`, `.session-pane-badge`) moved to 600. `.logo` keeps 700.
+
+The app and this file now agree on type and on colour. What is left is not a
+delta — it is the next thing to design: the app has no documented spacing or
+radius scale, and its paddings were picked the same way its font sizes were.
+That is the section to write next, from the website, the same way.

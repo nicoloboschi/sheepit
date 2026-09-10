@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Vendor the UI's webfonts into ui/public/fonts.
 
-The UI used to pull Space Grotesk + JetBrains Mono from fonts.googleapis.com
+The UI used to pull its webfonts from fonts.googleapis.com
 with a render-blocking <link>. That costs a network round-trip on every cold
 start, and the Android APK frequently runs against a dataplane on a LAN with no
 route to the internet at all -- there the request simply stalls and the UI
@@ -20,7 +20,7 @@ import urllib.request
 
 GOOGLE_CSS = (
     "https://fonts.googleapis.com/css2"
-    "?family=Space+Grotesk:wght@400;500;600;700"
+    "?family=Outfit:wght@400;500;600;700"
     "&family=JetBrains+Mono:wght@400;500;600;700"
     "&display=swap"
 )
@@ -41,7 +41,7 @@ KEEP_SUBSETS = {"latin", "latin-ext"}
 OUT = pathlib.Path(__file__).resolve().parent.parent / "ui" / "public" / "fonts"
 
 HEADER = """/*
- * Self-hosted Space Grotesk + JetBrains Mono (latin, latin-ext).
+ * Self-hosted Outfit + JetBrains Mono (latin, latin-ext).
  *
  * GENERATED FILE -- do not edit by hand.
  * Regenerate with: python3 scripts/selfhost-fonts.py

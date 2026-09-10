@@ -124,7 +124,7 @@ export default function NotesPane(): JSX.Element {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   padding: '5px 8px 5px 12px', cursor: 'pointer', userSelect: 'none',
-                  fontSize: 12, fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: 12, fontFamily: 'var(--font-mono)',
                   color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
                   background: active ? 'var(--accent)' : 'transparent',
                   borderLeft: active ? '2px solid var(--primary)' : '2px solid transparent',
@@ -178,7 +178,7 @@ export default function NotesPane(): JSX.Element {
               flexShrink: 0, borderTop: '1px solid var(--border)',
               padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 5,
               fontSize: 10, color: 'var(--muted-foreground)',
-              fontFamily: '"JetBrains Mono", monospace',
+              fontFamily: 'var(--font-mono)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >

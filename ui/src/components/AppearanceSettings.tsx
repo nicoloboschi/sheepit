@@ -177,7 +177,7 @@ export function AppearanceContent() {
             borderColor: 'var(--border)',
             background: 'var(--background)',
             color: 'var(--foreground)',
-            fontFamily: '"JetBrains Mono", monospace',
+            fontFamily: 'var(--font-mono)',
             outline: 'none',
           }}
         />

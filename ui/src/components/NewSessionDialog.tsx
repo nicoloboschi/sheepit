@@ -146,7 +146,7 @@ export default function NewSessionDialog({ onClose, onSelect, title, icon }: New
                 placeholder="Search projects…"
                 spellCheck={false}
                 className="flex-1 bg-transparent border-none outline-none text-xs"
-                style={{ color: 'var(--foreground)', fontFamily: '"JetBrains Mono", monospace' }}
+                style={{ color: 'var(--foreground)', fontFamily: 'var(--font-mono)' }}
               />
             </div>
           </div>
@@ -196,7 +196,7 @@ export default function NewSessionDialog({ onClose, onSelect, title, icon }: New
                               {project.name}
                             </span>
                             {project.branch && (
-                              <span className="flex items-center gap-1 text-[9px] shrink-0" style={{ color: 'var(--muted-foreground)', fontFamily: '"JetBrains Mono", monospace' }}>
+                              <span className="flex items-center gap-1 text-[9px] shrink-0" style={{ color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                 <GitBranch size={8} strokeWidth={2} />
                                 <span style={{ maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}>
                                   {project.branch}
@@ -222,7 +222,7 @@ export default function NewSessionDialog({ onClose, onSelect, title, icon }: New
                             style={{
                               background: 'rgba(255,255,255,0.05)',
                               color: 'var(--muted-foreground)',
-                              fontFamily: '"JetBrains Mono", monospace',
+                              fontFamily: 'var(--font-mono)',
                             }}
                             title={`${project.variants.length} worktrees`}
                             onClick={(e) => { e.stopPropagation(); setExpandedProject(isExpanded ? null : project.mainPath); }}

@@ -136,13 +136,13 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
       onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
     >
       <Icon size={13} color={iconColor} style={{ flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: fileColor, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: '"JetBrains Mono",monospace' }}>
+      <span style={{ fontSize: 12, color: fileColor, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
         {entry.name}{entry.isDir ? '/' : ''}
       </span>
       {status && (
         <span
           title={GIT_TOOLTIPS[status] ?? status}
-          style={{ fontSize: 9, color: gitColor ?? undefined, fontWeight: 700, flexShrink: 0, fontFamily: '"JetBrains Mono",monospace' }}
+          style={{ fontSize: 9, color: gitColor ?? undefined, fontWeight: 700, flexShrink: 0, fontFamily: 'var(--font-mono)' }}
         >
           {GIT_LABELS[status]}
         </span>
@@ -195,7 +195,7 @@ function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '0 8px 0 10px',
               cursor: 'pointer', userSelect: 'none',
-              fontSize: 11, fontFamily: '"JetBrains Mono",monospace',
+              fontSize: 11, fontFamily: 'var(--font-mono)',
               color: active ? 'var(--foreground)' : 'var(--muted-foreground)',
               background: active ? 'var(--card)' : 'transparent',
               borderRight: '1px solid var(--border)',
@@ -306,9 +306,9 @@ function SearchResult({ result, isActive, onClick, query }: SearchResultProps) {
       onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { if (!isActive) e.currentTarget.style.background = 'var(--card)'; }}
       onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
     >
-      <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0, fontFamily: '"JetBrains Mono",monospace', minWidth: 28, textAlign: 'right' }}>{result.line}</span>
+      <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0, fontFamily: 'var(--font-mono)', minWidth: 28, textAlign: 'right' }}>{result.line}</span>
       <div style={{
-        fontSize: 11, color: 'var(--muted-foreground)', fontFamily: '"JetBrains Mono",monospace',
+        fontSize: 11, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
       }}>
         {highlightSearchText(result.text.trim())}
@@ -436,7 +436,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
             spellCheck={false}
             style={{
               flex: 1, border: 'none', outline: 'none', background: 'transparent',
-              color: 'var(--foreground)', fontSize: 12, fontFamily: '"JetBrains Mono",monospace',
+              color: 'var(--foreground)', fontSize: 12, fontFamily: 'var(--font-mono)',
               padding: 0,
             }}
           />
@@ -469,7 +469,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
               spellCheck={false}
               style={{
                 flex: 1, border: 'none', outline: 'none', background: 'transparent',
-                color: 'var(--foreground)', fontSize: 11, fontFamily: '"JetBrains Mono",monospace',
+                color: 'var(--foreground)', fontSize: 11, fontFamily: 'var(--font-mono)',
                 padding: 0,
               }}
             />
@@ -531,7 +531,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
                 <File size={11} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
                 <span style={{
                   fontSize: 11, color: '#8EBFA2',
-                  fontFamily: '"JetBrains Mono",monospace',
+                  fontFamily: 'var(--font-mono)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
                   {file}
@@ -557,7 +557,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
           <div key={file} style={{ marginTop: groupIdx > 0 ? 6 : 0 }}>
             <div style={{
               padding: '5px 10px', fontSize: 11, color: 'var(--foreground)',
-              fontFamily: '"JetBrains Mono",monospace',
+              fontFamily: 'var(--font-mono)',
               background: 'var(--card)', borderBottom: '1px solid var(--secondary)',
               display: 'flex', alignItems: 'center', gap: 6,
               position: 'sticky', top: fileResults.length > 0 ? 22 : 0, zIndex: 1,
@@ -986,7 +986,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <ChevronLeft size={14} />
         </button>
       ) : null}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, overflow: 'hidden', fontFamily: '"JetBrains Mono",monospace', fontSize: 11 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, overflow: 'hidden', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
         {showBack ? (
           <span style={{ color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {selectedFile?.split('/').pop() ?? ''}
@@ -1082,7 +1082,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         style={{
           flex: 1, border: 'none', outline: 'none', background: 'transparent',
           color: 'var(--foreground)', fontSize: 11, padding: 0,
-          fontFamily: '"JetBrains Mono",monospace',
+          fontFamily: 'var(--font-mono)',
         }}
       />
       {fileFilter && (
@@ -1121,7 +1121,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         style={{
           flex: 1, border: 'none', outline: 'none', background: 'transparent',
           color: 'var(--foreground)', fontSize: 12, padding: 0,
-          fontFamily: '"JetBrains Mono",monospace',
+          fontFamily: 'var(--font-mono)',
         }}
       />
     </div>

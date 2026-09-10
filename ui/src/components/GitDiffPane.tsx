@@ -123,7 +123,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
         onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'transparent'; }}
       >
         {file.isNew ? <FilePlus size={11} color="#9CBC7F" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#E0907B" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
-        <span style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
+        <span style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: 'var(--font-mono)', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
           {name}
         </span>
         <StatBar add={file.additions} del={file.deletions} />
@@ -183,7 +183,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
             ? <ChevronRight size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />
             : <ChevronDown size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
           <FolderOpen size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />
-          <span style={{ fontSize: 11, color: 'var(--muted-foreground)', fontFamily: '"JetBrains Mono",monospace', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 11, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
             {dirLabel}
           </span>
           <span style={{ fontSize: 9, color: 'var(--muted-foreground)', flexShrink: 0 }}>
@@ -258,7 +258,7 @@ function FullLog({ sessionId }: { sessionId: string }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: 'var(--foreground)', marginBottom: 2 }}>{c.subject}</div>
                 <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'var(--muted-foreground)' }}>
-                  <span style={{ fontFamily: '"JetBrains Mono",monospace', color: '#8EBFA2' }}>{c.short}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: '#8EBFA2' }}>{c.short}</span>
                   <span>{c.author}</span>
                   <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{c.relDate}</span>
                 </div>

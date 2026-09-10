@@ -97,7 +97,7 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
           }}>
             {/* Name */}
             <span style={{
-              fontFamily: '"JetBrains Mono",monospace',
+              fontFamily: 'var(--font-mono)',
               color: 'var(--foreground)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               fontSize: 11,
@@ -109,7 +109,7 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
               <CpuBar pct={p.cpu_percent} />
               <span style={{
-                fontFamily: '"JetBrains Mono",monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 10, minWidth: 30, textAlign: 'right',
                 color: p.cpu_percent > 95 ? 'var(--destructive)' : p.cpu_percent > 80 ? 'var(--warning)' : 'var(--muted-foreground)',
               }}>
@@ -119,7 +119,7 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
 
             {/* Mem */}
             <span style={{
-              fontFamily: '"JetBrains Mono",monospace',
+              fontFamily: 'var(--font-mono)',
               fontSize: 10, textAlign: 'right', color: 'var(--muted-foreground)',
             }}>
               {p.mem_mb >= 1024
@@ -129,7 +129,7 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
 
             {/* PID */}
             <span style={{
-              fontFamily: '"JetBrains Mono",monospace',
+              fontFamily: 'var(--font-mono)',
               fontSize: 10, textAlign: 'right', opacity: 0.4,
               color: 'var(--muted-foreground)',
             }}>
@@ -142,7 +142,7 @@ function ProcessList({ processes, sessionId }: ProcessListProps): React.ReactEle
               disabled={killing === p.pid}
               title={`Kill ${p.name} (${p.pid})`}
               style={{
-                fontFamily: '"JetBrains Mono",monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
                 padding: '2px 5px', borderRadius: 3,
                 background: 'none', border: '1px solid transparent',
@@ -240,7 +240,7 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
     <div style={{ minWidth: 240, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <Icon size={13} style={{ color: branchColor, flexShrink: 0 }} />
-        <span style={{ fontSize: 13, fontFamily: '"JetBrains Mono",monospace', color: branchColor, fontWeight: 600 }}>
+        <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: branchColor, fontWeight: 600 }}>
           {git.branch}
         </span>
         {git.detached && (
@@ -293,7 +293,7 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
                 {pr.kind === 'issue'
                   ? <CircleDot size={11} style={{ color: prStateColor, flexShrink: 0 }} />
                   : <GitPullRequest size={11} style={{ color: prStateColor, flexShrink: 0 }} />}
-                <span style={{ fontSize: 12, fontWeight: 700, color: prStateColor, fontFamily: '"JetBrains Mono",monospace' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: prStateColor, fontFamily: 'var(--font-mono)' }}>
                   #{pr.num}
                 </span>
                 {prState && (
@@ -350,7 +350,7 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
               style={{
                 width: 150, fontSize: 11, padding: '2px 6px',
                 background: 'var(--input)', border: '1px solid var(--ring)', borderRadius: 3,
-                color: 'var(--foreground)', fontFamily: '"JetBrains Mono",monospace', outline: 'none',
+                color: 'var(--foreground)', fontFamily: 'var(--font-mono)', outline: 'none',
               }}
             />
           ) : (
@@ -386,7 +386,7 @@ function Row({ label, value, color }: RowProps): React.ReactElement {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
       <span style={{ opacity: 0.6 }}>{label}</span>
-      <span style={{ fontFamily: '"JetBrains Mono",monospace', color }}>{value}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', color }}>{value}</span>
     </div>
   );
 }

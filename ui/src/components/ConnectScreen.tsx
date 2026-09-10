@@ -75,7 +75,7 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
               background: 'var(--card)',
               color: 'var(--foreground)',
               fontSize: 14,
-              fontFamily: '"JetBrains Mono",monospace',
+              fontFamily: 'var(--font-mono)',
               outline: 'none',
               boxSizing: 'border-box',
             }}

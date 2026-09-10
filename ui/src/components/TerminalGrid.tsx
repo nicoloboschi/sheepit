@@ -227,7 +227,7 @@ export default function TerminalGrid({ sessionId: workspaceId, onCreateSplit, on
                   background: i === activeCell ? 'var(--primary)' : 'transparent',
                   color: i === activeCell ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
                   border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
-                  fontFamily: '"JetBrains Mono", monospace',
+                  fontFamily: 'var(--font-mono)',
                 }}
               >
                 Pane {i + 1}
