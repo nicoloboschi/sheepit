@@ -1054,6 +1054,26 @@ load-bearing:
   typing landing correctly in a background one. Focus emulation is the other
   half — it keeps `:focus`, autofocus and carets behaving in a pane the OS
   considers unfocused.
+- **Pages are disposable, and are closed when nobody is looking.** Two rules,
+  both in `sweep()`, every 30s:
+  - **A page out of sight for `VIEW_TTL_MS` (10 min) is closed**, and its
+    pane keeps the last frame, dimmed, under *Click to reload*. "Out of sight"
+    is the pane's own report, not a guess: while it has a box and the sheepit
+    tab is visible it sends `alive` every 30s, and any input counts too. So a
+    page you are reading without touching is never closed under you; one in a
+    pen you are not showing, or behind a backgrounded tab, is. An expired pane
+    stays closed across a reconnect — a dev-server restart reconnects every
+    pane, and reopening there would undo the TTL wholesale.
+  - **A page no view owns is closed outright.** That is what a server restart
+    leaves: the old server dies without closing its windows, and the new one
+    re-attaches to the same browser without knowing they exist. Nothing ever
+    closed them. On one machine 31 pages had piled up over two days — mostly
+    GitHub, each holding live-update sockets — and the hidden Chrome sat at
+    half a core while nobody looked at any of it. That, not the streaming, is
+    what made GitHub feel slow in a pane and fast in a normal tab: measured,
+    a scroll reaches the screen in ~20ms. A view still mid-`openView` is not an
+    orphan yet (`opening`), so the sweep skips the orphan pass while one is.
+  Logins survive both: they are in the profile on disk, not in the pages.
 - **A target must be activated once before it will cast at all.**
   `Page.startScreencast` on a never-activated target fails with "Not attached
   to an active page", which is what an empty pane looks like. `activate()` is

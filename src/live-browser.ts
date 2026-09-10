@@ -241,6 +241,24 @@ export interface ViewFrame {
   height: number;
 }
 
+/**
+ * A page out of sight this long is closed, and its pane offers to load it
+ * again. The pages are disposable — the logins are in the profile on disk, not
+ * in them — and a page nobody is looking at still runs every script it has.
+ * GitHub keeps live-update sockets open in each one, so a dozen forgotten PRs
+ * are a dozen busy renderers competing with the page you are actually reading.
+ *
+ * "Out of sight" is measured by the pane, not guessed here: while it is on
+ * screen it says so every `ALIVE_MS` (see LiveBrowserSurface), and any input
+ * counts too. A page you are reading without touching is never closed under
+ * you; a pane in a pen you are not showing, or a sheepit tab in the
+ * background, stops saying so and times out.
+ */
+export const VIEW_TTL_MS = 10 * 60_000;
+/** How often views are checked against the TTL, and the browser for pages no
+ *  view owns. */
+const SWEEP_MS = 30_000;
+
 export interface ViewState {
   url: string;
   title: string;
@@ -264,9 +282,26 @@ interface View {
   onState: (state: ViewState) => void;
   onActive: (active: boolean) => void;
   onCursor: (cursor: string) => void;
+  /** Called after the TTL has closed this view's page. */
+  onExpired: () => void;
+  /** When the pane last said it was on screen, or was used. */
+  lastSeen: number;
   casting: boolean;
   lastUrl: string;
   lastTitle: string;
+}
+
+export interface OpenViewOptions {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  scale: number;
+  onFrame: (frame: ViewFrame) => void;
+  onState: (state: ViewState) => void;
+  onActive: (active: boolean) => void;
+  onCursor: (cursor: string) => void;
+  onExpired: () => void;
 }
 
 export class LiveBrowser {
@@ -274,6 +309,9 @@ export class LiveBrowser {
   private cdp: CdpConnection | null = null;
   private starting: Promise<CdpConnection> | null = null;
   private views = new Map<string, View>();
+  /** Views being opened right now — see `openView`. */
+  private opening = 0;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
   /** Whether the browser we are talking to has real windows to place. */
   private headful = false;
   /** What pages should say they are, when the truth would get them refused. */
@@ -414,6 +452,7 @@ export class LiveBrowser {
     const cdp = new CdpConnection(url);
     await cdp.ready;
     this.cdp = cdp;
+    this.startSweep();
 
     cdp.on('Page.screencastFrame', (params, sessionId) => {
       const view = sessionId ? this.viewBySession(sessionId) : undefined;
@@ -487,17 +526,15 @@ export class LiveBrowser {
 
   /** A tab of its own per pane, so two panes are two pages and not one page
    *  fought over. Returns once it is streaming. */
-  async openView(opts: {
-    id: string;
-    url: string;
-    width: number;
-    height: number;
-    scale: number;
-    onFrame: (frame: ViewFrame) => void;
-    onState: (state: ViewState) => void;
-    onActive: (active: boolean) => void;
-    onCursor: (cursor: string) => void;
-  }): Promise<void> {
+  async openView(opts: OpenViewOptions): Promise<void> {
+    // Counted so the sweep leaves alone a page that exists but is not in
+    // `views` yet: `createTarget` answers before the view is registered, and
+    // to the sweep that page looks exactly like one a dead server left behind.
+    this.opening++;
+    try { await this.doOpenView(opts); } finally { this.opening--; }
+  }
+
+  private async doOpenView(opts: OpenViewOptions): Promise<void> {
     const cdp = await this.connection();
     await this.closeView(opts.id);
 
@@ -535,7 +572,7 @@ export class LiveBrowser {
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
-      onCursor: opts.onCursor,
+      onCursor: opts.onCursor, onExpired: opts.onExpired, lastSeen: Date.now(),
       mainFrameId: null, loading: false,
       casting: false, lastUrl: '', lastTitle: '',
     };
@@ -761,9 +798,65 @@ export class LiveBrowser {
     try { await this.cdp?.send('Target.closeTarget', { targetId: view.targetId }); } catch { /* gone */ }
   }
 
+  /** The pane is on screen, or somebody is using it. See VIEW_TTL_MS. */
+  touch(id: string): void {
+    const view = this.views.get(id);
+    if (view) view.lastSeen = Date.now();
+  }
+
+  private startSweep(): void {
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => { void this.sweep(); }, SWEEP_MS);
+    this.sweepTimer.unref?.();
+  }
+
+  /**
+   * Two kinds of page go here, and only the first is the TTL.
+   *
+   * A view out of sight past VIEW_TTL_MS is closed and its pane told, so it can
+   * offer to load the page again.
+   *
+   * A page no view owns is closed outright. Those are what a server restart
+   * leaves: the old server dies without closing its windows, the new one
+   * re-attaches to the same browser and never knew they existed. Nothing ever
+   * closed them — 31 pages had piled up over two days, most of them GitHub
+   * holding live-update sockets open, and the browser sat at half a core with
+   * nobody looking at any of it. A pane that is still open reconnects within
+   * a second and opens its page again, so an orphan is never something anyone
+   * is reading.
+   */
+  private async sweep(): Promise<void> {
+    const cdp = this.cdp;
+    if (!cdp?.isOpen) return;
+
+    const now = Date.now();
+    for (const view of [...this.views.values()]) {
+      if (now - view.lastSeen < VIEW_TTL_MS) continue;
+      this.log(`live browser: closing ${view.id} after ${VIEW_TTL_MS / 60_000} min out of sight (${view.lastUrl || 'blank'})`);
+      await this.closeView(view.id);
+      view.onExpired();
+    }
+
+    if (this.opening > 0) return;
+    let targets: { targetId: string; type: string; url: string }[];
+    try {
+      ({ targetInfos: targets } = await cdp.send<{ targetInfos: { targetId: string; type: string; url: string }[] }>('Target.getTargets'));
+    } catch { return; }
+    // Asked again after the await: a pane may have started opening meanwhile,
+    // and its page would be in this list without being in `views` yet.
+    if (this.opening > 0) return;
+    const owned = new Set([...this.views.values()].map(v => v.targetId));
+    const orphans = targets.filter(t => t.type === 'page' && !owned.has(t.targetId));
+    for (const t of orphans) {
+      try { await cdp.send('Target.closeTarget', { targetId: t.targetId }); } catch { /* already gone */ }
+    }
+    if (orphans.length) this.log(`live browser: closed ${orphans.length} page(s) no pane owns`);
+  }
+
   /** Leaves the browser process running: its whole value is the profile, and a
    *  server restart re-attaches to it. Kill it only on request. */
   async shutdown(): Promise<void> {
+    if (this.sweepTimer) { clearInterval(this.sweepTimer); this.sweepTimer = null; }
     for (const id of [...this.views.keys()]) await this.closeView(id);
     this.cdp?.close();
     this.cdp = null;

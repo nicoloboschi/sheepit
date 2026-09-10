@@ -95,6 +95,11 @@ const FALLBACK_KEYS: Record<string, number> = {
  *  do nothing at all. */
 const KEY_TEXT: Record<string, string> = { Enter: '\r', NumpadEnter: '\r' };
 
+/** How often a pane on screen tells the server it is still being looked at.
+ *  The server closes a page that goes quiet for VIEW_TTL_MS (live-browser.ts),
+ *  so this has to be comfortably shorter than that. */
+const ALIVE_MS = 30_000;
+
 export interface LiveBrowserState {
   url: string; title: string; canGoBack: boolean; canGoForward: boolean;
   /** The page's own answer, from `Page.frameStartedLoading` on its main frame
@@ -155,6 +160,11 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
   });
   const [paused, setPaused] = useState(false);
   const [cursor, setCursor] = useState('default');
+  // Minutes out of sight after which the server closed this pane's page, or
+  // null while it is open. The ref is for the socket callbacks, which must not
+  // reopen a page that was closed on purpose — see `ws.onopen`.
+  const [expired, setExpired] = useState<number | null>(null);
+  const expiredRef = useRef(false);
   const report = useCallback((patch: Partial<LiveBrowserState>) => {
     stateRef.current = { ...stateRef.current, ...patch };
     onStateRef.current(stateRef.current);
@@ -211,6 +221,10 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
 
       ws.onopen = () => {
         attempt = 0;
+        // An expired pane stays closed across a reconnect. A dev-server restart
+        // reconnects every pane, and reopening here would bring back every page
+        // the TTL had just closed; it opens when somebody clicks for it.
+        if (expiredRef.current) { report({ status: 'ready' }); return; }
         // The view is a new one on the server — the old one died with the old
         // process — so it is opened on the page this pane was already showing.
         send({ type: 'open', url: urlRef.current ?? 'about:blank', ...measure() });
@@ -235,6 +249,12 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
           syncSize();
         } else if (msg.type === 'cursor') {
           setCursor(safeCursor(String(msg.cursor ?? 'default')));
+        } else if (msg.type === 'expired') {
+          // The page is gone; the last frame stays up, dimmed, under the offer
+          // to load it again.
+          expiredRef.current = true;
+          setExpired(Number(msg.minutes) || 0);
+          report({ streaming: false, loading: false });
         } else if (msg.type === 'shot') {
           const resolve = shotReplyRef.current.get(msg.id);
           if (resolve) { shotReplyRef.current.delete(msg.id); resolve(String(msg.data ?? '')); }
@@ -312,6 +332,41 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     ro.observe(el);
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, [syncSize]);
+
+  /**
+   * "Still here", while this pane is actually on screen. The server closes a
+   * page nobody has shown or used for VIEW_TTL_MS, and this is how it tells the
+   * difference between a page you are reading without touching and one sitting
+   * in a pen you are not looking at.
+   *
+   * Two things count as out of sight: a pen that is not shown (its workspace
+   * is `display: none`, so the pane has no box) and a sheepit tab in the
+   * background. The heartbeat is also sent the moment the tab comes back, so
+   * returning to it does not wait up to ALIVE_MS to count.
+   */
+  useEffect(() => {
+    const beat = () => {
+      if (expiredRef.current || document.visibilityState !== 'visible') return;
+      const box = surfaceRef.current?.getBoundingClientRect();
+      if (!box || box.width === 0 || box.height === 0) return;
+      send({ type: 'alive' });
+    };
+    const timer = setInterval(beat, ALIVE_MS);
+    document.addEventListener('visibilitychange', beat);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', beat);
+    };
+  }, [send]);
+
+  /** Load the page again after the TTL closed it — the same page, at the
+   *  pane's current size. Logins survive: they are in the profile on disk. */
+  const reopen = useCallback(() => {
+    expiredRef.current = false;
+    setExpired(null);
+    report({ status: 'connecting' });
+    send({ type: 'open', url: urlRef.current ?? 'about:blank', ...measure() });
+  }, [measure, report, send]);
 
   /** Nudge the browser to activate this view's window. Needed once, because a
    *  target that has never been activated will not start casting; after that
@@ -579,7 +634,20 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
       />
       {/* A still page with no explanation reads as a hang. The browser can only
           cast one tab, so say which state this one is in. */}
-      {paused && <div className="live-browser-paused">Not streaming — click to retry</div>}
+      {paused && expired === null && <div className="live-browser-paused">Not streaming — click to retry</div>}
+      {expired !== null && (
+        <button
+          type="button"
+          className="live-browser-expired"
+          // Stopped here so the surface's own mousedown does not send a click
+          // into a page that no longer exists, or take the focus.
+          onMouseDown={e => e.stopPropagation()}
+          onClick={reopen}
+        >
+          <span>Closed after {expired} min out of sight</span>
+          <span className="live-browser-expired-action">Click to reload</span>
+        </button>
+      )}
     </div>
   );
 }

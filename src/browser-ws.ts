@@ -14,7 +14,7 @@
  * would only add a second place for a modifier bit to go missing.
  */
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { LiveBrowser, findBrowser } from './live-browser.js';
+import { LiveBrowser, findBrowser, VIEW_TTL_MS } from './live-browser.js';
 
 export const BROWSER_WS_PATH = '/ws/browser';
 
@@ -34,6 +34,8 @@ type ClientMessage =
   | { type: 'back' }
   | { type: 'forward' }
   | { type: 'focus'; scale?: number }
+  // "I am on screen." Sent only while the pane is visible; see VIEW_TTL_MS.
+  | { type: 'alive' }
   | { type: 'copy'; id: number }
   | { type: 'screenshot'; id: number }
   | { type: 'paste'; text: string }
@@ -63,8 +65,12 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
     ws.on('message', async (raw: RawData) => {
       let msg: ClientMessage;
       try { msg = JSON.parse(String(raw)); } catch { return; }
+      // Anything from the pane means somebody is there: a heartbeat, a click,
+      // a key. That is what keeps the page from expiring.
+      browser.touch(viewId);
       try {
         switch (msg.type) {
+          case 'alive': break;
           case 'open': {
             if (opened) return;
             opened = true;
@@ -82,6 +88,11 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
               onActive: active => send({ type: 'active', active }),
               // What the page says the pointer should look like over it.
               onCursor: cursor => send({ type: 'cursor', cursor }),
+              // Out of sight past the TTL: the page is gone, the socket stays,
+              // and the pane may ask for it again with another `open`.
+              // The TTL travels with it, so the pane's wording cannot disagree
+              // with the setting that closed it.
+              onExpired: () => { opened = false; send({ type: 'expired', minutes: VIEW_TTL_MS / 60_000 }); },
             });
             send({ type: 'ready' });
             break;

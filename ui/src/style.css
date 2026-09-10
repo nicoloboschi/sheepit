@@ -2449,6 +2449,23 @@
   font-size: 12px;
 }
 
+/* A page the TTL closed (VIEW_TTL_MS in live-browser.ts). The last frame stays
+   underneath, dimmed rather than covered, so the pane still says what it was
+   showing — which is most of what you need to decide whether to reload it. */
+.live-browser-expired {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 24px; border: 0;
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  color: var(--muted-foreground);
+  font: inherit; font-size: 12px;
+  cursor: pointer;
+}
+.live-browser-expired-action { color: var(--primary); font-weight: 500; }
+.live-browser-expired:hover .live-browser-expired-action { text-decoration: underline; }
+.live-browser-expired:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
 /* Only one live browser pane streams at a time (headless Chromium casts its
    active page and no other), so the others hold their last frame. Saying so is
    the difference between "waiting its turn" and "hung". */
