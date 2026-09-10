@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Dog } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -31,6 +31,8 @@ function compactRelativeTime(ts: number | null | undefined): string {
   return `${Math.floor(h / 24)}d`;
 }
 import SheepStatus, { type SheepState } from './SheepStatus';
+import DogStatus from './DogStatus';
+import { useDog } from '../flock';
 import SheepDots from './SheepDot';
 import PenFence from './PenFence';
 import ClaudeIcon from './ClaudeIcon';
@@ -147,6 +149,7 @@ function PaneCard({
   const prColor = session?.prNum ? (PR_STATE_COLORS[session.prState ?? ''] ?? 'var(--muted-foreground)') : '';
   // Precedence, per CLAUDE.md: the two live states win over the two idle
   // ones, and bleating wins over grazing, so a pane is never counted twice.
+  const dog = useDog();
   const sheepState: SheepState =
     needsAttention ? 'bleating'
       : busy ? 'grazing'
@@ -253,7 +256,9 @@ function PaneCard({
         )}
         {session?.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
         {time && <span className="pane-card-time">{time}</span>}
-        <SheepStatus state={sheepState} />
+        {dog?.sessionId === sessionId
+          ? <DogStatus state={dog.state} />
+          : <SheepStatus state={sheepState} />}
       </div>
     </div>
   );
@@ -683,6 +688,23 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
           >
             <Pencil size={13} />
             Rename
+          </DropdownMenuItem>
+          {/* Appointing the sheepdog. It is a property of one pane, so it
+              belongs on that pane's own menu — and it is a toggle rather than
+              a picker because there is exactly one dog. See src/sheepdog.ts. */}
+          <DropdownMenuItem
+            onClick={() => {
+              const already = firstSession?.isDog;
+              void fetch('/api/sheepdog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: already ? null : workspace.id }),
+              });
+            }}
+            style={{ fontSize: 12, cursor: 'pointer' }}
+          >
+            <Dog size={13} />
+            {firstSession?.isDog ? 'Stop being the sheepdog' : 'Make this the sheepdog'}
           </DropdownMenuItem>
           {/* Moving a pen between fields lives here because the sidebar shows
               one field at a time — there is no other field on screen to drag

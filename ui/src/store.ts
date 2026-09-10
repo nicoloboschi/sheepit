@@ -13,6 +13,9 @@ export interface Session {
   last_activity?: number;
   isClaudeCode?: boolean;
   isCodex?: boolean;
+  isHermes?: boolean;
+  /** This pane is the sheepdog — drawn as a dog, never counted as a sheep. */
+  isDog?: boolean;
   isOpencode?: boolean;
   isAntigravity?: boolean;
   isCopilot?: boolean;
@@ -865,7 +868,19 @@ const useStore = create<StoreState>((set, get) => ({
 
     const sessionMap = Object.fromEntries(sessions.map(s => [s.id, s]));
     const liveSessionIds = new Set(sessions.map(s => s.id));
-    const workspaceSessions = sessions.filter(s => !s.isHeadless);
+    // Two kinds of pane never get a pen, and so never appear in the sidebar:
+    // the headless singleton, and the sheepdog. The dog is not one of the
+    // flock — it is the thing watching the flock — and a row for it in the
+    // list would be a sheep-shaped hole in every count beside it. Both are
+    // still in `sessionMap`, and both are reached from the top bar and shown
+    // in zen. See ZenOnlyTerminal in App.tsx.
+    const workspaceSessions = sessions.filter(s => !s.isHeadless && !s.isDog);
+    // Which sessions may occupy a cell. Distinct from `liveSessionIds`, which
+    // is every session there is: zen still shows the dog, it just has no pen.
+    // Pruning against this — rather than only filtering the sessions that get
+    // *given* a pen — is what evicts a pane that has just been made the dog
+    // from the pen it was already sitting in. Promotion is not a restart.
+    const pennableSessionIds = new Set(workspaceSessions.map(s => s.id));
 
     const sorted = [...workspaceSessions].sort((a, b) =>
       (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0)
@@ -890,7 +905,7 @@ const useStore = create<StoreState>((set, get) => ({
     for (const wsId of workspaceOrder) {
       const ws = workspaces[wsId];
       if (!ws) continue;
-      const prunedCells = ws.cells.filter(cid => liveSessionIds.has(cid));
+      const prunedCells = ws.cells.filter(cid => pennableSessionIds.has(cid));
       if (prunedCells.length === 0) continue; // empty workspace → drop
       const shrunk = prunedCells.length !== ws.cells.length;
       const nextLayout = shrunk

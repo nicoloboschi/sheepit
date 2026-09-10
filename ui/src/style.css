@@ -1368,6 +1368,100 @@
   transform-box: fill-box; transform-origin: 50% 100%;
 }
 .sheep .sheep-baa { fill: var(--bleating); }
+
+/* ── The sheepdog ───────────────────────────────────────────────────────────
+   Shares the sheep's box, tokens and glyph headroom (see DogStatus.tsx), so a
+   pen holding a dog and three sheep is one drawing. What differs is the coat
+   colour — a dog the colour of wool would read as a sheep at 32px — and that
+   its states describe the FLOCK, not itself. */
+.sheep.dog {
+  --coat: #8a7f6a;
+  --coat-shade: #5d5545;
+  --coat-dark: #2f3329;
+}
+:root[data-theme='light'] .sheep.dog {
+  --coat: #9b8f77;
+  --coat-shade: #6d6450;
+  --coat-dark: #3c4034;
+}
+.dog .dog-coat ellipse {
+  fill: var(--coat);
+  stroke: var(--coat-shade);
+  stroke-width: 0.7;
+}
+.dog .dog-legs line { stroke: var(--coat-shade); stroke-width: 1.9; stroke-linecap: round; }
+.dog .dog-tail { stroke: var(--coat); }
+.dog .dog-skull { fill: var(--coat); }
+.dog .dog-ear { fill: var(--coat-shade); transform-box: fill-box; transform-origin: 50% 100%; }
+.dog .dog-muzzle { fill: var(--coat-shade); }
+.dog .dog-nose { fill: var(--coat-dark); }
+.dog .dog-eye { fill: var(--coat-dark); }
+.dog .dog-brow { fill: var(--coat-shade); opacity: 0.55; }
+.dog .dog-body { transform-box: fill-box; transform-origin: 78% 96%; }
+.dog .dog-head { transform-box: fill-box; transform-origin: 70% 90%; }
+.dog .dog-tail { transform-box: fill-box; transform-origin: 0% 90%; }
+.dog .dog-bark, .dog .dog-dust { opacity: 0; }
+.dog .dog-bark { fill: var(--bleating); }
+.dog .dog-dust { fill: var(--muted-foreground); opacity: 0; }
+
+/* WATCHING — sitting still. Only the ear moves, and rarely: a dog that
+   fidgets constantly reads as anxious, and this one is meant to read as
+   competent. */
+.dog.dog-watching { --tint: var(--muted-foreground); }
+.dog.dog-watching .dog-ear { animation: dog-ear-flick 7s ease-in-out infinite; }
+
+/* ALERTING — up, barking, tail high. The halo comes on because this is the
+   one state that wants to be seen from across a wall of panes. */
+.dog.dog-alerting { --tint: var(--bleating); }
+.dog.dog-alerting .sheep-halo { opacity: 0.5; animation: sheep-halo-pulse 1.05s ease-in-out infinite; }
+.dog.dog-alerting .sheep-ground { opacity: 0.35; }
+.dog.dog-alerting .dog-body { animation: dog-bounce 0.85s ease-in-out infinite; }
+.dog.dog-alerting .dog-head { animation: dog-bark-head 0.85s ease-in-out infinite; }
+.dog.dog-alerting .dog-bark { animation: dog-bark 0.85s ease-out infinite; }
+.dog.dog-alerting .dog-tail { animation: dog-wag 0.42s ease-in-out infinite alternate; }
+
+/* WORKING — off doing something, tail wagging, dust at the paw. */
+.dog.dog-working { --tint: var(--grazing); }
+.dog.dog-working .sheep-ground { opacity: 0.3; }
+.dog.dog-working .dog-tail { animation: dog-wag 0.55s ease-in-out infinite alternate; }
+.dog.dog-working .dog-dust { animation: dog-dust 1.1s ease-out infinite; }
+.dog.dog-working .dog-head { animation: dog-sniff 2.2s ease-in-out infinite; }
+
+@keyframes dog-ear-flick {
+  0%, 88%, 100% { transform: rotate(0deg); }
+  92%           { transform: rotate(-16deg); }
+  96%           { transform: rotate(4deg); }
+}
+@keyframes dog-bounce {
+  0%, 100% { transform: translateY(0); }
+  45%      { transform: translateY(-1.6px); }
+}
+@keyframes dog-bark-head {
+  0%, 100% { transform: rotate(0deg); }
+  40%      { transform: rotate(-9deg); }
+}
+@keyframes dog-bark {
+  0%       { opacity: 0; transform: translate(2px, 2px) scale(0.6); }
+  30%      { opacity: 0.95; }
+  100%     { opacity: 0; transform: translate(-3px, -3px) scale(1.15); }
+}
+@keyframes dog-wag {
+  from { transform: rotate(-13deg); }
+  to   { transform: rotate(15deg); }
+}
+@keyframes dog-sniff {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-5deg) translateY(0.6px); }
+}
+@keyframes dog-dust {
+  0%   { opacity: 0.5; transform: translate(0, 0) scale(0.7); }
+  100% { opacity: 0; transform: translate(3px, -2px) scale(1.3); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dog .dog-ear, .dog .dog-body, .dog .dog-head, .dog .dog-tail,
+  .dog .dog-bark, .dog .dog-dust, .dog .sheep-halo { animation: none !important; }
+  .dog.dog-alerting .dog-bark { opacity: 0.9; }
+}
 .sheep .sheep-zzz path {
   stroke: var(--muted-foreground); stroke-width: 1.35; fill: none;
   stroke-linejoin: round; stroke-linecap: round;

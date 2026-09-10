@@ -41,7 +41,9 @@ import {
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
   Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search, Check,
+  Dog,
 } from 'lucide-react';
+import { useSheepdog } from './useSheepdog';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
 import { tildefy } from './utils';
@@ -675,7 +677,7 @@ export default function App() {
             sessionId={currentSessionId}
             send={send}
           />
-          <HeadlessZenTerminal send={send} />
+          <ZenOnlyTerminal send={send} />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
         </div>
@@ -709,13 +711,19 @@ export default function App() {
   );
 }
 
-/** Headless sessions deliberately have no workspace, but Zen gives their
- * terminal a focused, full-screen surface immediately after creation. */
-function HeadlessZenTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
+/** The panes that have no pen: the headless singleton and the sheepdog.
+ *
+ *  Neither belongs in the sidebar — one is a hidden worker, the other is the
+ *  animal watching the flock rather than part of it — so zen is their only
+ *  presentation, entered from the top bar. */
+function ZenOnlyTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
   const sessionId = useStore(s => s.zenSessionId);
-  const isHeadless = useStore(s => !!(s.zenSessionId && s.sessionMap[s.zenSessionId]?.isHeadless));
+  const penless = useStore(s => {
+    const sess = s.zenSessionId ? s.sessionMap[s.zenSessionId] : undefined;
+    return !!(sess?.isHeadless || sess?.isDog);
+  });
 
-  if (!sessionId || !isHeadless) return null;
+  if (!sessionId || !penless) return null;
   return (
     <TerminalCell
       sessionId={sessionId}
@@ -750,6 +758,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const selectedFieldId  = useStore(s => s.selectedFieldId);
   const workspaceIdx     = currentSessionId ? workspaceOrder.indexOf(currentSessionId) : -1;
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
+  const sheepdog         = useSheepdog();
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     swipeTouchRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
@@ -882,6 +891,22 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             onChange={handleFileUpload}
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
           />
+
+          {/* The sheepdog, on the phone too. Its whole point is checking the
+              flock from somewhere else, and the desktop bar that carried it
+              is hidden at this width. Same hook, same rules, same colour when
+              the dog is calling. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+            title={sheepdog.label}
+            aria-label={sheepdog.label}
+            style={sheepdog.dog?.state === 'alerting' ? { color: 'var(--bleating)' } : undefined}
+            onClick={sheepdog.toggle}
+          >
+            <Dog size={15} />
+          </Button>
 
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>
             <DropdownMenuTrigger asChild>

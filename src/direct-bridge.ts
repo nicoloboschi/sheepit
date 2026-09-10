@@ -8,6 +8,7 @@
  */
 
 import * as net from 'net';
+import { isDog } from './sheepdog.js';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -425,7 +426,7 @@ export function parseOscProgress(data: string): boolean | null {
  *  `node -e "…isCodex…"`, or grepping for "claude", would flag itself as that
  *  agent. Two tokens is enough for both real shapes: `claude …` (direct binary)
  *  and `node …/bin/codex …` (wrapper script). */
-export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | null {
+export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'hermes' | null {
   const tokens = args.split(/\s+/, 2);
   for (const [index, token] of tokens.entries()) {
     if (!token) continue;
@@ -433,6 +434,7 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
     if (base === 'claude' || base === 'claude-code' || token.includes('/claude/')) return 'claude';
     if (base === 'codex' || token.includes('/codex/') || token.includes('/codex-')) return 'codex';
     if (base === 'opencode' || token.includes('/opencode/')) return 'opencode';
+    if (base === 'hermes' || token.includes('/hermes/')) return 'hermes';
     if (base === 'agy' || base === 'antigravity' || token.includes('/antigravity-cli/')) return 'antigravity';
     if (base === 'copilot' || token.includes('/copilot/')) return 'copilot';
     if (base === 'grok' || base === 'grok-build' || token.includes('/grok-build/')) return 'grok';
@@ -911,7 +913,7 @@ export class DirectBridge {
   private ringWritesInFlight = new Set<string>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; cpuPercent: number; memMb: number }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; isHermes: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
   /** Per-session state on disk, one file each (see session-store.ts). */
   /** Restored panes whose agent is waiting to be started again, keyed by
@@ -1114,6 +1116,10 @@ export class DirectBridge {
    *  UserPromptSubmit hooks today, Codex is expected to post the same shapes
    *  through its own notify mechanism. Returns false for an unknown session so
    *  the caller can answer 404 rather than accumulate state for a dead pane. */
+  /** Told when a pane starts waiting on a human. Set by the server to feed the
+   *  sheepdog; unset when there is nobody to tell. */
+  onAgentWaiting: ((sessionId: string, name: string, path: string, question?: string) => void) | null = null;
+
   setAgentState(sessionId: string, state: AgentState, source: string, turn?: { prompt?: string; response?: string }): boolean {
     if (!this.sessions.has(sessionId)) return false;
 
@@ -1172,6 +1178,14 @@ export class DirectBridge {
       this.pubsub.publish('__sessions__', {
         type: 'attention', session_id: sessionId, message: 'needs your input',
       });
+      // ...and the sheepdog, if there is one. Announced from here rather than
+      // from the HTTP handler so every route into 'waiting' is covered — a
+      // hook report, an OSC 9 bell from the app itself — instead of only the
+      // one endpoint somebody remembered to edit.
+      const sess = this.sessions.get(sessionId);
+      try {
+        this.onAgentWaiting?.(sessionId, sess?.name ?? sessionId, sess?.path ?? '', turn?.prompt);
+      } catch { /* a listener must never break a state report */ }
     }
 
     // Publish immediately: waiting for the next sweep would give back the very
@@ -1297,6 +1311,18 @@ export class DirectBridge {
    *  reporter is not installed — is simply never busy. */
   isSessionBusy(sessionId: string): boolean {
     return this.freshAgentState(sessionId) === 'busy';
+  }
+
+  /** What the agent in this pane last reported, as a plain word.
+   *
+   *  The sheepdog's whole job is deciding which pane needs a human, and
+   *  'waiting' is the one state no amount of watching output can infer — an
+   *  agent sitting on a permission prompt prints nothing and burns no CPU. It
+   *  is only knowable because the hooks say so, which is why this is exposed
+   *  rather than derived. Stale reports read as 'unknown', not as 'idle': not
+   *  hearing from a pane is different from hearing that it is done. */
+  agentStateOf(sessionId: string): AgentState {
+    return this.freshAgentState(sessionId) ?? 'unknown';
   }
 
   /** The agent-reported state, or undefined once it has gone stale. */
@@ -1799,19 +1825,20 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, cpuPercent = 0, memMb = 0;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, isHermes = false, cpuPercent = 0, memMb = 0;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
           else if (app === 'codex') isCodex = true;
           else if (app === 'opencode') isOpencode = true;
+          else if (app === 'hermes') isHermes = true;
           else if (app === 'antigravity') isAntigravity = true;
           else if (app === 'copilot') isCopilot = true;
           else if (app === 'grok') isGrok = true;
           else if (app === 'cursor') isCursor = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, isHermes, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -1823,7 +1850,7 @@ export class DirectBridge {
       const procs = processInfo.get(sess.id);
       const git = this.getGitInfo(sess.path);
       if (procs) {
-        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : procs.isAntigravity ? 'antigravity' : procs.isCopilot ? 'copilot' : procs.isGrok ? 'grok' : procs.isCursor ? 'cursor' : null;
+        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : procs.isHermes ? 'hermes' : procs.isAntigravity ? 'antigravity' : procs.isCopilot ? 'copilot' : procs.isGrok ? 'grok' : procs.isCursor ? 'cursor' : null;
         if (newType && sess.sessionType !== newType) { sess.sessionType = newType; this.persist(); }
       }
       return {
@@ -1831,7 +1858,8 @@ export class DirectBridge {
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: this.isSessionBusy(sess.id), fresh: this.isSessionFresh(sess.id),
         isClaudeCode: procs?.isClaudeCode ?? false,
-        isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
+        isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isHermes: procs?.isHermes ?? false,
+        isDog: isDog(sess.id), isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, ...git,
         // Hook-reported, newest first. `git` above carries the PR of the

@@ -2,6 +2,8 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { LiveBrowser } from './live-browser.js';
 import { attachBrowserWs, BROWSER_WS_PATH } from './browser-ws.js';
+import { mcpHandler, MCP_PATH } from './mcp.js';
+import { DogPost, isDog, describeBleat } from './sheepdog.js';
 import { createServer } from 'http';
 import { join, dirname, extname, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -148,6 +150,29 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
 
   // REST API
   app.use('/api', createApiRouter(bridge, logBuffer, ai));
+
+  /* The sheepdog's ear: when any pane starts waiting on a human, the dog is
+     told in plain language, in its own pane. It only fires when a dog has been
+     named, and never about the dog itself. */
+  const dogPost = new DogPost(
+    (id, data) => bridge.sendInput(id, data),
+    id => bridge.isSessionBusy(id),
+    msg => logger.info(msg),
+  );
+  bridge.onAgentWaiting = (sessionId, name, path, question) => {
+    dogPost.post(describeBleat(name, path, question), sessionId);
+  };
+
+  /* The sheepdog's window onto the flock. One endpoint on this same port, so
+     a Hermes pane reaches it with a `url:` and there is no second process to
+     start, supervise or leave running. See src/mcp.ts. */
+  app.post(MCP_PATH, mcpHandler(bridge, msg => logger.warn(msg)));
+  // The spec lets a server decline the server-to-client stream, and this one
+  // has nothing to push: every answer is a reply to a request.
+  app.get(MCP_PATH, (_req, res) => res.status(405).json({
+    jsonrpc: '2.0', id: null,
+    error: { code: -32000, message: 'this server does not offer a server-initiated stream' },
+  }));
 
   const server = createServer(app);
 
@@ -358,7 +383,11 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
 
           case 'input': {
             const sessionId = msg.session_id as string;
-            if (sessionId) bridge.sendInput(sessionId, msg.data as string);
+            if (sessionId) {
+              // A human at the dog's keyboard outranks anything queued for it.
+              if (isDog(sessionId)) dogPost.noteHumanInput(sessionId);
+              bridge.sendInput(sessionId, msg.data as string);
+            }
             break;
           }
 

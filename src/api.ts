@@ -6,6 +6,10 @@ import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writ
 import nodePath from 'path';
 import os from 'os';
 import { configDir, notesDir, screenshotsDir } from './paths.js';
+import {
+  getDogSessionId, setDogSessionId, isDogNotifyEnabled,
+  hermesProfileStatus, ensureHermesProfile, sheepdogCommand,
+} from './sheepdog.js';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
@@ -1649,6 +1653,62 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
+  });
+
+  /** The sheepdog: which pane is it, and how does a harness reach the flock.
+   *
+   *  The config snippet is generated rather than documented because getting it
+   *  wrong is silent — a Hermes with a bad `url:` simply has no tools, and
+   *  nothing anywhere says so. The port is this server's real listening port,
+   *  which is not always 4444. */
+  router.get('/sheepdog', (_req, res) => {
+    const sessionId = getDogSessionId();
+    const port = bridge.getListenPort();
+    res.json({
+      sessionId,
+      /* Whether the server types news of a bleating pane into the dog's pane.
+         Off unless asked for: it moves one session's text into another
+         agent's context, which nobody should discover by accident. */
+      notify: isDogNotifyEnabled(),
+      mcpUrl: `http://127.0.0.1:${port}/mcp`,
+      /* The dog runs in a Hermes profile of its own — its own tools, memories,
+         sessions and cron, so appointing one changes nothing about the Hermes
+         the user runs by hand. */
+      profile: hermesProfileStatus(port),
+      command: sheepdogCommand(),
+      /* Read-only to begin with. The write tools exist, and they are exactly
+         the ones you would regret handing to something reachable from a chat
+         app before you trust it. Widen `include` deliberately. */
+      hermesConfig: [
+        '# ~/.hermes/config.yaml',
+        'mcp_servers:',
+        '  sheepit:',
+        `    url: "http://127.0.0.1:${port}/mcp"`,
+        '    tools:',
+        '      include: [list_flock, who_needs_me, read_pane, search_flock, pane_git]',
+      ].join('\n'),
+    });
+  });
+
+  /** Create the dog's Hermes profile, or refresh the one we created, and
+   *  answer with the command that runs it. Called just before the pane is
+   *  told to start Hermes, so the tools are wired before the harness looks. */
+  router.post('/sheepdog/profile', (_req, res) => {
+    try {
+      const profile = ensureHermesProfile(bridge.getListenPort());
+      res.json({ ok: true, profile, command: sheepdogCommand() });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  router.post('/sheepdog', (req, res) => {
+    const { session_id: sessionId } = req.body as { session_id?: string | null };
+    if (sessionId && !bridge.hasSession(sessionId)) {
+      return res.status(404).json({ error: 'no such session' });
+    }
+    setDogSessionId(sessionId ?? null);
+    res.json({ ok: true, sessionId: getDogSessionId() });
   });
 
   /** Whether the live browser can run here at all, and the port the pane

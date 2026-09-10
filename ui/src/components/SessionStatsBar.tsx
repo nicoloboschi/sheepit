@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings } from 'lucide-react';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
+import { useSheepdog } from '../useSheepdog';
 import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
 
@@ -21,6 +22,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const adjustFontSize    = useStore(s => s.adjustFontSize);
   const resetFontSize     = useStore(s => s.resetFontSize);
   const renameWorkspace   = useStore(s => s.renameWorkspace);
+  const sheepdog          = useSheepdog();
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
   const hasHeadlessSession = useStore(s => s.sessions.some(session => session.isHeadless));
@@ -272,7 +274,21 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
   );
 
+  /* The sheepdog sits beside New session because that is what it makes: a
+     pane, with Hermes started in it, appointed as the dog. Appointing an
+     existing pane is still on a pen's own menu — but nobody's first sheepdog
+     should have to be assembled by hand. Once there is one, this goes to it,
+     and it turns the colour of a bleating sheep when the dog is calling. */
+  const sheepdogButton = action(
+    'sheepdog',
+    <Dog size={14} style={sheepdog.dog?.state === 'alerting' ? { color: 'var(--bleating)' } : undefined} />,
+    sheepdog.label,
+    sheepdog.toggle,
+    Boolean(sheepdog.dog),
+  );
+
   const newSessionButtons = onCreateSession && <>
+    {sheepdogButton}
     {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
     {action('headless', <TerminalSquare size={14} />,
       hasHeadlessSession ? 'Open headless session' : 'New headless session',

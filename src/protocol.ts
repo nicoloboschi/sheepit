@@ -16,6 +16,11 @@ export interface Session {
   isClaudeCode?: boolean;
   isCodex?: boolean;
   isOpencode?: boolean;
+  /** Hermes — the harness the sheepdog runs in. See src/sheepdog.ts. */
+  isHermes?: boolean;
+  /** This pane IS the sheepdog. It is drawn as a dog, and it is never
+   *  counted as a sheep. */
+  isDog?: boolean;
   isAntigravity?: boolean;
   isCopilot?: boolean;
   isGrok?: boolean;

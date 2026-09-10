@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { SquareTerminal, X, Maximize2, Minimize2, Globe, GitCompare, Columns2, RotateCcw } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
+import DogStatus from './DogStatus';
+import { useDog } from '../flock';
 import { showsTerminal, type PaneView } from './TerminalCell';
 import StatChips from './StatChips';
 import VoiceInputButton from './VoiceInputButton';
@@ -44,6 +46,9 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
   // the sidebar's — bleating over grazing, live over idle. There is room for
   // a bigger animal here than in a pen card, which is the point: the head
   // actually reads, and the status is where you are already looking.
+  // The sheepdog's pane shows a dog instead, and its posture reports on the
+  // flock rather than on itself. See DogStatus.tsx.
+  const dog            = useDog();
   const busy           = useStore(s => !!s.sessionBusy[sessionId]);
   const needsAttention = useStore(s => !!s.sessionNeedsAttention[sessionId]);
   const unseen         = useStore(s => !!s.sessionHasUnseen[sessionId]);
@@ -120,7 +125,9 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         {/* The sheep leads the bar. It is the pane's status, and status is
             what you scan a wall of panes for — the agent's logo is not, since
             you already know what you started. The two swapped places. */}
-        <SheepStatus state={sheepState} />
+        {dog?.sessionId === sessionId
+          ? <DogStatus state={dog.state} />
+          : <SheepStatus state={sheepState} />}
 
         {/* ── Identity: the name, with the path as its subtitle ──────────
             The path used to be a separate field on the far right of the bar,

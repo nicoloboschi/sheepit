@@ -26,6 +26,7 @@ unless the surrounding code is already being rewritten.
 | **Field** | A user-made group of workspaces. Identified by `fieldId`. Membership lives on the workspace (`Workspace.fieldId`); every pen starts in the default field, and the sidebar shows one field at a time. |
 | **Root pane** | The pane at `paneIndex === 0`. Its session id *is* the workspace id. Anchor: closing it closes the whole workspace; currently not movable between workspaces. Surfaced in code as `isGridRoot`. |
 | **Layout** | Shape of a workspace: `single` / `horizontal` / `vertical` / `three` / `quad`. Type alias: `GridLayout`. |
+| **Sheepdog** | The one pane appointed to watch the others (`dogSessionId` in `config.json`, `Session.isDog`). It is a pane, and it is **never a sheep** — see [The sheepdog](#the-sheepdog). |
 | **Active pane** | The focused pane inside the active workspace. Drives the Git/Files/Search tabs. Stored as `gridStates[workspaceId].activeCell`. |
 | **Active workspace** | The workspace shown in the main area (sidebar selection). Stored as `currentSessionId` (legacy name; really means this). |
 
@@ -74,6 +75,19 @@ Write `sheep`/`pen` in UI copy and `pane`/`workspace` in code — including on
 the wire, where the server and its API keep the plain names. A comment
 explaining a UI string may use either, whichever makes the sentence clearer.
 
+### The sheepdog — user-facing
+
+| UI word | Means | Where |
+|---|---|---|
+| **The dog** | The pane watching the flock | `Session.isDog` |
+| **Watching** | Nothing wants you | `DogStatus` state `watching` |
+| **Alerting** | A sheep is bleating, and the dog is telling you | `alerting` |
+| **Working** | The dog's own agent is mid-turn | `working` |
+
+**The dog is not a sheep.** `useFlockCounts`, `useFlockSheep` and the pasture
+all skip it (`isDogPane` in `flock.ts`), or "27 sheep" would be twenty-six
+sheep and a dog. It is drawn by `DogStatus`, not `SheepStatus`.
+
 ### Terms to avoid
 - ❌ "primary session" / "primary pane" → ✅ **root pane**
 - ❌ "grid" as a user-facing noun (in UI strings, comments, or docs) → ✅ **workspace** (or **pen** in UI copy)
@@ -83,6 +97,7 @@ explaining a UI string may use either, whichever makes the sentence clearer.
 - ❌ "flock" for a single workspace → ✅ **pen** (the flock is all of them)
 - ❌ "flock" for a *group* of pens → ✅ **field** (still: the flock is all of them)
 - ❌ "vipershell" in anything a user reads → ✅ **sheepit**
+- ❌ counting the dog as a sheep → ✅ **the dog is a pane, never a sheep**
 
 ### Legacy field names — don't rename, just document
 - `gridStates` in the store = the per-workspace state map (keyed by `workspaceId`).
@@ -1214,6 +1229,135 @@ escalation over the preview iframe — and not one over sheepit itself, which
 hands the same caller a shell on the same machine as the same user. The shell
 is the bigger key. Do not add a way to reach the browser that does not come
 through sheepit's own front door.
+
+## The sheepdog
+
+**It has no pen.** Like the headless singleton, the dog is filtered out of
+`workspaceSessions` in `renderSessions`, so it never gets a workspace and never
+appears in the sidebar — it is the animal watching the flock, not one of it.
+Zen is its only presentation, entered from the dog button in the workspace bar
+(`ZenOnlyTerminal` in `App.tsx`). Note that cells are pruned against
+`pennableSessionIds` rather than `liveSessionIds`: promoting a pane that
+already sits in a pen has to evict it from that pen, and promotion is not a
+restart.
+
+One pane can be appointed the **sheepdog**: an agent whose job is the other
+panes. It is an ordinary session running `hermes`, and that is the whole
+design — it gets a PTY like everything else, so the daemon keeps it alive
+across a restart; it appears in the flock, so you can open it and take over by
+typing; its own hooks report its state. What makes it *the dog* is one id in
+`config.json` (`dogSessionId`, via `POST /api/sheepdog`), which the session
+list carries back as `isDog`.
+
+**Two things deliberately do not live in sheepit.** Hermes already speaks
+Telegram, Discord and Slack, and already schedules work in plain language, so
+neither a bot nor a cron belongs here — the server stays a terminal
+multiplexer. What sheepit owes the dog is the one thing only sheepit knows:
+what every other pane is doing.
+
+### Its own Hermes profile
+
+The dog runs `hermes -p sheepit-sheepdog`, in a profile sheepit creates
+(`ensureHermesProfile`). Hermes profiles live in `~/.hermes/profiles/<name>/`
+and are fully isolated — own model, credentials, memories, sessions, cron and
+`SOUL.md` — which is the whole reason to use one: appointing a dog must not
+give every other Hermes on the machine a shell-opening toolset, and a week of
+watching the flock must not land in the profile you ask ordinary questions in.
+
+What sheepit does, and does not do:
+
+- **`hermes profile create` does the parts we should not hand-roll** — the
+  registry entry, the directory layout, the `~/.local/bin/<name>` wrapper. It
+  runs unattended.
+- **The MCP server is appended to the profile's `config.yaml` by hand**, and
+  only when the profile declares no `mcp_servers` at all. `hermes mcp add`
+  connects and lists the tools it found, then stops on an interactive
+  *"Enable all 8 tools?"* prompt, so it cannot be driven from the server.
+  Rewriting a config Hermes generated would take its model and provider with
+  it, and merging YAML by hand is how you corrupt somebody's setup.
+- **The dog's job is appended to `SOUL.md`**, never written over it. That file
+  opens with Hermes' own account of itself, which is its identity; the sheepdog
+  section is a job on top. Both files carry a `sheepit:generated` marker —
+  delete the line and the file is the user's, and sheepit stops touching it.
+- The command is `hermes -p <name>`, not the wrapper script, which would mean
+  depending on `~/.local/bin` being on PATH in whatever shell the pane runs.
+
+**The published docs disagree with the binary in three places that matter**, so
+check `hermes --help` before trusting any of this: the subcommand is `hermes
+profile` (singular, not `profiles`); `-p` is real but absent from the top-level
+usage; and `SOUL.md` **is** per-profile, where the docs say it is loaded only
+from `HERMES_HOME`.
+
+### The MCP server
+
+`src/mcp.ts` mounts a **Streamable HTTP** MCP endpoint at `/mcp` on the
+server's own port. Hermes takes a remote server as a `url:` in
+`~/.hermes/config.yaml`, so there is no subprocess to spawn and no second
+lifetime to manage; `GET /api/sheepdog` generates the config block, because a
+wrong `url:` fails silently — the harness simply has no tools and nothing says
+so. Written by hand rather than pulled from the SDK, for the same reason
+`live-browser.ts` speaks CDP by hand: the surface actually used is
+`initialize`, `tools/list` and `tools/call`.
+
+A client may want its answer as JSON or as SSE; both are implemented, because
+different clients ask for different ones. There is no session state, so a
+server restart costs the client nothing.
+
+Rules that are easy to get wrong:
+
+- **Reading a pane means reading the agent's transcript, never the terminal.**
+  `read_pane` returns the exchanges the agent recorded. Scrollback is bytes to
+  render — escape sequences, redrawn spinners, half-built frames — and handing
+  that to a model produces confident nonsense. The rule that [nothing reads
+  the terminal as text](#nothing-reads-the-terminal-as-text) holds here.
+- **`structuredContent` must be a JSON object** — never an array or a
+  primitive. Real clients validate it (Hermes uses pydantic) and reject the
+  whole call. `list_flock` and `who_needs_me` answer with arrays and
+  `typeof [] === 'object'`, so every list call failed in Hermes while curl said
+  it worked; `toStructuredContent` wraps anything that is not a plain object as
+  `{ result }`. **curl is not a client** — verify a new tool with
+  `hermes -p sheepit-sheepdog -z "call <tool>"`, not by eye.
+- **The dog is filtered out of its own view.** `list_flock` excludes it, or it
+  reports on its own reporting.
+- **Composite answers go through the HTTP API over loopback.** `search_flock`
+  and `pane_git` are assembled in `api.ts` out of ripgrep, `gh` and a
+  coalescing cache; reimplementing them would give the dog a second opinion
+  that drifts from the one the UI shows.
+- **The write tools are meant to be filtered away.** Hermes supports
+  `tools: { include: [...] }` per server. Ship a dog the read half first. An
+  agent reachable from a chat app, holding a tool that opens shells, that also
+  reads other agents' transcripts and pull-request text — both of which can
+  contain instructions written by someone else — is prompt injection with a
+  shell on the end.
+
+### Telling the dog without it asking
+
+**Off unless `dogNotify: true` is set in `config.json`, and that switch is
+deliberately separate from appointing a dog.** Appointing one says "this pane
+is the dog". It must not by itself start moving text between sessions — what
+the dog is told includes the waiting pane's own prompt, so one session's
+content lands inside another agent's context. That is something to opt into,
+not something to discover.
+
+This is written down because it went wrong: a dog left appointed after a test
+armed the whole path, and the first sign of it was a pane starting to talk
+about another pane's work. "Appointed" and "allowed to be typed into" are two
+different permissions.
+
+
+A schedule is right for "check the deploy and brief me". It is wrong for "tell
+me when something bleats", which sheepit knows the instant the hooks say so.
+`DirectBridge.onAgentWaiting` fires from inside `setAgentState` — not from the
+HTTP handler, so every route into `waiting` is covered including an OSC 9 bell
+— and `DogPost` in `src/sheepdog.ts` types it into the dog's pane.
+
+Typing is the only channel into a running agent, and it has one property worth
+more than elegance: **you can watch it happen**. Open the dog's pane and the
+messages are in the scrollback. The rules are the ones `AGENT_RESUME_COMMANDS`
+already had to learn — wait for the pane to go quiet, give up at a deadline
+because a spinner never settles, and **cancel if a human is typing**, since
+past that point they are driving. Five sheep bleating in one second is one
+message, not five interruptions.
 
 ## The PTY proxy — keep it empty
 
