@@ -135,12 +135,19 @@ a { color: inherit; }
   letter-spacing: -0.03em;
   display: flex; align-items: center; gap: 9px;
 }
-.brand .ver { font-weight: 500; font-size: 12px; color: var(--muted); letter-spacing: 0; }
 .topline nav { margin-left: auto; display: flex; gap: 22px; }
 .topline nav a {
   font-weight: 500; font-size: 13.5px; color: var(--muted); text-decoration: none;
 }
 .topline nav a:hover { color: var(--parchment); }
+/* The one item that leaves the page, marked as leaving it. */
+.nav-out { color: var(--dim); }
+.nav-out::after {
+  content: "↗";
+  font-size: 0.85em;
+  margin-left: 4px;
+  opacity: 0.7;
+}
 
 .hero-copy {
   position: relative; z-index: 4;
@@ -560,13 +567,15 @@ footer { position: relative; overflow: hidden; background: linear-gradient(180de
   <canvas id="field" aria-hidden="true"></canvas>
 
   <div class="wrap topline">
-    <span class="brand">🐑 sheepit <span class="ver">v1.11.0</span></span>
+    <span class="brand">🐑 sheepit</span>
+    <!-- In page order. A table of contents that lists the sections in a
+         different order than the page presents them is a map of somewhere
+         else. -->
     <nav>
-      <a href="#replaces">What it replaces</a>
       <a href="#demo">Demo</a>
-      <a href="#what">Features</a>
+      <a href="#what">What it does</a>
       <a href="#gate">Install</a>
-      <a href="https://github.com/nicoloboschi/sheepit">GitHub</a>
+      <a class="nav-out" href="https://github.com/nicoloboschi/sheepit">GitHub</a>
     </nav>
   </div>
 
