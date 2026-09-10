@@ -8,7 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%91%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@400;500;600;700&family=Karla:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -42,9 +42,13 @@
   --rule:       rgba(234, 232, 221, 0.12);
   --rule-soft:  rgba(234, 232, 221, 0.06);
 
-  --display: "Zilla Slab", "Bitter", Georgia, serif;
-  --body:    "Karla", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Two families, and only two — the same pair the app bundles. Display and
+     body are the same face; what separates them is weight and tracking, not a
+     third typeface. See DESIGN.md. */
+  --sans:    "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --display: var(--sans);
+  --body:    var(--sans);
 }
 
 * { box-sizing: border-box; }
@@ -57,7 +61,7 @@ body {
   color: var(--parchment);
   font-family: var(--body);
   font-size: 16px;
-  line-height: 1.62;
+  line-height: 1.66;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -126,8 +130,8 @@ a { color: inherit; }
 .brand {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 20px;
-  letter-spacing: -0.01em;
+  font-size: 19px;
+  letter-spacing: -0.03em;
   display: flex; align-items: center; gap: 9px;
 }
 .brand .ver { font-family: var(--mono); font-weight: 400; font-size: 11px; color: var(--muted); }
@@ -139,15 +143,15 @@ a { color: inherit; }
 
 .hero-copy {
   position: relative; z-index: 4;
-  padding: 54px 0 34px;
+  padding: 54px 0 84px;
   max-width: 620px;
 }
 h1 {
   font-family: var(--display);
   font-weight: 700;
-  font-size: clamp(40px, 6vw, 68px);
-  line-height: 0.98;
-  letter-spacing: -0.028em;
+  font-size: clamp(38px, 5.6vw, 64px);
+  line-height: 1.0;
+  letter-spacing: -0.035em;
   margin: 0 0 20px;
   text-wrap: balance;
 }
@@ -255,8 +259,8 @@ section.alt { background: var(--soil); }
 .head h2 {
   font-family: var(--display);
   font-weight: 600;
-  font-size: clamp(26px, 3.4vw, 36px);
-  letter-spacing: -0.02em;
+  font-size: clamp(25px, 3.2vw, 34px);
+  letter-spacing: -0.03em;
   line-height: 1.12;
   margin: 10px 0 12px;
   text-wrap: balance;
@@ -345,7 +349,7 @@ section.alt { background: var(--soil); }
 
 /* What it replaces — five things, each with a still of itself */
 .replaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px 36px; }
-.rep h3 { margin: 14px 0 5px; font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+.rep h3 { margin: 14px 0 5px; font-family: var(--display); font-weight: 600; font-size: 17.5px; letter-spacing: -0.02em; }
 .rep p { margin: 0; font-size: 14.5px; color: var(--muted); }
 .shot {
   position: relative; aspect-ratio: 16 / 10;
@@ -358,7 +362,7 @@ section.alt { background: var(--soil); }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 44px; }
 .steps li { padding: 20px 0 4px; border-top: 1px solid rgba(162, 158, 121, 0.3); }
 .step-n { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.15em; color: var(--fence); }
-.steps h3 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 8px 0 7px; letter-spacing: -0.01em; }
+.steps h3 { font-family: var(--display); font-weight: 600; font-size: 18px; margin: 8px 0 7px; letter-spacing: -0.02em; }
 .steps p { margin: 0; color: var(--muted); font-size: 14.5px; }
 .steps code, .say code { font-family: var(--mono); font-size: 12.5px; color: var(--parchment); }
 .say strong { color: var(--parchment); font-weight: 600; }
@@ -388,7 +392,7 @@ section.alt { background: var(--soil); }
 }
 .anywhere h3 {
   font-family: var(--display); font-weight: 600;
-  font-size: clamp(22px, 2.6vw, 28px); letter-spacing: -0.02em;
+  font-size: clamp(21px, 2.5vw, 27px); letter-spacing: -0.03em;
   margin: 10px 0 12px; text-wrap: balance;
 }
 .anywhere p { margin: 0 0 18px; color: var(--dim); font-size: 15.5px; max-width: 56ch; }
