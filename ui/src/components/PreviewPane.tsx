@@ -173,7 +173,10 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   // nothing here initiated — so the bar follows it, except while you type.
   useEffect(() => {
     if (!live?.url || live.url === 'about:blank') return;
-    if (document.activeElement === addressRef.current) return;
+    // Only while you are actually typing there. In the desktop app a click in
+    // the page moves focus to a native view and leaves `activeElement` on the
+    // address bar, so that test alone froze it on the first URL typed.
+    if (document.activeElement === addressRef.current && document.hasFocus()) return;
     setDraft(live.url);
   }, [live?.url]);
 
@@ -258,7 +261,9 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           ref={addressRef}
           value={draft}
           onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') go(draft); e.stopPropagation(); }}
+          // Enter leaves the bar, as in Chrome, so a redirect on the way in
+          // (github.com → github.com/login) reaches it too.
+          onKeyDown={e => { if (e.key === 'Enter') { go(draft); e.currentTarget.blur(); } e.stopPropagation(); }}
           placeholder="localhost:3000, or any URL"
           spellCheck={false}
         />
