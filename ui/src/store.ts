@@ -1050,26 +1050,9 @@ const useStore = create<StoreState>((set, get) => ({
     }
     if (id) {
       try { preferences.setItem(LAST_WORKSPACE_KEY, id); } catch { /* quota */ }
-      // Clear unseen for every pane in this workspace (plus the id itself as
-      // a fallback, for the legacy case where `id` isn't registered as a
-      // workspace yet — e.g. right after a new session appears but before
-      // renderSessions has reconciled it into a workspace).
-      const { sessionHasUnseen, sessionNeedsAttention, workspaces } = get();
-      const toClear: string[] = [id];
-      const ws = workspaces[id];
-      if (ws) {
-        for (const cid of ws.cells) if (cid && cid !== id) toClear.push(cid);
-      }
-      const hasAny = toClear.some(cid => sessionHasUnseen[cid] || sessionNeedsAttention[cid]);
-      if (hasAny) {
-        const nextUnseen = { ...sessionHasUnseen };
-        const nextAttention = { ...sessionNeedsAttention };
-        for (const cid of toClear) {
-          delete nextUnseen[cid];
-          delete nextAttention[cid];
-        }
-        set({ sessionHasUnseen: nextUnseen, sessionNeedsAttention: nextAttention });
-      }
+      // Selecting a pen does NOT mark it read — typing into a pane does (see
+      // clearUnseen in TerminalCell's sendInput). Selecting clears every pane
+      // in the pen at once, including the three you did not look at.
     }
     // Zen is a mode, not a property of one pane. It used to be neither: the
     // flag stayed on while the pane it named was unmounted with its workspace
@@ -1211,12 +1194,16 @@ const useStore = create<StoreState>((set, get) => ({
     set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
   },
 
+  // Marks a pane read: both unread and bleating, since typing into it is
+  // answering it. Called per keystroke, so it is a no-op unless flagged.
   clearUnseen(sessionId: string) {
-    set(s => {
-      const next = { ...s.sessionHasUnseen };
-      delete next[sessionId];
-      return { sessionHasUnseen: next };
-    });
+    const { sessionHasUnseen, sessionNeedsAttention } = get();
+    if (!sessionHasUnseen[sessionId] && !sessionNeedsAttention[sessionId]) return;
+    const nextUnseen = { ...sessionHasUnseen };
+    const nextAttention = { ...sessionNeedsAttention };
+    delete nextUnseen[sessionId];
+    delete nextAttention[sessionId];
+    set({ sessionHasUnseen: nextUnseen, sessionNeedsAttention: nextAttention });
   },
 
   // ── Workspace actions ─────────────────────────────────────────────────────

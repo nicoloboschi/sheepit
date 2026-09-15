@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
@@ -23,6 +23,20 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const resetFontSize     = useStore(s => s.resetFontSize);
   const renameWorkspace   = useStore(s => s.renameWorkspace);
   const sheepdog          = useSheepdog();
+  // Publish where the bar ends, so zen starts below it rather than covering
+  // it — New session, search and the rest stay usable while reading one pane.
+  // 0 below `md`, where the bar is hidden and zen is the whole screen.
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const publish = () => document.documentElement.style.setProperty(
+      '--topbar-bottom', `${el.offsetHeight ? el.getBoundingClientRect().bottom : 0}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => { ro.disconnect(); document.documentElement.style.removeProperty('--topbar-bottom'); };
+  }, [sessionId == null]); // the bar is not rendered without a session
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
   const hasHeadlessSession = useStore(s => s.sessions.some(session => session.isHeadless));
@@ -303,6 +317,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   // chrome tokens in style.css.
   return (
     <div
+      ref={barRef}
       className="workspace-bar hidden md:flex items-center gap-2 px-4 py-1.5 shrink-0 border-b"
       style={{ borderColor: 'var(--chrome-line)', background: 'var(--chrome)' }}
     >

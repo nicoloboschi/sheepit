@@ -661,6 +661,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       // CPR replies (\x1b[<row>;<col>R, incl. DECXCPR's `?` variant) are dropped
       // only while replaying a reconnect snapshot — see cprGuardUntilRef.
       if (Date.now() < cprGuardUntilRef.current && /^\x1b\[\??\d+;\d+R$/.test(data)) return;
+      // Typing marks the pane read — not selecting it. Escape sequences
+      // (focus/mouse reports, CPR, arrows) are not typing; a bare Esc is.
+      if (!data.startsWith('\x1b') || data === '\x1b') useStore.getState().clearUnseen(sessionId);
       sendRef.current({ type: 'input', data });
     }
 
@@ -1438,7 +1441,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       {isZen && (
         <div
           style={{
-            position: 'fixed', top: 0, right: 0, bottom: 0, left: 'var(--flock-width, 0px)', zIndex: 999,
+            position: 'fixed', top: 'var(--topbar-bottom, 0px)', right: 0, bottom: 0, left: 'var(--flock-width, 0px)', zIndex: 999,
             background: 'radial-gradient(ellipse at center, rgba(6,10,6,0.92) 0%, rgba(0,0,0,0.98) 100%)',
             backdropFilter: 'blur(8px)',
             // Only on the way in. The backdrop is rendered by whichever pane
@@ -1465,7 +1468,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
             // Zen used to cover the flock, so switching pens meant leaving it,
             // and reading one pane is exactly when you are working through the
             // list. On mobile --flock-width is 0 and this is the full screen.
-            top: 24, right: 24, bottom: 24,
+            // Likewise it starts below the workspace bar (--topbar-bottom),
+            // so New session and the rest stay in reach.
+            top: 'calc(var(--topbar-bottom, 0px) + 24px)', right: 24, bottom: 24,
             left: 'calc(var(--flock-width, 0px) + 24px)',
             zIndex: 1000,
             borderRadius: 4,

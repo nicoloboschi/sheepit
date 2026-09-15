@@ -157,12 +157,16 @@ describe('useStore', () => {
       expect(useStore.getState().currentSessionId).toBe('$0')
     })
 
-    it('clears unseen when switching to session', () => {
-      useStore.getState().markUnseen('$0')
-      expect(useStore.getState().sessionHasUnseen['$0']).toBe(true)
-
+    // Read means typed into, not selected — see clearUnseen in TerminalCell.
+    it('keeps unseen and bleating when switching to session', () => {
+      useStore.getState().sessionAttention('$0', 'Waiting for input')
       useStore.getState().setCurrentSessionId('$0')
-      expect(useStore.getState().sessionHasUnseen['$0']).toBeFalsy()
+      expect(useStore.getState().sessionHasUnseen['$0']).toBe(true)
+      expect(useStore.getState().sessionNeedsAttention['$0']).toBe(true)
+
+      useStore.getState().clearUnseen('$0')
+      expect(useStore.getState().sessionHasUnseen['$0']).toBeUndefined()
+      expect(useStore.getState().sessionNeedsAttention['$0']).toBeUndefined()
     })
   })
 
@@ -440,11 +444,11 @@ describe('fields', () => {
   })
 
   describe('attention tracking', () => {
-    it('marks an explicit attention request and clears it when opened', () => {
+    it('marks an explicit attention request and clears it when typed into', () => {
       useStore.getState().sessionAttention('$0', 'Waiting for input')
       expect(useStore.getState().sessionNeedsAttention['$0']).toBe(true)
 
-      useStore.getState().setCurrentSessionId('$0')
+      useStore.getState().clearUnseen('$0')
       expect(useStore.getState().sessionNeedsAttention['$0']).toBeUndefined()
     })
   })

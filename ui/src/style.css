@@ -1031,14 +1031,14 @@
 .session-item.active .pen-fence { opacity: 0.95; }
 
 .session-item.active {
-  /* Selected row: a lift out of the column, not a green field. The pen you are
-     in is also the one whose fence is in the light (.session-item.active
-     .pen-fence), so selection still has a brand-coloured signal — it is just
-     the fence saying it, which is a drawn thing, rather than the card behind
-     every row you scan. */
+  /* Selected row: a lift out of the column, not a green field — plus a solid
+     brand rail down the left edge and a brand border. The lift alone was too
+     close to a bleating pen's teal-tinted cards to tell at a glance which pen
+     you were in; the rail is a shape nothing else in the list uses, so it
+     reads as "here" without competing with the fills that mean "wants you". */
   background: linear-gradient(105deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.035));
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(255, 255, 255, 0.07);
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  box-shadow: inset 3px 0 0 var(--primary), 0 6px 18px rgba(0, 0, 0, 0.20), inset 0 1px rgba(255, 255, 255, 0.07);
 }
 
 /* ── Unseen notification ────────────────────────────────────────────────────
@@ -1197,6 +1197,11 @@
   background: color-mix(in srgb, #ffffff 9%, var(--accent));
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: none;
+  /* …plus a brand outline. The lift alone read too much like a bleating card.
+     Outline, not border/box-shadow, because no state variant below sets it —
+     so the focused sheep stays marked whether it is bleating, unread or fresh. */
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 /* On a pale page a lift is a step DOWN in lightness; adding white there would
    erase the card instead of raising it. */

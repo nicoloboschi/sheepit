@@ -158,13 +158,17 @@ particular:
   steps brighter. It was a green wash, which put the loudest colour on screen
   directly behind the thing you spend the day reading. The pane's border and
   ring already carry the brand.
-- The **selected pen** is a lift out of the column too. Its brand-coloured
-  signal is its fence coming into the light (`.session-item.active
-  .pen-fence`), which is a drawn thing about that one pen, rather than a green
-  card behind every row you scan. The **focused pane** inside it
+- The **selected pen** is a lift out of the column too, with its fence coming
+  into the light (`.session-item.active .pen-fence`) — plus a solid brand
+  rail down its left edge and a brand border. The lift and fence alone were
+  too close to a bleating pen's teal cards to tell which pen you were in; the
+  rail is a shape no other state uses, so it says "here" without being a
+  green card behind every row you scan. The **focused pane** inside it
   (`.pane-card-active`) is a lift for the same reason — it is the most common
-  thing on screen, so it must be the quietest signal in the pen, leaving the
-  coloured fills to bleating and unread, which want something from you.
+  thing on screen, so it must not be a coloured fill, leaving those to
+  bleating and unread, which want something from you. It carries a brand
+  **outline** instead: outline is the one property no state variant sets, so
+  the focused sheep stays marked whether it is bleating, unread or fresh.
 - The **grass stays green** — the footer strip and the floor of every pen. That
   is a picture of something, and it reads better against grey than it did
   against olive.
@@ -425,7 +429,9 @@ pane. (It was neither before: hidden workspaces sit under `display: none`,
 which hides a `position: fixed` child too, so picking a pen dropped you out of
 zen without turning it off and left a stale `/zen:` in the URL.) `--flock-width`
 is published by `Sidebar.tsx` and is 0 below the `md` breakpoint, where the
-list is a sheet and zen is the whole screen.
+list is a sheet and zen is the whole screen. The workspace bar stays showing
+for the same reason — New session, search and layout are still in reach — via
+`--topbar-bottom`, published by `SessionStatsBar` (0 when the bar is hidden).
 
 Its frame is a **hairline and a shadow**, not the lit green border it had. Zen
 is where you read for minutes at a time — the last place to put the brand
@@ -891,6 +897,12 @@ One consequence, on purpose: **a plain shell pane no longer lights up when it
 prints something.** Unread now means an agent finished a turn, or the app rang
 the bell. A pane with no reporter in it is quiet, which is the same trade the
 busy flag already made (see `isSessionBusy`).
+
+**Typing marks a pane read, selecting does not.** Unread and bleating are
+cleared by `clearUnseen`, called from `sendInput` in `TerminalCell` for real
+keystrokes only — escape sequences (focus and mouse reports, CPR, arrows) are
+not typing. Selecting a pen used to clear every pane in it, including the ones
+you never looked at.
 
 ## What a pane can show
 
