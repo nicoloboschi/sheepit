@@ -1045,6 +1045,12 @@ macOS treat a headless renderer as background work.
 - **A UI reload never unmounts React**, so `main.cjs` closes an owner's views
   when its page navigates or is destroyed — otherwise they float over the new
   page.
+- **A focused page gets every key first**, so `main.cjs` takes back the ⌘
+  chords that are sheepit's (`APP_SHORTCUTS`: ⌘K, ⌘N, ⌘↑, ⌘↓), refocuses the
+  UI and the preload replays them on `window` for `App.tsx`. ⌘←/→ and ⌘+/−/0
+  stay with the page on purpose — line start/end in a text field matters more
+  there. A new global shortcut is not reachable from a page until it is added
+  to that set.
 - Its profile is `persist:sheepit-browser`, separate from the headless one:
   logins are made once per browser.
 

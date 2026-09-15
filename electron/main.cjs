@@ -104,6 +104,8 @@ async function createWindow() {
 /** @type {Map<string, { view: import('electron').WebContentsView, win: BrowserWindow, owner: import('electron').WebContents }>} */
 const views = new Map();
 const watchedOwners = new WeakSet();
+/** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
+const APP_SHORTCUTS = new Set(['k', 'n', 'ArrowUp', 'ArrowDown']);
 
 function browserState(view) {
   const wc = view.webContents;
@@ -161,6 +163,20 @@ ipcMain.on('browser:open', (event, id, url) => {
   view.webContents.setWindowOpenHandler(({ url: next }) => {
     view.webContents.loadURL(next).catch(() => {});
     return { action: 'deny' };
+  });
+  // Sheepit's own shortcuts, taken back from the page. A focused view gets
+  // every key before the UI does, so without this ⌘K did nothing while you
+  // were reading a page. Only chords a page has no use for: ⌘←/→ stay with it
+  // (line start/end in a text field), as do ⌘+/−/0 and every editing chord.
+  view.webContents.on('before-input-event', (inputEvent, input) => {
+    if (input.type !== 'keyDown' || !input.meta || input.control || input.alt) return;
+    if (!APP_SHORTCUTS.has(input.key)) return;
+    inputEvent.preventDefault();
+    if (event.sender.isDestroyed()) return;
+    // The UI takes the focus back first: ⌘K opens a search box that has to
+    // receive the next keystroke, not the page underneath it.
+    event.sender.focus();
+    event.sender.send('browser:shortcut', { key: input.key, shiftKey: input.shift });
   });
   if (url) view.webContents.loadURL(url).catch(() => {});
 });

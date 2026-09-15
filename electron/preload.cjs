@@ -2,6 +2,13 @@
 // place over itself. Everything else in the app is the same web UI as in a tab.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// A sheepit shortcut pressed while a page had focus (see before-input-event in
+// main.cjs), replayed as the keydown App.tsx already listens for. DOM events
+// cross from this isolated world to the page's, so the UI needs no new code.
+ipcRenderer.on('browser:shortcut', (_event, { key, shiftKey }) => {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, metaKey: true, bubbles: true, cancelable: true }));
+});
+
 contextBridge.exposeInMainWorld('sheepitDesktop', {
   browser: {
     open: (id, url) => ipcRenderer.send('browser:open', id, url),
