@@ -1051,6 +1051,12 @@ macOS treat a headless renderer as background work.
   stay with the page on purpose — line start/end in a text field matters more
   there. A new global shortcut is not reachable from a page until it is added
   to that set.
+- **The window has no title bar**, so it is dragged by `.sidebar-header` and
+  `.workspace-bar`, and the traffic lights sit over the header. That CSS is
+  injected by `preload.cjs` under `.desktop-app`, not written in `style.css`:
+  a tab has a title bar, and must not grow 84px of padding for buttons it does
+  not have. A control added to either bar needs no-drag, or it moves the window
+  instead of taking the click — the preload covers buttons, inputs and links.
 - Its profile is `persist:sheepit-browser`, separate from the headless one:
   logins are made once per browser.
 

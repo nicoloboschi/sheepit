@@ -303,7 +303,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   // chrome tokens in style.css.
   return (
     <div
-      className="hidden md:flex items-center gap-2 px-4 py-1.5 shrink-0 border-b"
+      className="workspace-bar hidden md:flex items-center gap-2 px-4 py-1.5 shrink-0 border-b"
       style={{ borderColor: 'var(--chrome-line)', background: 'var(--chrome)' }}
     >
       {nameControl}

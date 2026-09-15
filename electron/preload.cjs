@@ -2,6 +2,28 @@
 // place over itself. Everything else in the app is the same web UI as in a tab.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// The window has no title bar (titleBarStyle: 'hiddenInset'), so the top bars
+// are where it is dragged from, and the traffic lights sit over the sidebar
+// header. Desktop-only, so it lives here rather than in the UI's stylesheet.
+const DESKTOP_CSS = `
+.desktop-app .sidebar-header,
+.desktop-app .workspace-bar,
+.desktop-app .sidebar-shell-collapsed { -webkit-app-region: drag; }
+.desktop-app :is(.sidebar-header, .workspace-bar, .sidebar-shell-collapsed)
+  :is(button, input, select, textarea, a, [role="button"], [contenteditable="true"]),
+.desktop-app .sidebar-resize-handle { -webkit-app-region: no-drag; }
+/* Room for the traffic lights (trafficLightPosition in main.cjs). */
+.desktop-app .sidebar-header { padding-left: 84px; }
+.desktop-app .sidebar-shell-collapsed { padding-top: 40px; }
+.desktop-app:has(.sidebar-shell-collapsed) .workspace-bar { padding-left: 52px; }
+`;
+window.addEventListener('DOMContentLoaded', () => {
+  document.documentElement.classList.add('desktop-app');
+  const style = document.createElement('style');
+  style.textContent = DESKTOP_CSS;
+  document.head.appendChild(style);
+});
+
 // A sheepit shortcut pressed while a page had focus (see before-input-event in
 // main.cjs), replayed as the keydown App.tsx already listens for. DOM events
 // cross from this isolated world to the page's, so the UI needs no new code.

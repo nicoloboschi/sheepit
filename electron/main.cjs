@@ -82,6 +82,8 @@ async function createWindow() {
     minHeight: 600,
     backgroundColor: '#0c0c0c',
     titleBarStyle: 'hiddenInset',
+    // Centred on the sidebar header; preload.cjs pads the header to clear them.
+    trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
