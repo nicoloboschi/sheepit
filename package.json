@@ -90,6 +90,7 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "ui/public/icon-512.png",
       "target": [
         "dmg",
         "zip"

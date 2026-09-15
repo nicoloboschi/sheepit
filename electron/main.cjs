@@ -33,7 +33,9 @@ async function waitForPort(port, label) {
 
 function start(command, args, env) {
   const child = spawn(command, args, {
-    cwd: rootDir,
+    // Packaged, rootDir is inside app.asar — a file, not a directory — and a
+    // spawn with it as cwd never starts, so the app sat on "failed to start".
+    cwd: isDev ? rootDir : app.getPath('home'),
     env: { ...process.env, ...env },
     stdio: 'inherit',
   });
