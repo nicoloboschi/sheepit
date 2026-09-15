@@ -636,7 +636,7 @@ export class LiveBrowser {
     // on the image is a click at (x, y) in the page — no mapping to get wrong.
     await cdp.send('Emulation.setDeviceMetricsOverride', {
       width: view.width, height: view.height,
-      deviceScaleFactor: Math.min(2, Math.max(1, scale)),
+      deviceScaleFactor: Math.min(4, Math.max(0.5, scale)),
       mobile: false,
     }, view.sessionId);
   }
@@ -677,8 +677,8 @@ export class LiveBrowser {
       // Text has to stay readable — this is a page you read, not a video —
       // and JPEG at 80 over a LAN is cheaper than the PNG it replaces.
       quality: 80,
-      maxWidth: Math.round(view.width * Math.min(2, Math.max(1, scale))),
-      maxHeight: Math.round(view.height * Math.min(2, Math.max(1, scale))),
+      maxWidth: Math.round(view.width * Math.min(4, Math.max(0.5, scale))),
+      maxHeight: Math.round(view.height * Math.min(4, Math.max(0.5, scale))),
       everyNthFrame: 1,
     }, view.sessionId);
     void this.pushState(view);

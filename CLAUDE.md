@@ -1021,6 +1021,36 @@ relative path would be the viewing device's. `/api/browser/status` carries that
 port along with whether a browser was found. Port chips are loopback for the
 same reason, which is why they work from a phone.
 
+### The desktop app's browser
+
+Inside the Electron shell (`npm run desktop:dev`, `electron/`) the browser half
+is **not** the streamed headless Chrome: it is a native `WebContentsView` laid
+over the pane's box (`NativeBrowserSurface`, driven through
+`window.sheepitDesktop` from `electron/preload.cjs`). A page in a window you
+are looking at gets foreground priority, real input, IME and clipboard — the
+streamed one could not keep a heavy GitHub diff smooth, because Chrome and
+macOS treat a headless renderer as background work.
+
+- **The desktop app adds, it never forks.** `PreviewPane` picks the native
+  surface when `desktopBrowser` exists and the streamed one otherwise; nothing
+  else in the UI knows which it is in. The streamed browser stays — a phone or
+  any tab on the LAN has no other way to show a page.
+- **The UI owns placement, the shell obeys.** The surface reports its box
+  every frame (a pane moves without resizing, which a ResizeObserver misses),
+  and `null` when it has no box, so a hidden pen hides its view.
+- **A native view is above the whole page**, so it cannot sit under zen's
+  backdrop, ⌘K or a menu. The surface hit-tests a grid of points over its box
+  and hides the view when anything else is on top. That is what lets no
+  overlay know the view exists; do not replace it with per-overlay hiding.
+- **A UI reload never unmounts React**, so `main.cjs` closes an owner's views
+  when its page navigates or is destroyed — otherwise they float over the new
+  page.
+- Its profile is `persist:sheepit-browser`, separate from the headless one:
+  logins are made once per browser.
+
+In dev the window loads Vite on 4444, so UI edits hot-reload as in a tab; only
+a change under `electron/` needs the app relaunched, which costs no sessions.
+
 ### The live browser
 
 A genuine Chromium, running here, shown in a pane. Four things about it are

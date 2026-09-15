@@ -123,9 +123,13 @@ export interface LiveBrowserCommands {
   screenshot: () => Promise<string>;
 }
 
-export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onState, commands }: {
+export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom = 1, onState, commands }: {
   url?: string | null;
   navSeq?: number;
+  /** Page zoom, the way Chrome does it: lay out at box / zoom CSS pixels and
+   *  render at dpr × zoom. Frames report the page's CSS size, so click mapping
+   *  in `pointFrom` follows without knowing about it. */
+  zoom?: number;
   onState: (state: LiveBrowserState) => void;
   /** Filled in on mount so the pane's own bar can drive the page. */
   commands: { current: LiveBrowserCommands | null };
@@ -175,12 +179,15 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
 
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
   const measure = useCallback(() => {
     const box = surfaceRef.current?.getBoundingClientRect();
+    const z = zoomRef.current;
     return {
-      width: Math.max(200, Math.round(box?.width ?? 800)),
-      height: Math.max(200, Math.round(box?.height ?? 600)),
-      scale: Math.min(2, window.devicePixelRatio || 1),
+      width: Math.max(200, Math.round((box?.width ?? 800) / z)),
+      height: Math.max(200, Math.round((box?.height ?? 600) / z)),
+      scale: Math.min(2, window.devicePixelRatio || 1) * z,
     };
   }, []);
 
@@ -189,6 +196,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, onStat
    *  connecting, which `send` drops on the floor — leaves the page rendering
    *  to the wrong height for good. Re-send it once the view exists. */
   const syncSize = useCallback(() => send({ type: 'resize', ...measure() }), [measure, send]);
+  useEffect(() => { syncSize(); }, [zoom, syncSize]);
 
   // The page this pane is on, kept in a ref so a reconnect can ask for it
   // again. `initialUrl` is where it started; `state.url` is wherever the page

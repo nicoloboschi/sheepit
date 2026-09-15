@@ -31,8 +31,13 @@
  * `localhost` port works whatever device you are looking from.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check } from 'lucide-react';
+import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus } from 'lucide-react';
+
+// Chrome's own zoom steps, trimmed to the useful range.
+const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const DEFAULT_ZOOM = 0.9;
 import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
+import NativeBrowserSurface, { desktopBrowser } from './NativeBrowserSurface';
 import useStore from '../store';
 import { preferences } from '../preferences';
 
@@ -109,6 +114,11 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   const [listeners, setListeners] = useState<{ own: Listener[]; others: Listener[] }>({ own: [], others: [] });
   const [live, setLive] = useState<LiveBrowserState | null>(null);
   const liveCommands = useRef<LiveBrowserCommands | null>(null);
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const stepZoom = (dir: 1 | -1) => setZoom(z => {
+    const i = ZOOMS.indexOf(z);
+    return ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + dir))] ?? z;
+  });
   const addressRef = useRef<HTMLInputElement | null>(null);
   /** Sheepit's own port, so the browser on this machine can be pointed at
    *  sheepit's file endpoint over loopback; and whether there is a browser to
@@ -252,6 +262,12 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           placeholder="localhost:3000, or any URL"
           spellCheck={false}
         />
+        <button className="preview-btn" title="Zoom out" disabled={zoom <= 0.5}
+          onClick={() => stepZoom(-1)}><Minus size={12} /></button>
+        <button className="preview-btn" title="Reset zoom" style={{ width: 'auto', padding: '0 4px', fontSize: 11 }}
+          onClick={() => setZoom(DEFAULT_ZOOM)}>{Math.round(zoom * 100)}%</button>
+        <button className="preview-btn" title="Zoom in" disabled={zoom >= 2}
+          onClick={() => stepZoom(1)}><Plus size={12} /></button>
         {/* A picture of the page, on disk, with its path on the clipboard —
             ready to paste to the agent in the terminal next door. */}
         <button
@@ -298,13 +314,17 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       )}
 
       <div className="preview-body">
-        {server.available ? (
+        {server.available || desktopBrowser ? (
           <>
             {/* The page is a picture until its first frame lands, and a picture
                 of the last page while the next one loads — so the only way to
                 know something is happening is to say so. */}
             {live?.loading && <div className="preview-loading" />}
-            <LiveBrowserSurface url={src} navSeq={nav} onState={setLive} commands={liveCommands} />
+            {/* In the desktop app the page is a native view over the pane;
+                everywhere else it is the headless browser, streamed. */}
+            {desktopBrowser
+              ? <NativeBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands} />
+              : <LiveBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands} />}
           </>
         ) : (
           <div className="preview-empty">
