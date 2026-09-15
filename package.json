@@ -76,6 +76,9 @@
   "build": {
     "appId": "com.nicoloboschi.sheepit",
     "productName": "Sheepit",
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**/*",
       "ui/dist/**/*",
