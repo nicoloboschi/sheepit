@@ -1079,6 +1079,15 @@ it waits for both ports first, because `main.cjs` starts Vite and the backend
 itself when they do not answer, and launching early races it into a second
 Vite on the same port.
 
+**In dev the app is Electron's own bundle**, so macOS took its name and icon
+from there and the Dock said "Electron". `app.setName()` cannot move that —
+the display name is the bundle's `Info.plist` — so `scripts/brand-dev-electron.sh`
+(run by `desktop:dev`, and idempotent) patches the copy in `node_modules`:
+name, display name, and the sheep icon rendered from `icon-512.png`. It is
+safe there precisely because `npm ci` throws it away and the script runs
+again. It re-signs ad-hoc afterwards, because macOS kills a modified signed
+bundle on Apple Silicon. Packaged builds need none of this.
+
 ### The live browser
 
 A genuine Chromium, running here, shown in a pane. Four things about it are

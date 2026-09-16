@@ -423,8 +423,8 @@ if [ "$DESKTOP" -eq 1 ]; then
     return 1
   }
   ( if wait_for_port "$UI_PORT" && { [ "$UI_ONLY" -eq 1 ] || wait_for_port "$BACKEND_PORT"; }; then
-      SHEEPIT_DESKTOP_DEV=1 SHEEPIT_VITE_PORT="$UI_PORT" SHEEPIT_DESKTOP_PORT="$BACKEND_PORT" \
-        npx electron electron/main.cjs
+      SHEEPIT_VITE_PORT="$UI_PORT" SHEEPIT_DESKTOP_PORT="$BACKEND_PORT" \
+        npm run --silent desktop:dev
     else
       echo "✗ Desktop app not started: ports did not come up in time." >&2
     fi ) &

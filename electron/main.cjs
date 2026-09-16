@@ -1,10 +1,17 @@
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const net = require('net');
 const path = require('path');
 
 const isDev = process.env.SHEEPIT_DESKTOP_DEV === '1';
 const rootDir = path.resolve(__dirname, '..');
+
+// Packaged, the bundle is Sheepit and carries icon.icns. In dev the binary is
+// node_modules/.../Electron.app, so macOS reads *its* name and icon — the
+// window you use all day says Electron. Naming the app and setting the dock
+// icon fixes what a running process can fix; the bundle itself is Electron's,
+// so the menu bar may still say so in dev.
+app.setName('Sheepit');
 const backendPort = Number(process.env.SHEEPIT_DESKTOP_PORT ?? 4445);
 const vitePort = Number(process.env.SHEEPIT_VITE_PORT ?? 4444);
 
@@ -74,6 +81,12 @@ async function ensureVite() {
 }
 
 async function createWindow() {
+  // The sheep on its pasture plate — the same icon the PWA and the packaged
+  // app use. Dev only: packaged, the bundle's own icon is already right.
+  if (isDev && app.dock) {
+    const icon = nativeImage.createFromPath(path.join(rootDir, 'ui', 'public', 'icon-512.png'));
+    if (!icon.isEmpty()) app.dock.setIcon(icon);
+  }
   await ensureBackend();
   if (isDev) await ensureVite();
 
