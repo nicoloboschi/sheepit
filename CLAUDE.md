@@ -1074,6 +1074,10 @@ macOS treat a headless renderer as background work.
 
 In dev the window loads Vite on 4444, so UI edits hot-reload as in a tab; only
 a change under `electron/` needs the app relaunched, which costs no sessions.
+`./dev.sh --desktop` starts it with the dev servers and closes it with them —
+it waits for both ports first, because `main.cjs` starts Vite and the backend
+itself when they do not answer, and launching early races it into a second
+Vite on the same port.
 
 ### The live browser
 

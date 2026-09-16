@@ -7,6 +7,7 @@ BACKEND_HOST=localhost
 UI_ONLY=0
 KEEP_DAEMON=0
 FRESH_DAEMON=0
+DESKTOP=0
 
 usage() {
   cat <<'USAGE'
@@ -19,6 +20,10 @@ Usage: ./dev.sh [options]
                          code is out of date. Never closes sessions.
   --fresh-daemon         Always replace the running PTY daemon. Closes every
                          open session.
+  --desktop              Also open the Electron window on this dev server, and
+                         close it on shutdown. The window is the same UI with
+                         hot reload; what it adds is the native browser pane.
+                         A change under electron/ still needs a restart.
 
 By default the daemon is replaced only when the code it is running differs
 from the daemon sources on disk — compared by hash, not by timestamp — so an
@@ -80,6 +85,7 @@ while [ $# -gt 0 ]; do
     --ui-only)      UI_ONLY=1; shift ;;
     --keep-daemon)  KEEP_DAEMON=1; shift ;;
     --fresh-daemon) FRESH_DAEMON=1; shift ;;
+    --desktop)      DESKTOP=1; shift ;;
     --ui-port)      need_value "$1" "${2-}"; need_port "$1" "$2"; UI_PORT="$2"; shift 2 ;;
     --backend-port) need_value "$1" "${2-}"; need_port "$1" "$2"; BACKEND_PORT="$2"; shift 2 ;;
     --backend-host) need_value "$1" "${2-}"; BACKEND_HOST="$2"; shift 2 ;;
@@ -380,8 +386,8 @@ fi
 
 cleanup() {
   echo "Shutting down..."
-  kill ${BACKEND_PID:-} ${VITE_PID:-} 2>/dev/null || true
-  wait ${BACKEND_PID:-} ${VITE_PID:-} 2>/dev/null || true
+  kill ${BACKEND_PID:-} ${VITE_PID:-} ${ELECTRON_PID:-} 2>/dev/null || true
+  wait ${BACKEND_PID:-} ${VITE_PID:-} ${ELECTRON_PID:-} 2>/dev/null || true
 }
 trap cleanup INT TERM
 
@@ -402,6 +408,29 @@ fi
 (cd ui && npx vite --host 0.0.0.0 --port "$UI_PORT") &
 VITE_PID=$!
 
+# The desktop window, on the servers this script just started.
+#
+# It waits for them first: main.cjs starts Vite (and the backend) itself when
+# their ports do not answer, so launching before they are up races it into
+# spawning a second Vite on the same port.
+if [ "$DESKTOP" -eq 1 ]; then
+  wait_for_port() {
+    local port=$1 deadline=$((SECONDS + 60))
+    while [ $SECONDS -lt $deadline ]; do
+      (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && { exec 3<&-; return 0; }
+      sleep 0.2
+    done
+    return 1
+  }
+  ( if wait_for_port "$UI_PORT" && { [ "$UI_ONLY" -eq 1 ] || wait_for_port "$BACKEND_PORT"; }; then
+      SHEEPIT_DESKTOP_DEV=1 SHEEPIT_VITE_PORT="$UI_PORT" SHEEPIT_DESKTOP_PORT="$BACKEND_PORT" \
+        npx electron electron/main.cjs
+    else
+      echo "✗ Desktop app not started: ports did not come up in time." >&2
+    fi ) &
+  ELECTRON_PID=$!
+fi
+
 echo ""
 echo "  sheepit dev:"
 echo "    UI:      http://localhost:$UI_PORT"
@@ -409,6 +438,9 @@ if [ "$UI_ONLY" -eq 1 ]; then
   echo "    Backend: not started (--ui-only), proxying to http://$BACKEND_HOST:$BACKEND_PORT"
 else
   echo "    Backend: http://localhost:$BACKEND_PORT"
+fi
+if [ "$DESKTOP" -eq 1 ]; then
+  echo "    Desktop: Sheepit window (--desktop), closes with this script"
 fi
 echo ""
 
