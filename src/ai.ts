@@ -253,6 +253,72 @@ export function readAgentTitle(transcriptPath: string): string | null {
   }
 }
 
+/**
+ * How full the agent's context is, in tokens — or null when the transcript
+ * does not say yet.
+ *
+ * Both agents record it, in different places, and both are read here:
+ *
+ *  - **Claude Code** puts a `usage` block on every assistant row. The prompt is
+ *    `input + cache_read + cache_creation`. The cached part is nearly all of
+ *    it — a real 451k-token session reports `input_tokens: 32` — so leaving it
+ *    out would report every long session as empty.
+ *  - **Codex** writes `token_usage_record` rows whose `usage.input_tokens` is
+ *    that same total, already summed.
+ *
+ * Read from the tail, for the reason `readAgentTitle` is: these files run to
+ * tens of megabytes, and only the last row is current. One 47MB transcript
+ * carried 88 assistant rows in its final 256KB, so the tail is never the
+ * binding constraint.
+ *
+ * **This is what is used, not what fits.** Neither file records the size of the
+ * model's window, so callers show a count and not a percentage — a percentage
+ * would need a number maintained by hand that goes stale when models change.
+ * The count also drops after a compaction, which is correct: it really did.
+ */
+export function readContextTokens(transcriptPath: string): number | null {
+  const TAIL = 256 * 1024;
+  let fd: number | null = null;
+  try {
+    fd = openSync(transcriptPath, 'r');
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, TAIL);
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, size - length);
+    // A *truncated* tail starts mid-line, and that first partial line is
+    // dropped rather than parsed. When the whole file fitted, line 0 is a
+    // complete row and must be read — otherwise a transcript with only one
+    // turn in it, which is every session that has just started, reports
+    // nothing at all.
+    const lines = buf.toString('utf8').split('\n');
+    const first = size > length ? 1 : 0;
+    for (let i = lines.length - 1; i >= first; i--) {
+      const line = lines[i]!;
+      if (!line.includes('"usage"')) continue;
+      let row: any;
+      try { row = JSON.parse(line); } catch { continue; }
+
+      const claude = row?.message?.usage;
+      if (claude) {
+        const n = (Number(claude.input_tokens) || 0)
+          + (Number(claude.cache_read_input_tokens) || 0)
+          + (Number(claude.cache_creation_input_tokens) || 0);
+        if (n > 0) return n;
+      }
+
+      if (row?.type === 'token_usage_record') {
+        const n = Number(row?.payload?.usage?.input_tokens) || 0;
+        if (n > 0) return n;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) try { closeSync(fd); } catch { /* already gone */ }
+  }
+}
+
 export function isRenameable(name: string, path: string | undefined, ownedName: string | undefined): boolean {
   const basename = path?.split('/').filter(Boolean).pop() ?? 'shell';
   const isDefaultName = name === basename

@@ -32,6 +32,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus } from 'lucide-react';
+import { externalClick } from '../openExternal';
+import { copyText } from '../utils';
 
 // Chrome's own zoom steps, trimmed to the useful range.
 const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -41,7 +43,6 @@ import NativeBrowserSurface, { desktopBrowser } from './NativeBrowserSurface';
 import useStore from '../store';
 import { preferences } from '../preferences';
 
-interface Listener { port: number; pid: number; name: string }
 
 /** Where a pane's last page is remembered, one key per pane.
  *
@@ -55,31 +56,6 @@ function urlKey(sessionId: string): string {
 
 function rememberedUrl(sessionId: string): string | null {
   try { return preferences.getItem(urlKey(sessionId)) || null; } catch { return null; }
-}
-
-/** Put text on this machine's clipboard.
- *
- *  `navigator.clipboard` is a secure-context API, and sheepit is routinely
- *  reached over plain http on a LAN — from a phone, from another laptop —
- *  where it is simply not there. The old `execCommand` route still works in
- *  that case, and a path nobody can copy is the whole feature missing. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch { /* insecure context, or the write was denied */ }
-  try {
-    const el = document.createElement('textarea');
-    el.value = text;
-    el.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
-    document.body.appendChild(el);
-    el.select();
-    const ok = document.execCommand('copy');
-    el.remove();
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 /** What someone typing in the address bar meant. */
@@ -111,7 +87,6 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   const [draft, setDraft] = useState(() => (initialUrl ? '' : rememberedUrl(sessionId) ?? ''));
   const [src, setSrc] = useState<string | null>(() => (initialUrl ? null : rememberedUrl(sessionId)));
   const [nav, setNav] = useState(0);
-  const [listeners, setListeners] = useState<{ own: Listener[]; others: Listener[] }>({ own: [], others: [] });
   const [live, setLive] = useState<LiveBrowserState | null>(null);
   const liveCommands = useRef<LiveBrowserCommands | null>(null);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
@@ -133,18 +108,6 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
       .catch(() => { /* stay optimistic; the surface reports the real error */ });
     return () => { alive = false; };
   }, []);
-
-  // What this pane's own processes are listening on — usually the dev server
-  // the agent just started — and then everything else on the machine, because
-  // a server you started in another window is still worth looking at.
-  useEffect(() => {
-    let alive = true;
-    fetch(`/api/fs/${encodeURIComponent(sessionId)}/ports`)
-      .then(r => r.json())
-      .then(d => { if (alive) setListeners({ own: d.own ?? [], others: d.others ?? [] }); })
-      .catch(() => { /* lsof missing: the address bar still works */ });
-    return () => { alive = false; };
-  }, [sessionId]);
 
   /** Point the browser at something. A relative sheepit path becomes absolute
    *  on loopback: the browser is on this machine, so `/api/...` is this
@@ -243,8 +206,6 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
     }
   }, [live?.url, shot?.state]);
 
-  const chips = [...listeners.own.map(l => ({ ...l, own: true })), ...listeners.others.map(l => ({ ...l, own: false }))];
-
   return (
     <div className="preview-pane" onClick={e => e.stopPropagation()}>
       <div className="preview-bar">
@@ -295,28 +256,12 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           href={live?.url && live.url !== 'about:blank' ? live.url : undefined}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={externalClick(live?.url && live.url !== 'about:blank' ? live.url : undefined)}
           title="Open in your own browser"
         >
           <ExternalLink size={12} />
         </a>
       </div>
-
-      {chips.length > 0 && (
-        <div className="preview-ports">
-          {chips.slice(0, 12).map(l => (
-            <button
-              key={`${l.pid}-${l.port}`}
-              className={`preview-port${l.own ? ' preview-port-own' : ''}`}
-              title={`${l.name} (pid ${l.pid})${l.own ? ' — started in this pane' : ''}`}
-              // 127.0.0.1, not this page's hostname: the browser runs on the
-              // machine the port is on, so this is right from a phone too.
-              onClick={() => go(`http://127.0.0.1:${l.port}`)}
-            >
-              :{l.port}<span className="preview-port-name">{l.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="preview-body">
         {server.available || desktopBrowser ? (

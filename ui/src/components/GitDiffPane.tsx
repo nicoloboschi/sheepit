@@ -4,6 +4,11 @@ import {
   GitCommitHorizontal, FolderOpen,
 } from 'lucide-react';
 import { parseDiff, type DiffFile } from '../diff';
+import { preferences } from '../preferences';
+
+const TREE_WIDTH_KEY = 'sheepit:diff-tree-width';
+const DEFAULT_TREE_WIDTH = 200;
+const clampTreeWidth = (n: number) => Math.max(120, Math.min(560, Math.round(n)));
 // Deferred: FileView drags CodeMirror and sixteen language packs behind it,
 // and a diff you have not opened needs none of them.
 const FileView = lazy(() => import('./FileView'));
@@ -20,45 +25,133 @@ interface Commit {
 }
 
 
-// ── File block ────────────────────────────────────────────────────────────────
+// ── Changed files (tree + diffs) ──────────────────────────────────────────────
 
-interface FileBlockProps {
-  file: DiffFile;
-  gitRoot: string | null;
-  /** Pane session (for the FileView content/edit + per-file diff fetch). */
-  sessionId?: string | null;
-  isFocused: boolean;
-  /** The scrolling diff container, used as the IntersectionObserver root so a
+interface ChangedFilesProps {
+  files: DiffFile[];
+  focusedIndex: number;
+  onSelect: (index: number) => void;
+  onJump: (path: string) => void;
+  /** The scrolling container, used as the IntersectionObserver root so a
    *  file's (potentially huge) diff body only mounts when near the viewport. */
   scrollRoot?: React.RefObject<HTMLDivElement | null>;
+  /** Working tree only: the repo root (so a file can be opened/edited) and the
+   *  pane session. A PR's files are not on disk, so both are absent there. */
+  gitRoot?: string | null;
+  sessionId?: string | null;
+  onOpenFile?: ((path: string) => void) | null;
 }
 
-function FileBlock({ file, gitRoot, sessionId, isFocused, scrollRoot }: FileBlockProps) {
-  const displayPath = file.isDeleted ? file.oldPath : (file.newPath || file.oldPath);
-  const absPath = gitRoot ? `${gitRoot}/${displayPath}` : null;
-  // The whole per-file UI (header, collapse, diff⇄content toggle, lazy-mounted
-  // body) is the shared FileView. `data-file` stays on the wrapper so the
-  // sidebar/keyboard "jump to file" can still scroll to it.
+/**
+ * One diff viewer, used by the working tree and by a pull request alike.
+ *
+ * The tree is a narrow column down the left that sticks as the diffs scroll
+ * past it, so it stays a way around a long change; the diffs fill the rest.
+ * This was two layouts — a tree stacked in a short box above the working-tree
+ * diff, a sticky column beside a PR's — and two layouts for the same question
+ * ("what changed") are two things to learn and one to keep in sync.
+ */
+export function ChangedFiles(
+  { files, focusedIndex, onSelect, onJump, scrollRoot, gitRoot, sessionId, onOpenFile }: ChangedFilesProps,
+) {
+  // How wide the tree is, kept across reloads: on a wide pane a deep path is
+  // worth the room, in a quad it is not.
+  const [treeWidth, setTreeWidth] = useState(
+    () => clampTreeWidth(Number(preferences.getItem(TREE_WIDTH_KEY)) || DEFAULT_TREE_WIDTH),
+  );
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = treeWidth;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+    const move = (ev: PointerEvent) => setTreeWidth(clampTreeWidth(startW + ev.clientX - startX));
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.userSelect = prevSelect;
+      preferences.setItem(TREE_WIDTH_KEY, String(clampTreeWidth(startW + ev.clientX - startX)));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  // The tree follows the scroll. Reading a diff is scrolling, not clicking, so
+  // a tree that only moved when clicked pointed at whatever you last picked —
+  // usually a file three screens back.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const selectRef = useRef(onSelect);
+  selectRef.current = onSelect;
+  const shownRef = useRef(-1);
+  useEffect(() => {
+    const root = scrollRoot?.current;
+    const body = bodyRef.current;
+    if (!root || !body) return;
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      // The file whose diff crosses the top of the viewport is the one being
+      // read; a little slack so a heading just above the edge still counts.
+      const edge = root.getBoundingClientRect().top + 12;
+      const els = body.querySelectorAll<HTMLElement>('[data-file]');
+      let idx = 0;
+      els.forEach((el, i) => { if (el.getBoundingClientRect().top <= edge) idx = i; });
+      if (idx !== shownRef.current) { shownRef.current = idx; selectRef.current(idx); }
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    root.addEventListener('scroll', onScroll, { passive: true });
+    sync();
+    return () => { root.removeEventListener('scroll', onScroll); if (frame) cancelAnimationFrame(frame); };
+  }, [scrollRoot, files]);
+
   return (
-    <div data-file={displayPath}>
-      <Suspense fallback={<div style={{ height: 32 }} />}>
-      <FileView
-        path={absPath}
-        sessionId={sessionId}
-        displayPath={displayPath}
-        defaultMode="diff"
-        editable
-        hunks={file.hunks}
-        additions={file.additions}
-        deletions={file.deletions}
-        isNew={file.isNew}
-        isDeleted={file.isDeleted}
-        isBinary={file.isBinary}
-        collapsible
-        isFocused={isFocused}
-        scrollRoot={scrollRoot}
+    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+      <div style={{ width: treeWidth, flexShrink: 0, position: 'sticky', top: 0, maxHeight: '100vh', overflowY: 'auto', display: 'flex' }}>
+        <FileSidebar
+          files={files}
+          focusedIndex={focusedIndex}
+          onJump={onJump}
+          onSelect={onSelect}
+          onOpenFile={onOpenFile ?? null}
+        />
+      </div>
+      {/* The rail between the two columns is the handle. */}
+      <div
+        onPointerDown={startResize}
+        title="Drag to resize the file tree"
+        style={{ position: 'sticky', top: 0, width: 5, height: '100vh', flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
+        onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--primary)'; }}
+        onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--border)'; }}
       />
-      </Suspense>
+      <div ref={bodyRef} style={{ flex: 1, minWidth: 0, padding: '0 12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <Suspense fallback={<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading the diff…</div>}>
+          {files.map((f, i) => {
+            const displayPath = f.isDeleted ? f.oldPath : (f.newPath || f.oldPath);
+            // `data-file` stays on the wrapper so the tree's and the keyboard's
+            // "jump to file" can scroll to it.
+            return (
+              <div key={`${displayPath}${i}`} data-file={displayPath}>
+                <FileView
+                  path={gitRoot ? `${gitRoot}/${displayPath}` : null}
+                  sessionId={sessionId}
+                  displayPath={displayPath}
+                  defaultMode="diff"
+                  editable={!!gitRoot}
+                  hunks={f.hunks}
+                  additions={f.additions}
+                  deletions={f.deletions}
+                  isNew={f.isNew}
+                  isDeleted={f.isDeleted}
+                  isBinary={f.isBinary}
+                  collapsible
+                  isFocused={i === focusedIndex}
+                  scrollRoot={scrollRoot}
+                />
+              </div>
+            );
+          })}
+        </Suspense>
+      </div>
     </div>
   );
 }
@@ -92,11 +185,31 @@ interface FileSidebarProps {
   onOpenFile: ((path: string) => void) | null;
 }
 
+/** The tree inside `ChangedFiles`, and only there — a diff is a diff, and two
+ *  file lists that drifted apart would be two different answers to "what
+ *  changed". The GitHub view used to import this and lay it out itself; it
+ *  takes the whole viewer now, so there is one layout rather than two. */
 function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: FileSidebarProps) {
   const totalAdd = files.reduce((s, f) => s + f.additions, 0);
   const totalDel = files.reduce((s, f) => s + f.deletions, 0);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const tree = useMemo(() => buildTree(files), [files]);
+
+  // Keep the pointed-at row in view. It scrolls the tree's own box and nothing
+  // above it, so it cannot push back on the diff scroll that moved the pointer
+  // in the first place.
+  const listRef = useRef<HTMLDivElement>(null);
+  const focusedRowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = listRef.current;
+    const el = focusedRowRef.current;
+    if (!box || !el) return;
+    const b = box.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const header = 28; // the sticky totals row at the top of the tree
+    if (r.top < b.top + header) box.scrollTop += r.top - b.top - header;
+    else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+  }, [focusedIndex]);
 
   const toggleDir = (dirPath: string) => {
     setCollapsedDirs(prev => {
@@ -112,6 +225,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
     return (
       <div
         key={index}
+        ref={isFocused ? focusedRowRef : undefined}
         onClick={() => { onSelect(index); onJump(path); }}
         style={{
           padding: '4px 10px', paddingLeft: 10 + depth * 12, cursor: 'pointer', borderBottom: '1px solid var(--card)',
@@ -204,7 +318,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--background)' }}>
+    <div ref={listRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--background)' }}>
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', fontSize: 11, color: 'var(--muted-foreground)', display: 'flex', gap: 6, alignItems: 'center', position: 'sticky', top: 0, zIndex: 1 }}>
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
         <span style={{ color: '#9CBC7F' }}>+{totalAdd}</span>
@@ -220,6 +334,9 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
 function FullLog({ sessionId }: { sessionId: string }) {
   const [commits, setCommits] = useState<(Commit & { date: string })[]>([]);
   const [loading, setLoading] = useState(false);
+  /** Bumped by the reload button. The log is not polled — a commit you made
+   *  yourself is the only thing that changes it — so this is how it refreshes. */
+  const [seq, setSeq] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -228,10 +345,31 @@ function FullLog({ sessionId }: { sessionId: string }) {
       .then(setCommits)
       .catch(() => setCommits([]))
       .finally(() => setLoading(false));
-  }, [sessionId]);
+  }, [sessionId, seq]);
 
-  if (loading) return <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading…</div>;
-  if (commits.length === 0) return <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>No commits</div>;
+  const bar = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0 }}>
+      <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+        {commits.length ? `${commits.length} commit${commits.length === 1 ? '' : 's'}` : ''}
+      </span>
+      <div style={{ flex: 1 }} />
+      {loading
+        ? <RefreshCw size={11} color="var(--muted-foreground)" className="animate-spin" />
+        : (
+          <button
+            onClick={() => setSeq(n => n + 1)}
+            title="Reload the log"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 0, display: 'flex' }}
+            className="hover:text-foreground"
+          >
+            <RefreshCw size={11} />
+          </button>
+        )}
+    </div>
+  );
+
+  if (loading) return <>{bar}<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading…</div></>;
+  if (commits.length === 0) return <>{bar}<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>No commits</div></>;
 
   // Group by date
   const grouped = new Map<string, typeof commits>();
@@ -242,6 +380,8 @@ function FullLog({ sessionId }: { sessionId: string }) {
   }
 
   return (
+    <>
+    {bar}
     <div style={{ flex: 1, overflowY: 'auto', padding: 0 }}>
       {[...grouped.entries()].map(([date, cs]) => (
         <div key={date}>
@@ -268,6 +408,7 @@ function FullLog({ sessionId }: { sessionId: string }) {
         </div>
       ))}
     </div>
+    </>
   );
 }
 
@@ -506,32 +647,41 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
               {totalDel > 0 && <span style={{ color: '#E0907B', marginLeft: 4 }}>-{totalDel}</span>}
             </span>
           )}
-          {loading && <RefreshCw size={11} color="var(--muted-foreground)" className="animate-spin" />}
+          {loading
+            ? <RefreshCw size={11} color="var(--muted-foreground)" className="animate-spin" />
+            : (
+              <button
+                onClick={() => load()}
+                title="Reload the working tree"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 0, display: 'flex' }}
+                className="hover:text-foreground"
+              >
+                <RefreshCw size={11} />
+              </button>
+            )}
         </div>
 
-        {/* File list (top) + diff content (bottom) — stacked vertically */}
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
-          {showSidebar && (
-            <div className="hidden md:flex flex-col" style={{ height: 220, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-              <FileSidebar
-                files={files}
-                focusedIndex={focusedFileIdx}
-                onJump={jumpToFile}
-                onSelect={setFocusedFileIdx}
-                onOpenFile={onOpenFile && gitRoot ? (relPath: string) => onOpenFile(`${gitRoot}/${relPath}`) : null}
-              />
-            </div>
-          )}
-
-          {/* Diff content */}
-          <div ref={diffRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
+        {/* The same tree-beside-diffs viewer a pull request is read in. */}
+        <div ref={diffRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          <div style={{ padding: 16, paddingBottom: 0 }}>
             {loading && <div style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>Loading…</div>}
             {error   && <div style={{ color: '#E0907B', fontSize: 13 }}>Error: {error}</div>}
             {!loading && files !== null && files.length === 0 && (
               <div style={{ color: '#9CBC7F', fontSize: 13 }}>✓  No changes</div>
             )}
-            {!loading && files?.map((file, i) => <FileBlock key={i} file={file} gitRoot={gitRoot} sessionId={sessionId} isFocused={i === focusedFileIdx} scrollRoot={diffRef} />)}
           </div>
+          {!loading && showSidebar && (
+            <ChangedFiles
+              files={files}
+              focusedIndex={focusedFileIdx}
+              onSelect={setFocusedFileIdx}
+              onJump={jumpToFile}
+              scrollRoot={diffRef}
+              gitRoot={gitRoot}
+              sessionId={sessionId}
+              onOpenFile={onOpenFile && gitRoot ? (relPath: string) => onOpenFile(`${gitRoot}/${relPath}`) : null}
+            />
+          )}
         </div>
       </>
       )}

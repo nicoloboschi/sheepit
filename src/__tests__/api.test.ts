@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import express from 'express'
 import { createServer } from 'http'
 import type { AddressInfo } from 'net'
-import { createApiRouter } from '../api.js'
+import { createApiRouter, rollupState } from '../api.js'
 import type { DirectBridge } from '../direct-bridge.js'
 import type { LogBuffer } from '../server.js'
 import type { AIService } from '../ai.js'
@@ -205,5 +205,52 @@ describe('POST /api/ai/config', () => {
     expect(body.ok).toBe(true)
     expect(mockAI.saveConfig).toHaveBeenCalled()
     expect(mockAI.restart).toHaveBeenCalled()
+  })
+})
+
+// The pane bar's PR chip and the PR browser both paint CI state, for the same
+// pull request, from this one function — so a disagreement between them would
+// be two different answers to "is it green" on one screen.
+describe('rollupState', () => {
+  const rollup = (...s: string[]) => s.map(conclusion => ({ conclusion }))
+
+  it('says nothing when there are no checks', () => {
+    expect(rollupState(undefined)).toBe(null)
+    expect(rollupState([])).toBe(null)
+    expect(rollupState('not an array')).toBe(null)
+  })
+
+  it('passes only when every check is good', () => {
+    expect(rollupState(rollup('SUCCESS'))).toBe('PASS')
+    // Neutral and skipped are not failures — a skipped job is a job that had
+    // nothing to do, and a PR full of them is green.
+    expect(rollupState(rollup('SUCCESS', 'NEUTRAL', 'SKIPPED'))).toBe('PASS')
+  })
+
+  it('fails on any failure, whatever else is running', () => {
+    expect(rollupState(rollup('SUCCESS', 'FAILURE'))).toBe('FAIL')
+    expect(rollupState(rollup('ERROR'))).toBe('FAIL')
+    expect(rollupState(rollup('CANCELLED'))).toBe('FAIL')
+    // Failure outranks pending: a run that has already lost a job is not
+    // "still deciding", and showing a spinner there reads as "wait and see".
+    expect(rollupState(rollup('PENDING', 'FAILURE'))).toBe('FAIL')
+  })
+
+  it('is pending while anything is still going', () => {
+    expect(rollupState(rollup('SUCCESS', 'PENDING'))).toBe('PENDING')
+    expect(rollupState(rollup('QUEUED'))).toBe('PENDING')
+    expect(rollupState(rollup('IN_PROGRESS'))).toBe('PENDING')
+    expect(rollupState(rollup('WAITING'))).toBe('PENDING')
+  })
+
+  it('reads `status` when a check has no `conclusion` yet', () => {
+    // A check run that has not finished carries a status and no conclusion.
+    expect(rollupState([{ status: 'IN_PROGRESS' }])).toBe('PENDING')
+    expect(rollupState([{ conclusion: 'SUCCESS', status: 'COMPLETED' }])).toBe('PASS')
+  })
+
+  it('stays silent on a state it does not recognise', () => {
+    // Better no icon than a confident wrong one — GitHub can add states.
+    expect(rollupState(rollup('SOMETHING_NEW'))).toBe(null)
   })
 })

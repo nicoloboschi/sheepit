@@ -32,6 +32,10 @@ ipcRenderer.on('browser:shortcut', (_event, { key, shiftKey }) => {
 });
 
 contextBridge.exposeInMainWorld('sheepitDesktop', {
+  /** Hand a link to the OS, so it lands in the user's own browser rather than
+   *  in another window of this app. Not under `browser` — that is the native
+   *  view a pane draws, and this is the opposite of it. */
+  openExternal: url => ipcRenderer.send('shell:open-external', url),
   browser: {
     open: (id, url) => ipcRenderer.send('browser:open', id, url),
     bounds: (id, rect) => ipcRenderer.send('browser:bounds', id, rect),

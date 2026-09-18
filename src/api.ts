@@ -67,6 +67,59 @@ async function coalesced<T>(c: Coalescer<T>, key: string, work: () => Promise<T>
   return p;
 }
 
+/**
+ * Stale-while-revalidate: answer from the cache however old it is, and refresh
+ * behind the answer once it has gone stale.
+ *
+ * `coalesced` blocks on an expired entry, which is right for `git status` at
+ * 30ms and wrong for `gh pr list` — measured at **10 seconds** on a large
+ * repository. Against a 30s TTL that made the cache nearly pointless: the cost
+ * landed in full on whoever opened a pane 31 seconds after the last one, which
+ * reads as the list just being slow, every time.
+ *
+ * So the coalescer's `ttlMs` becomes how long an answer is *kept*, and
+ * `freshMs` how long it is served without checking. Only a genuinely empty
+ * cache waits for GitHub.
+ *
+ * `keep` decides whether a refreshed answer is worth storing. Without it a
+ * background refresh that failed would quietly overwrite a good answer with an
+ * error — the foreground path drops those explicitly, and the one running
+ * behind the user's back must do the same.
+ */
+async function coalescedSWR<T>(
+  c: Coalescer<T>, key: string, freshMs: number, keep: (v: T) => boolean, work: () => Promise<T>,
+): Promise<T> {
+  const hit = c.cache.get(key);
+  if (!hit) return coalesced(c, key, work);
+
+  if (Date.now() - hit.at >= freshMs && !c.inFlight.has(key)) {
+    const p = work()
+      .then(value => {
+        if (keep(value)) c.cache.set(key, { at: Date.now(), value });
+        return value;
+      })
+      .finally(() => { c.inFlight.delete(key); });
+    c.inFlight.set(key, p);
+    p.catch(() => { /* the stale answer stands */ });
+  }
+  return hit.value;
+}
+
+/** Is this GitHub answer worth caching? One definition, used by the foreground
+ *  path to decide what to drop and by the background refresh to decide what to
+ *  store — two rules here would diverge and cache a failure exactly once. */
+function isGoodGh(value: unknown): boolean {
+  const v = value as { error?: string; prs?: unknown; issues?: unknown } | null;
+  if (!v || v.error) return false;
+  // A list with a half nobody could fetch: `null` is "GitHub did not answer".
+  if (v.prs === null || v.issues === null) return false;
+  return true;
+}
+
+/** How long a GitHub answer is served without checking. Past this it is still
+ *  served — instantly — and refreshed behind the reader. */
+const GH_FRESH_MS = 30_000;
+
 interface GitStatusValue {
   branch: string; detached: boolean; dirty: boolean; ahead: number; behind: number;
 }
@@ -111,6 +164,109 @@ async function speaksHttp(port: number): Promise<boolean> {
 // `gh pr view` is a live GitHub API round-trip (~900ms) and burns rate limit.
 // Just under the client's 30s poll, so each cycle still refreshes once.
 const githubPr = makeCoalescer<unknown>(25_000);
+
+/** The PR/issue browser's own fetches — the list, and one item with its diff.
+ *  Same round-trip cost and the same rate limit as `githubPr`, but keyed on
+ *  `cwd#kind#num` rather than the directory alone, because this one answers
+ *  for a reference you picked rather than for the branch you are on.
+ *
+ *  30s: a pull request does not change meaningfully faster than that, and the
+ *  pane has a refresh button for when you know it did. The client keeps its own
+ *  cache on the same clock, so switching tabs costs nothing at all.
+ *
+ *  Ten minutes is how long an answer is **kept**, not how long it is trusted:
+ *  `coalescedSWR` serves it instantly the whole time and refreshes it behind
+ *  the reader once it is older than `GH_FRESH_MS`. A cold `gh pr list` costs
+ *  ten seconds on a big repository, so the one thing this must never do is
+ *  make somebody wait for it twice. */
+const githubItem = makeCoalescer<unknown>(10 * 60_000);
+
+/** A PR diff is the one `gh` output here with no natural bound — a vendored
+ *  lockfile or a generated client runs to megabytes, and past a point it is
+ *  neither reviewable in a pane nor worth the wire. Cut it and say so, rather
+ *  than shipping 30MB of JSON to a browser that will choke on it. */
+const MAX_PR_DIFF = 2 * 1024 * 1024;
+
+const PR_FIELDS = 'number,title,body,state,isDraft,author,createdAt,updatedAt,mergedAt,url,baseRefName,headRefName,additions,deletions,changedFiles,labels,comments,reviewDecision,statusCheckRollup';
+const ISSUE_FIELDS = 'number,title,body,state,stateReason,author,createdAt,updatedAt,url,labels,comments';
+
+/** The thing on the other end of a link: the issues a pull request closes, or
+ *  the pull requests that close an issue. `kind` is which of those it is, so
+ *  the pane can draw the right mark and open it as the right thing. */
+interface LinkedRef { kind: 'pr' | 'issue'; number: number; title: string; state: string; stateReason: string | null; url: string; }
+
+/** **Linked references are the one thing here that has to be GraphQL.**
+ *
+ *  `gh pr view --json` has no `closingIssuesReferences`, and `gh issue view
+ *  --json` has no linked-pull-request field at all — checked against the
+ *  binary (gh 2.57.0), where both `--json` field lists are complete and
+ *  neither name appears. So the two commands this route already runs cannot
+ *  answer it, however the docs read.
+ *
+ *  `gh api graphql` can, and costs no token of our own: it is the same
+ *  signed-in `gh`. One query serves both kinds — `issueOrPullRequest` resolves
+ *  the number and the inline fragments pick the direction — so this never has
+ *  to wait to learn which kind answered, and starts alongside the view and the
+ *  diff rather than after them.
+ *
+ *  `includeClosedPrs: true` is load-bearing: the pull request that closed an
+ *  issue is usually merged, and without it the commonest case comes back
+ *  empty. */
+const LINKED_QUERY =
+  'query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$num){'
+  + '__typename'
+  // `stateReason` only on this side: these nodes are Issues, and the field
+  // does not exist on PullRequest (checked against the schema), so asking for
+  // it below would make the whole query invalid.
+  + ' ... on PullRequest{closingIssuesReferences(first:20){nodes{number title state stateReason url}}}'
+  + ' ... on Issue{closedByPullRequestsReferences(first:20,includeClosedPrs:true){nodes{number title state url}}}'
+  + '}}}';
+
+/** The first useful line of a failed command's output. `gh` leads with the
+ *  sentence that explains it ("Could not resolve to a PullRequest with the
+ *  number of 448") and follows with usage text nobody needs. */
+function firstLine(s: unknown): string {
+  return String(s ?? '').split('\n').map(l => l.trim()).find(Boolean)?.slice(0, 200) ?? '';
+}
+
+/** `owner/repo` for a working directory, or null when it has no GitHub remote.
+ *
+ *  **This is what the PR/issue caches are keyed on, not the directory.** Eight
+ *  worktrees of one repository — `memlake`, `memlake1` … `memlake7` — are eight
+ *  directories and one GitHub project, so keying by directory made each of them
+ *  fetch, rate-limit and hold its own copy of the very same pull request list.
+ *  Nothing the PR/issue routes ask for is branch-scoped: `gh pr list`,
+ *  `gh pr view N` and `gh pr diff N` all answer for the repository.
+ *
+ *  The branch's own PR (`githubPr`, `/git/:id/github`) is the exception and
+ *  stays keyed on the directory — `gh pr view` with no number resolves the PR
+ *  of whatever branch that worktree has checked out, which is the one thing
+ *  here that genuinely differs between two clones of one repo.
+ *
+ *  Long TTL: this reads a git config value that changes approximately never,
+ *  and the cost of being wrong for five minutes is one stale cache scope. */
+const repoSlugs = makeCoalescer<string | null>(5 * 60_000);
+
+function repoSlug(cwd: string): Promise<string | null> {
+  return coalesced(repoSlugs, cwd, async () => {
+    const url = await execAsync('git remote get-url origin 2>/dev/null', { cwd })
+      .then(r => r.stdout.trim()).catch(() => '');
+    const m = url.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+    return m ? `${m[1]}/${m[2]!.replace(/\.git$/, '')}` : null;
+  });
+}
+
+/** PASS / FAIL / PENDING from `statusCheckRollup`, or null when there are no
+ *  checks at all. Shared by the branch's own PR chip and the PR browser, which
+ *  must not disagree about whether CI is green on the same pull request. */
+export function rollupState(rollup: unknown): 'PASS' | 'FAIL' | 'PENDING' | null {
+  if (!Array.isArray(rollup) || rollup.length === 0) return null;
+  const statuses = rollup.map((c: any) => (c.conclusion ?? c.status ?? '').toUpperCase());
+  if (statuses.some((s: string) => s === 'FAILURE' || s === 'ERROR' || s === 'CANCELLED')) return 'FAIL';
+  if (statuses.some((s: string) => s === 'PENDING' || s === 'QUEUED' || s === 'IN_PROGRESS' || s === 'WAITING')) return 'PENDING';
+  if (statuses.every((s: string) => s === 'SUCCESS' || s === 'NEUTRAL' || s === 'SKIPPED')) return 'PASS';
+  return null;
+}
 
 function buildGitStatus(
   { branch, status, aheadBehind }: { branch: string; status: string; aheadBehind: string },
@@ -809,16 +965,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         if (pr.number) prNum = pr.number;
         if (pr.state) prState = pr.state;
         if (pr.reviewDecision) prReviewDecision = pr.reviewDecision;
-        // Derive checks status from statusCheckRollup
-        if (Array.isArray(pr.statusCheckRollup) && pr.statusCheckRollup.length > 0) {
-          const statuses = pr.statusCheckRollup.map((c: any) => (c.conclusion ?? c.status ?? '').toUpperCase());
-          if (statuses.some((s: string) => s === 'FAILURE' || s === 'ERROR' || s === 'CANCELLED'))
-            prChecks = 'FAIL';
-          else if (statuses.some((s: string) => s === 'PENDING' || s === 'QUEUED' || s === 'IN_PROGRESS' || s === 'WAITING'))
-            prChecks = 'PENDING';
-          else if (statuses.every((s: string) => s === 'SUCCESS' || s === 'NEUTRAL' || s === 'SKIPPED'))
-            prChecks = 'PASS';
-        }
+        prChecks = rollupState(pr.statusCheckRollup);
       } catch {
         // gh not available — try GitHub API as fallback
         try {
@@ -840,6 +987,259 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       res.json(value);
     } catch {
       res.json(null);
+    }
+  });
+
+  // ── The PR / issue browser ────────────────────────────────────────────────
+  // Read-only, and deliberately not a GitHub client: `gh` on this machine is
+  // already signed in, so there is no token to hold, no OAuth app to register
+  // and no API of our own to keep in step with GitHub's. Every route here is
+  // one `gh` call whose JSON is passed through.
+  //
+  // Both go through `githubItem` for the reason `githubPr` exists — these are
+  // live API round-trips against a rate limit, and every pane of a pen polls
+  // for itself.
+
+  router.get('/git/:sessionId/gh/list', async (req, res) => {
+    try {
+      const cwd = getSessionCwd(req.params.sessionId);
+      if (!cwd) return res.json(null);
+      // Both are whitelisted rather than escaped — they are interpolated into
+      // a command line, and a fixed set of words is a stronger guarantee than
+      // quoting. `gh issue list` has no `merged` state, so an issue query for
+      // it answers nothing instead of failing the whole call.
+      const stateQ = String(req.query.state ?? 'open').toLowerCase();
+      const state = ['open', 'closed', 'merged', 'all'].includes(stateQ) ? stateQ : 'open';
+      const kindQ = String(req.query.kind ?? 'both').toLowerCase();
+      const kind = ['pr', 'issue', 'both'].includes(kindQ) ? kindQ : 'both';
+
+      // Keyed on the repository, so every worktree of it shares one answer.
+      // Falls back to the directory when there is no GitHub remote, or every
+      // such directory would collide under one empty key.
+      const slug = await repoSlug(cwd);
+      const scope = slug ?? cwd;
+      const key = `${scope}#list#${kind}#${state}`;
+      const value = await coalescedSWR(githubItem, key, GH_FRESH_MS, isGoodGh, async () => {
+        // **`null` means the call failed; `[]` means there is nothing.**
+        //
+        // These were the same empty array, and the cost was a confident lie: a
+        // `gh` that had hit its rate limit, lost the network or been logged
+        // out rendered as "None." — the same thing a repository with no open
+        // pull requests renders as — and the 30s cache then held that on
+        // screen for half a minute. A list that cannot say "I don't know" will
+        // eventually say something false instead.
+        const run = (cmd: string) => execAsync(cmd, { cwd, maxBuffer: 8 * 1024 * 1024 })
+          .then(r => r.stdout.trim()).catch(() => null);
+        // **Never ask a list for `statusCheckRollup`.** It is the check runs of
+        // every row — measured on one repository: 0.73s and 9.7KB without it,
+        // 10.1s and 633KB with it, for one word per row that the list then
+        // reduces to a dot. On closed pull requests it does not merely cost
+        // that, it fails: `gh` exits 1 with "unexpected end of JSON input", so
+        // the half comes back `null`, is rightly refused by the cache, and
+        // every later look pays the eleven seconds again. A list that is never
+        // cacheable is a list that always loads.
+        //
+        // The detail view still shows checks, and should: `gh pr view` asks for
+        // one pull request, where the rollup is affordable and is the whole
+        // point of the panel.
+        const wantPrs = kind !== 'issue';
+        const wantIssues = kind !== 'pr' && state !== 'merged';
+        // '[]' rather than '' for the half nobody asked for: that is a real
+        // empty answer, and must not read as a failure.
+        const [prRaw, issueRaw] = await Promise.all([
+          wantPrs
+            ? run(`gh pr list --state ${state} --limit 30 --json number,title,author,state,isDraft,updatedAt,url 2>/dev/null`)
+            : Promise.resolve('[]'),
+          wantIssues
+            // `stateReason` is on the issue list and NOT on the pull request
+            // one — pull requests have no such field, and asking for it would
+            // exit non-zero and null the whole PR half. It is what tells a
+            // resolved issue from an abandoned one, which is a colour here and
+            // not a detail: closed-as-completed is done, not broken.
+            ? run(`gh issue list --state ${state} --limit 30 --json number,title,author,state,stateReason,updatedAt,url 2>/dev/null`)
+            : Promise.resolve('[]'),
+        ]);
+        const parse = (raw: string | null, k: 'pr' | 'issue') => {
+          if (raw === null) return null;
+          try {
+            const rows = JSON.parse(raw || '[]');
+            if (!Array.isArray(rows)) return null;
+            return rows.map(({ author, ...r }: any) => ({
+              ...r, kind: k, author: author?.login ?? '',
+            }));
+          } catch { return null; }
+        };
+        // The repository this answer belongs to. The client keys its own cache
+        // on it, and cannot know it before asking — so every answer says.
+        return { prs: parse(prRaw, 'pr'), issues: parse(issueRaw, 'issue'), state, kind, repo: slug };
+      });
+      // A failure is never cached. Holding one for 30s means the refresh button
+      // returns the same failure it was pressed to clear, which reads as the
+      // button being broken.
+      if (!isGoodGh(value)) githubItem.cache.delete(key);
+      res.json(value);
+    } catch {
+      res.json(null);
+    }
+  });
+
+  router.get('/git/:sessionId/gh/:kind/:num', async (req, res) => {
+    try {
+      const { kind } = req.params;
+      const num = Number(req.params.num);
+      if (kind !== 'pr' && kind !== 'issue') return res.status(400).json({ error: 'bad kind' });
+      if (!Number.isSafeInteger(num) || num <= 0) return res.status(400).json({ error: 'bad number' });
+      // `repo` reaches a shell, and a reference can name any repository — so it
+      // is checked against GitHub's own name shape rather than merely escaped.
+      // This endpoint is reachable by anything that can reach sheepit.
+      const repoQ = typeof req.query.repo === 'string' ? req.query.repo : '';
+      const repo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoQ) ? repoQ : null;
+      const cwd = getSessionCwd(req.params.sessionId);
+      if (!cwd) return res.json(null);
+
+      // Not keyed on the requested kind: both kinds of request for one number
+      // resolve to the same thing, so keying on it would fetch it twice. Keyed
+      // on the repository rather than the directory for the same reason the
+      // list is — and an explicit `?repo=` names one directly, so a link to
+      // somebody else's PR is shared by every pane that opens it.
+      const slug = repo ?? (await repoSlug(cwd));
+      const scope = slug ?? cwd;
+      const key = `${scope}#ref#${num}`;
+      const value = await coalescedSWR(githubItem, key, GH_FRESH_MS, isGoodGh, async () => {
+        const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+        const repoArg = repo ? ` --repo ${sh(repo)}` : '';
+
+        // **The kind in the URL is a hint, not an answer.** Pull requests and
+        // issues share one numbering sequence, so a bare `#448` typed into the
+        // search says nothing about which it is — and neither does a
+        // `/issues/N` link, which GitHub happily redirects to a PR.
+        //
+        // `gh pr view N` is the probe, because it succeeds ONLY for a pull
+        // request: on an issue it fails with "Could not resolve to a
+        // PullRequest with the number of N". `gh issue view N` answers for
+        // BOTH, which makes it the right fallback and the wrong probe —
+        // asking it first would label every pull request an issue and
+        // silently drop its diff.
+        // Started alongside the view, not after it. These are two independent
+        // round trips — measured here at 1.40s for the view and 0.85s for the
+        // diff — and waiting to learn it is a pull request before asking for
+        // the diff simply added them together on every cold open.
+        //
+        // If the number turns out to be an issue this is thrown away, which
+        // costs one cheap failed call; that is less than the second every pull
+        // request was paying. It carries its own `catch`, so nothing is left
+        // rejecting when nobody awaits it.
+        const diffPromise = execAsync(`gh pr diff ${num}${repoArg}`, { cwd, maxBuffer: 64 * 1024 * 1024 })
+          .then(r => r.stdout)
+          .catch(() => '');
+
+        // Linked references, in parallel with both of the above — see
+        // LINKED_QUERY for why this one call is GraphQL and the two beside it
+        // are not. It carries its own `catch`: a repository with no GitHub
+        // remote, or a token without the scope, loses the links and keeps the
+        // pull request.
+        const linkedPromise = (async (): Promise<LinkedRef[]> => {
+          const [owner, name] = (slug ?? '').split('/');
+          if (!owner || !name) return [];
+          try {
+            const { stdout } = await execAsync(
+              `gh api graphql -f o=${sh(owner)} -f n=${sh(name)} -F num=${num} -f query=${sh(LINKED_QUERY)}`,
+              { cwd, maxBuffer: 4 * 1024 * 1024 },
+            );
+            const node = JSON.parse(stdout)?.data?.repository?.issueOrPullRequest;
+            if (!node) return [];
+            // Which side answered decides what the nodes ARE: the issues a pull
+            // request closes, or the pull requests that close an issue.
+            const isPr = node.__typename === 'PullRequest';
+            const nodes = isPr
+              ? node.closingIssuesReferences?.nodes
+              : node.closedByPullRequestsReferences?.nodes;
+            return (Array.isArray(nodes) ? nodes : [])
+              .filter((n: any) => Number.isSafeInteger(n?.number))
+              .map((n: any) => ({
+                kind: (isPr ? 'issue' : 'pr') as 'pr' | 'issue',
+                number: n.number,
+                title: n.title ?? '',
+                state: String(n.state ?? '').toUpperCase(),
+                // Null for a linked pull request, which has no such field.
+                stateReason: n.stateReason ?? null,
+                url: n.url ?? '',
+              }));
+          } catch { return []; }
+        })();
+
+        let it: any = null;
+        let actual: 'pr' | 'issue' = 'pr';
+        let reason = '';
+        for (const k of ['pr', 'issue'] as const) {
+          try {
+            const { stdout } = await execAsync(
+              `gh ${k} view ${num}${repoArg} --json ${k === 'pr' ? PR_FIELDS : ISSUE_FIELDS}`,
+              { cwd, maxBuffer: 8 * 1024 * 1024 },
+            );
+            it = JSON.parse(stdout);
+            actual = k;
+            break;
+          } catch (e: any) {
+            reason = firstLine(e?.stderr || e?.message);
+          }
+        }
+        // The reason, not a bare null. "Could not resolve to a PullRequest",
+        // "gh: command not found" and an expired token are three different
+        // problems with three different fixes, and a pane that says only
+        // "could not load" sends you off to guess which one you have.
+        if (!it) return { error: reason || 'GitHub did not answer' };
+
+        // Only a PR has a diff, and it is the one output here with no natural
+        // bound — so it is the only one that is capped.
+        let diff = actual === 'pr' ? await diffPromise : '';
+        let diffTruncated = false;
+        if (diff.length > MAX_PR_DIFF) { diff = diff.slice(0, MAX_PR_DIFF); diffTruncated = true; }
+
+        return {
+          // What actually answered, so the pane draws the right mark and does
+          // not sit waiting for a diff an issue will never have.
+          kind: actual,
+          // The repository it belongs to — the client keys its cache on it.
+          repo: slug,
+          number: it.number, title: it.title, body: it.body ?? '',
+          state: it.state, stateReason: it.stateReason ?? null, isDraft: !!it.isDraft,
+          author: it.author?.login ?? '', url: it.url,
+          createdAt: it.createdAt, updatedAt: it.updatedAt, mergedAt: it.mergedAt ?? null,
+          baseRefName: it.baseRefName ?? null, headRefName: it.headRefName ?? null,
+          additions: it.additions ?? 0, deletions: it.deletions ?? 0, changedFiles: it.changedFiles ?? 0,
+          reviewDecision: it.reviewDecision ?? null,
+          checks: rollupState(it.statusCheckRollup),
+          // The individual runs, so a red PR can say WHICH job is red and link
+          // straight to it. The link leaves for the real browser — a CI log is
+          // a live, JavaScript-driven page, and this pane renders none of that.
+          // Two shapes arrive here: CheckRun (a GitHub Action) and
+          // StatusContext (an external reporter), which name the same three
+          // things differently.
+          checkRuns: (Array.isArray(it.statusCheckRollup) ? it.statusCheckRollup : [])
+            .slice(0, 40)
+            .map((c: any) => ({
+              name: c.name ?? c.context ?? '',
+              workflow: c.workflowName ?? '',
+              conclusion: (c.conclusion ?? c.state ?? c.status ?? '').toUpperCase(),
+              url: c.detailsUrl ?? c.targetUrl ?? '',
+            })),
+          labels: (it.labels ?? []).map((l: any) => ({ name: l.name, color: l.color })),
+          comments: (it.comments ?? []).map((c: any) => ({
+            author: c.author?.login ?? '', body: c.body ?? '', createdAt: c.createdAt,
+          })),
+          // The issues this pull request closes, or the pull requests that
+          // close this issue. The pane makes each one a button that opens it
+          // here, so following a link never leaves for the browser.
+          linked: await linkedPromise,
+          diff, diffTruncated,
+        };
+      });
+      // A failure is never cached — the refresh button must be able to clear it.
+      if (!isGoodGh(value)) githubItem.cache.delete(key);
+      res.json(value);
+    } catch (e: any) {
+      res.json({ error: firstLine(e?.stderr || e?.message || e) || 'GitHub did not answer' });
     }
   });
 
@@ -909,6 +1309,20 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       res.json({ path: worktreePath });
     } catch (e) {
       res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Which repository a pane is in, and nothing else: one `git remote` read,
+  // cached for five minutes. The client asks this *before* it asks for a list,
+  // because the caches are keyed on `owner/repo` and until a new pane knows
+  // that, it has nothing to look its repository's answer up under — so it
+  // would fetch a list eight other panes already have.
+  router.get('/git/:sessionId/repo', async (req, res) => {
+    try {
+      const cwd = getSessionCwd(req.params.sessionId);
+      res.json({ repo: cwd ? await repoSlug(cwd) : null });
+    } catch {
+      res.json({ repo: null });
     }
   });
 

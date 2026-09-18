@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, ScrollText } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
+import { openExternal } from '../openExternal';
 import GitDiffPane from './GitDiffPane';
+import GithubPane, { type GhRef } from './GithubPane';
 import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
 import { TERMINAL_THEMES, TERMINAL_LINE_HEIGHT } from '../theme';
@@ -97,25 +99,29 @@ interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
  * What one pane is showing.
  *
  *   terminal      the terminal, alone
- *   split         terminal + the file browser, resizable
- *   split-preview terminal + the embedded browser, resizable
- *   working       the working-tree diff, full pane
- *   log           the git log, full pane
+ *   split-preview terminal + the embedded browser
+ *   split-github  terminal + pull requests and issues
+ *   working       terminal + the working-tree diff
+ *   log           terminal + the commit log
+ *   split         terminal + the file browser
  *
- * **Files and the browser are never shown alone**, which is why there is no
- * 'files' or 'preview' in this union any more. Reading a file or watching a dev
- * server is something you do *while* working in the terminal — a pane that
- * gave the whole width to a file tree had hidden the thing the pane is for. Git
- * is the exception and takes the pane: a diff is wide, and reading one is its
- * own activity rather than an accompaniment to typing.
+ * **Nothing is ever shown alone, and the terminal is never hidden**, which is
+ * why there is no 'files' or 'preview' in this union any more. Reading a file,
+ * a diff or a dev server is something you do *while* working in the terminal —
+ * a pane that gave the whole width to one of them had hidden the thing the
+ * pane is for.
+ *
+ * The last four are **one group behind one rail** (`GIT_TABS`): GitHub, the
+ * working tree, the log, and the files. `split` keeps its name — it is the
+ * oldest of them and the persisted value — but it is reached from the rail
+ * now, not from the pane bar's switch.
  */
-export type PaneView = 'terminal' | 'split' | 'split-preview' | 'working' | 'log';
+export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
-/** Views that keep the terminal on screen — the ones where xterm has a size
- *  and has to be refitted when the pane comes back to it. */
-export function showsTerminal(view: PaneView): boolean {
-  return view === 'terminal' || view === 'split' || view === 'split-preview';
-}
+// `showsTerminal()` used to live here, answering "does xterm have a size right
+// now". Every view keeps the terminal since the git group became a split, so
+// the honest answer was always `true` — and a predicate that cannot say no is
+// one every reader has to check for themselves before trusting a branch on it.
 function readPaneView(sid: string): PaneView | undefined {
   try {
     const raw = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}')[sid];
@@ -124,9 +130,60 @@ function readPaneView(sid: string): PaneView | undefined {
     // terminal, so a pane persisted in one of them opens in the split it means.
     if (raw === 'files') return 'split';
     if (raw === 'preview') return 'split-preview';
-    return (['terminal', 'split', 'split-preview', 'working', 'log'] as const).includes(raw) ? raw : undefined;
+    // GitHub took the whole pane for one release, and now sits beside the
+    // terminal like the other two things you read while typing.
+    if (raw === 'github') return 'split-github';
+    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
+/** The git family's tabs, as a rail rather than a strip. Vertical because the
+ *  GitHub view now sits in half a pane: four labelled buttons across the top
+ *  of a 400px column is most of that column, while a 28px rail down its edge
+ *  costs the diff nothing. GitHub leads it — reviewing is what you come here
+ *  to do, and the working tree is one click away.
+ *
+ *  **The file browser is the last of them**, and it is here rather than in the
+ *  pane bar's switch because it answers the same question the other three do —
+ *  what is in this repository — and you move between a diff and the file it
+ *  changed constantly. On the rail that is one click that does not change the
+ *  pane's shape; as a separate top-level view it was a different half-pane
+ *  arriving in place of the one you were reading. It is last because it is the
+ *  only one that is not about a change. */
+const GIT_TABS = [
+  { id: 'split-github' as const, Icon: Github,     label: 'GitHub — pull requests and issues' },
+  { id: 'working' as const,      Icon: Diff,       label: 'Working tree' },
+  { id: 'log' as const,          Icon: ScrollText, label: 'Git log' },
+  { id: 'split' as const,        Icon: FolderTree, label: 'Files' },
+];
+
+function GitTabRail({ view, onPick }: { view: PaneView; onPick: (v: PaneView) => void }) {
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 3px',
+        borderRight: '1px solid var(--border)', background: 'var(--secondary)', flexShrink: 0,
+      }}
+    >
+      {GIT_TABS.map(({ id, Icon, label }) => (
+        <button
+          key={id}
+          title={label}
+          onClick={() => onPick(id)}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 22, height: 22, borderRadius: 4, border: 'none', cursor: 'pointer',
+            background: view === id ? 'var(--primary)' : 'none',
+            color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+          }}
+        >
+          <Icon size={12} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function savePaneView(sid: string, view: PaneView): void {
   try {
     const map = JSON.parse(preferences.getItem(PANE_VIEW_KEY) || '{}');
@@ -302,8 +359,15 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** Counts openings, not URLs — see handleWebLink. */
   const [previewNav, setPreviewNav] = useState(0);
+  /** The PR or issue the GitHub view is reading, or null for its list. Lives
+   *  here rather than in GithubPane because two things outside that pane put a
+   *  reference into it: a github.com link clicked in the terminal, and the PR
+   *  chip in the pane bar. */
+  const [githubRef, setGithubRef] = useState<GhRef | null>(null);
   /** The terminal is sharing the pane with something — files or the browser. */
-  const isSplit = view === 'split' || view === 'split-preview';
+  /** Everything except the bare terminal shares the pane with something: files,
+   *  the browser, or one of the three git views. */
+  const isSplit = view !== 'terminal';
   const openFileRef = useRef<((path: string) => void) | null>(null);
   // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
   // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
@@ -361,7 +425,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     if (!isActive) return;
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
-        const order: PaneView[] = ['terminal', 'split', 'split-preview', 'working', 'log'];
+        // Switch order, then rail order — so cycling walks the pane's own
+        // buttons top to bottom rather than around them. Files is last for the
+        // same reason it is last on the rail.
+        const order: PaneView[] = ['terminal', 'split-preview', 'split-github', 'working', 'log', 'split'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
@@ -410,12 +477,25 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
    *  which would nest the app inside itself. The preview bar's own "open
    *  externally" button is the fourth way out, after you have looked. */
   const handleWebLink = useCallback((event: MouseEvent | undefined, rawUrl: string) => {
-    const external = () => window.open(rawUrl, '_blank', 'noopener');
+    // The user's own browser, not another window of this app — see openExternal.
+    const external = () => openExternal(rawUrl);
     if (event?.metaKey || event?.ctrlKey || event?.shiftKey) { external(); return; }
     let parsed: URL;
     try { parsed = new URL(rawUrl); } catch { external(); return; }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { external(); return; }
     if (parsed.host === window.location.host) { external(); return; }
+    // A pull request or an issue opens in the pane's own GitHub view instead
+    // of its browser: reviewing one is reading a title, a description and a
+    // diff, which is a thing this pane renders better than a streamed page.
+    //
+    // Any repository, not only this pane's — `gh` is signed in to all of them,
+    // and an agent that printed a link to somebody else's PR meant that PR.
+    const gh = parsed.host === 'github.com' && parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)/);
+    if (gh) {
+      setGithubRef({ kind: gh[3] === 'issues' ? 'issue' : 'pr', num: Number(gh[4]), repo: `${gh[1]}/${gh[2]}` });
+      setView('split-github');
+      return;
+    }
     setPreviewUrl(rawUrl);
     // Bumped even when the URL is unchanged: after you have clicked through to
     // somewhere else inside the pane browser, clicking the same link again
@@ -425,6 +505,21 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   }, []);
   const handleWebLinkRef = useRef(handleWebLink);
   handleWebLinkRef.current = handleWebLink;
+
+  /** The pane bar's PR chip opens a reference in THIS pane's GitHub view. A
+   *  window event rather than props: the chip lives three components away
+   *  inside PaneHeader → StatChips, and this is the channel the tab-active
+   *  refit already uses. Each pane answers only for its own id. */
+  useEffect(() => {
+    const onOpenRef = (e: Event) => {
+      const d = (e as CustomEvent).detail as ({ sessionId: string } & GhRef) | undefined;
+      if (!d || d.sessionId !== sessionId) return;
+      setGithubRef({ kind: d.kind, num: d.num, repo: d.repo });
+      setView('split-github');
+    };
+    window.addEventListener('sheepit:open-gh-ref', onOpenRef);
+    return () => window.removeEventListener('sheepit:open-gh-ref', onOpenRef);
+  }, [sessionId]);
 
   /** The size the PTY was last told about, so an unchanged one is not resent.
    *  Cleared on a reconnect, where the server has to be told again. */
@@ -1073,16 +1168,17 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     return () => window.removeEventListener('sheepit:terminal-tab-active', handler);
   }, [isActive]);
 
-  // Switching this pane back to the terminal view un-hides the xterm container,
-  // which had zero size while git was showing — refit + refocus so cols/rows
-  // match the pane and the PTY is told the new size.
+  // Changing this pane's view resizes the terminal — entering a split hands
+  // half its width to the other half, and leaving one hands it back — so refit
+  // + refocus, making cols/rows match the box and telling the PTY about it.
+  // (It used to guard on the terminal being hidden at all. Nothing hides it any
+  // more; every view is a split, and a split is still a resize.)
   //
   // `stacked` is in the deps for the same reason: flipping a split from columns
   // to rows changes the terminal's box without changing the view, and an
   // unfitted xterm draws more columns than it has room for, so the right of
   // every line is simply not there.
   useEffect(() => {
-    if (!showsTerminal(view)) return;
     const id = setTimeout(() => {
       safeFit();
       if (isActive) termRef.current?.focus();
@@ -1560,10 +1656,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
           .terminal-pane fills only this area (below the header), and the
           active-pane / drag overlays sit on top of the terminal only. */}
       <div ref={paneBodyRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      {/* Terminal view — kept mounted (display toggled) so xterm preserves its
-          scrollback while git/files is showing. In 'split' it shares the row
-          with the file browser on the right, separated by a resizable handle. */}
-      <div style={{ position: 'absolute', inset: 0, display: showsTerminal(view) ? 'flex' : 'none', flexDirection: stacked ? 'column' : 'row' }}>
+      {/* Terminal view — always on screen. In every view but 'terminal' it
+          shares the row with the other half (files, the browser, or a git
+          view), separated by a resizable handle. */}
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: stacked ? 'column' : 'row' }}>
       {/* Terminal column — full width normally, fixed % in split. */}
       <div style={{
         position: 'relative', minWidth: 0, minHeight: 0, overflow: 'hidden',
@@ -1661,9 +1757,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       )}
       </div>{/* /terminal column */}
 
-      {/* The other half of a split: the file browser, or the embedded browser.
-          One divider and one stored width for both, because it is the same
-          question — how much of the pane is not the terminal. */}
+      {/* The other half of a split: the file browser, the embedded browser, or
+          the git group. One divider and one stored width for all of them,
+          because it is the same question — how much of the pane is not the
+          terminal. */}
       {isSplit && (
         <>
           <div
@@ -1674,72 +1771,44 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
               : { width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
           />
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
-            {view === 'split' ? (
-              <FilesPane
-                sessionId={sessionId}
-                openFileRef={openFileRef}
-                onFileSelect={() => setFilesHighlightLine(null)}
-                highlightLine={filesHighlightLine}
-                onPreviewFile={(path: string) => {
-                  setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
-                  setView('split-preview');
-                }}
-              />
-            ) : (
+            {view === 'split-preview' ? (
               <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
+            ) : (
+              // The git group — all four of it, the file browser included. They
+              // share the rail, so moving between a pull request, what you have
+              // changed, what you have committed and the files themselves is one
+              // click and never changes the pane's shape. That is what makes
+              // "open this file" below a move along the rail rather than a
+              // different half-pane replacing the one you were reading.
+              <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+                <GitTabRail view={view} onPick={setView} />
+                {view === 'split-github' ? (
+                  <GithubPane sessionId={sessionId} selected={githubRef} onSelect={setGithubRef} />
+                ) : view === 'split' ? (
+                  <FilesPane
+                    sessionId={sessionId}
+                    openFileRef={openFileRef}
+                    onFileSelect={() => setFilesHighlightLine(null)}
+                    highlightLine={filesHighlightLine}
+                    onPreviewFile={(path: string) => {
+                      setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                      setView('split-preview');
+                    }}
+                  />
+                ) : (
+                  <GitDiffPane
+                    sessionId={sessionId}
+                    mode={view === 'log' ? 'log' : 'head'}
+                    onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
+                  />
+                )}
+              </div>
             )}
           </div>
         </>
       )}
       </div>{/* /terminal+split row */}
 
-      {/* Git takes the whole pane: a diff is wide, and reading one is its own
-          activity rather than something you do while typing. Files and the
-          browser used to live in this group too and no longer do — they are
-          only ever shown beside the terminal. */}
-      {!showsTerminal(view) && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--card)' }}>
-          {/* Sub-switcher — working tree and log, full width. */}
-          <div
-            style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid var(--border)', background: 'var(--secondary)', flexShrink: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', width: '100%', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-              {([
-                { id: 'working', icon: <Diff size={11} />,       label: 'Working tree' },
-                { id: 'log',     icon: <ScrollText size={11} />, label: 'Git log' },
-              ] as const).map(({ id, icon, label }) => (
-                <button
-                  key={id}
-                  onClick={() => setView(id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                    flex: 1, fontSize: 11, padding: '4px 9px',
-                    background: view === id ? 'var(--primary)' : 'none',
-                    color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
-                    border: 'none', borderRight: id !== 'log' ? '1px solid var(--border)' : 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {icon}{label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Active panel */}
-          <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            {(view === 'working' || view === 'log') && (
-              <GitDiffPane
-                sessionId={sessionId}
-                mode={view === 'log' ? 'log' : 'head'}
-                onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
-              />
-            )}
-
-          </div>
-        </div>
-      )}
       {/* Active pane border overlay — at the pane-body level so it outlines the
           WHOLE pane (terminal + files in split view, or the git/files panel),
           making it clear a split is still a single pane. */}

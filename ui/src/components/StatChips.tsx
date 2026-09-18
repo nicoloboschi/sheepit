@@ -3,6 +3,7 @@ import { GitBranch, GitCommitHorizontal, GitPullRequest, CircleDot, Github, GitF
 import { useStats } from '../hooks/useStats';
 import { useGit, useGithubPR, type GitStatus, type GithubPR } from '../hooks/useGit';
 import useStore from '../store';
+import { externalClick, openExternal } from '../openExternal';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -251,7 +252,7 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
             href={github.repoUrl}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e: React.MouseEvent<HTMLElement>) => e.stopPropagation()}
+            onClick={externalClick(github.repoUrl)}
             title="Open repository on GitHub"
             style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto', color: 'var(--muted-foreground)', textDecoration: 'none', fontSize: 11, flexShrink: 0 }}
             className="hover:text-foreground"
@@ -283,10 +284,32 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
                 href={href ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e: React.MouseEvent<HTMLElement>) => e.stopPropagation()}
+                onClick={(e: React.MouseEvent<HTMLElement>) => {
+                  e.stopPropagation();
+                  // A plain click reads the reference in this pane's own
+                  // GitHub view — the point of having one is not going to the
+                  // browser to review. A modifier click still leaves for the
+                  // real browser, the same escape hatch a URL clicked in the
+                  // terminal has, and it stays an <a> so "open in new tab"
+                  // keeps working from the context menu. That escape hatch has
+                  // to go to the REAL browser, which inside the desktop shell
+                  // means asking the OS rather than letting `_blank` open yet
+                  // another Electron window.
+                  e.preventDefault();
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                    if (href) openExternal(href);
+                    return;
+                  }
+                  const m = pr.url?.match(GH_REF_RE);
+                  const target = pr.repo ?? (m ? `${m[1]}/${m[2]}` : repo);
+                  window.dispatchEvent(new CustomEvent('sheepit:open-gh-ref', {
+                    detail: { sessionId, kind: pr.kind, num: pr.num, repo: target ?? undefined },
+                  }));
+                }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   textDecoration: 'none', padding: '3px 4px', borderRadius: 4,
+                  cursor: 'pointer',
                 }}
                 className="hover:bg-white/5"
               >
@@ -416,51 +439,95 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
   const topPr: PrRef | null = refs[0]
     ?? (github?.prNum ? { kind: 'pr', num: github.prNum, url: github.prUrl ?? undefined } : null);
   const extraCount = Math.max(0, refs.length - 1);
+  // Where that reference lives, for the chip below: the same two questions the
+  // popover's rows answer — a URL to leave for on a modifier click, and the
+  // repository to open it *as*, which is the reference's own and only falls
+  // back to the pane's.
+  const repo: string | null = github?.owner && github?.repo ? `${github.owner}/${github.repo}` : null;
+  const topHref: string | null = topPr ? refUrl(topPr, repo) : null;
+  const topRepo: string | undefined = topPr
+    ? (topPr.repo ?? topPr.url?.match(GH_REF_RE)?.slice(1, 3).join('/') ?? repo ?? undefined)
+    : undefined;
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <button
-          style={{
-            display: 'flex', alignItems: 'center', gap: 3,
-            background: 'none', border: 'none', cursor: 'pointer',
-            padding: '1px 4px', borderRadius: 4,
-            lineHeight: 1,
-          }}
-          className="hover:bg-white/5"
-          title="Git info"
-        >
-          {/* The branch NAME is gone from the bar, and with it ahead/behind.
-              It was the only arbitrary-length string up here, so it set the
-              chip's width — and a long one squeezed the pane's title, which
-              matters more. The full branch, its counts and everything else
-              are one click away in the popover this icon opens, and the icon
-              still carries the dirty signal in its colour. The pen card in
-              the sidebar keeps the branch too. */}
-          <GitBranch size={11} style={{ color: branchColor, flexShrink: 0 }} />
-          {topPr && topPr.num > 0 && (() => {
-            // State and checks come from `gh pr view`, which answers for the
-            // branch. They belong to this number only when the two agree —
-            // otherwise the bar would paint one PR's checks onto another's.
-            const isBranchPr = github?.prNum === topPr.num;
-            const prState = isBranchPr ? github?.prState : null;
-            const prColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
-            const checks = isBranchPr ? github?.prChecks : null;
-            const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : checks === 'PENDING' ? Clock : null;
-            const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
-            const RefIcon = topPr.kind === 'issue' ? CircleDot : GitPullRequest;
-            return (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, color: prColor }}>
-                <RefIcon size={8} strokeWidth={2} />#{topPr.num}
-                {CheckIcon && <CheckIcon size={7} strokeWidth={2.5} style={{ color: checkColor }} />}
-                {extraCount > 0 && (
-                  <span style={{ fontSize: 8, opacity: 0.7 }}>+{extraCount}</span>
-                )}
-              </span>
-            );
-          })()}
-        </button>
-      </PopoverTrigger>
+      {/* Two controls, not one. The branch icon opens the popover; the
+          reference beside it opens that reference. It used to be a single
+          button with the number as a plain span inside it, so clicking the
+          thing that looks most like a link — `#3993` — opened the git popover
+          instead of the pull request.
+
+          They are siblings rather than nested for a reason worth keeping: a
+          `<button>` may not contain another interactive element, and faking
+          one with `role="button"` inside the trigger would have taken the
+          keyboard and the screen reader with it. */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 3, lineHeight: 1 }}>
+        <PopoverTrigger asChild>
+          <button
+            style={{
+              display: 'flex', alignItems: 'center',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '1px 4px', borderRadius: 4,
+              lineHeight: 1,
+            }}
+            className="hover:bg-white/5"
+            title="Git info"
+          >
+            {/* The branch NAME is gone from the bar, and with it ahead/behind.
+                It was the only arbitrary-length string up here, so it set the
+                chip's width — and a long one squeezed the pane's title, which
+                matters more. The full branch, its counts and everything else
+                are one click away in the popover this icon opens, and the icon
+                still carries the dirty signal in its colour. The pen card in
+                the sidebar keeps the branch too. */}
+            <GitBranch size={11} style={{ color: branchColor, flexShrink: 0 }} />
+          </button>
+        </PopoverTrigger>
+        {topPr && topPr.num > 0 && (() => {
+          // State and checks come from `gh pr view`, which answers for the
+          // branch. They belong to this number only when the two agree —
+          // otherwise the bar would paint one PR's checks onto another's.
+          const isBranchPr = github?.prNum === topPr.num;
+          const prState = isBranchPr ? github?.prState : null;
+          const prColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
+          const checks = isBranchPr ? github?.prChecks : null;
+          const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : checks === 'PENDING' ? Clock : null;
+          const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
+          const RefIcon = topPr.kind === 'issue' ? CircleDot : GitPullRequest;
+          return (
+            <button
+              onClick={(e: React.MouseEvent<HTMLElement>) => {
+                e.stopPropagation();
+                e.preventDefault();
+                // The same split the popover's rows make: a plain click reads
+                // it in this pane's own GitHub view, a modifier click leaves
+                // for the real browser.
+                if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                  if (topHref) openExternal(topHref);
+                  return;
+                }
+                window.dispatchEvent(new CustomEvent('sheepit:open-gh-ref', {
+                  detail: { sessionId, kind: topPr.kind, num: topPr.num, repo: topRepo },
+                }));
+              }}
+              title={`Open #${topPr.num} in this pane's GitHub view — ⌘-click for github.com`}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 2,
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '1px 3px', borderRadius: 4, lineHeight: 1,
+                fontSize: 9, color: prColor, flexShrink: 0,
+              }}
+              className="hover:bg-white/5"
+            >
+              <RefIcon size={8} strokeWidth={2} />#{topPr.num}
+              {CheckIcon && <CheckIcon size={7} strokeWidth={2.5} style={{ color: checkColor }} />}
+              {extraCount > 0 && (
+                <span style={{ fontSize: 8, opacity: 0.7 }}>+{extraCount}</span>
+              )}
+            </button>
+          );
+        })()}
+      </span>
       <PopoverContent side="bottom" align="end">
         <GitDetails git={git} github={github} sessionId={sessionId} send={send} refs={refs} />
       </PopoverContent>

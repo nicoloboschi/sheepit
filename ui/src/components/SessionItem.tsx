@@ -255,6 +255,20 @@ function PaneCard({
           </span>
         )}
         {session?.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
+        {/* How full the agent's context is, from its own transcript. A count
+            and not a percentage: nothing the agents write down says how big
+            the window is, and a limit kept by hand here would go stale the
+            next time a model changes. */}
+        {/* `!== undefined`, not a truthiness test: zero is a real answer and
+            has to draw a 0. Absent still means no agent to ask. */}
+        {session?.ctxTokens !== undefined ? (
+          <span
+            className="pane-card-ctx"
+            title={`Context in use: ${session.ctxTokens.toLocaleString()} tokens`}
+          >
+            {session.ctxTokens >= 1000 ? `${Math.round(session.ctxTokens / 1000)}k` : String(session.ctxTokens)}
+          </span>
+        ) : null}
         {time && <span className="pane-card-time">{time}</span>}
         {dog?.sessionId === sessionId
           ? <DogStatus state={dog.state} />

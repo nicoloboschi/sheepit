@@ -617,10 +617,16 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     const t = setTimeout(() => setShowLoading(true), 150);
     return () => clearTimeout(t);
   }, [loading]);
-  // Height of the file-list panel, which sits ABOVE the file viewer (the list
-  // and viewer are stacked vertically). Drag the divider to resize.
-  const [listHeight, setListHeight] = useState<number>(() => {
-    try { return parseInt(preferences.getItem('sheepit:files-list-h') ?? '') || 240; } catch { return 240; }
+  // Width of the file-list panel, which sits BESIDE the file viewer. Two
+  // columns, like the diff viewer the Files tab now shares a rail with: a file
+  // and its content are read together, and stacked rows gave the list a strip
+  // of the pane's scarcest axis while the file below it got the rest. Drag the
+  // divider to resize.
+  //
+  // Its own key, not the old `sheepit:files-list-h`: that value is a height, so
+  // a 600px list would have come back as a 600px column.
+  const [listWidth, setListWidth] = useState<number>(() => {
+    try { return parseInt(preferences.getItem('sheepit:files-list-w') ?? '') || 240; } catch { return 240; }
   });
   // Mobile: 'list' | 'preview'
   const [mobileView,   setMobileView]   = useState<'list' | 'preview'>('list');
@@ -720,22 +726,24 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const onDragStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     draggingRef.current = true;
-    const startY = e.clientY;
-    const startH = listHeight;
+    const startX = e.clientX;
+    const startW = listWidth;
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
-      const h = Math.max(100, Math.min(600, startH + ev.clientY - startY));
-      setListHeight(h);
+      // 140px is about the least a column of file names can use before it is
+      // all ellipsis; past 560 the file itself stops being the bigger half.
+      const w = Math.max(140, Math.min(560, startW + ev.clientX - startX));
+      setListWidth(w);
     };
     const onUp = () => {
       draggingRef.current = false;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setListHeight(h => { try { preferences.setItem('sheepit:files-list-h', String(h)); } catch {} return h; });
+      setListWidth(w => { try { preferences.setItem('sheepit:files-list-w', String(w)); } catch {} return w; });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [listHeight]);
+  }, [listWidth]);
 
   // Reset cwd (the per-session project root) so the next browse re-anchors to
   // THIS pane's root. `browse` pins cwd via `prev ?? data.cwd`, so without this
@@ -1207,12 +1215,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       {/* Desktop: split layout */}
       <div className="hidden md:flex flex-col flex-1 min-h-0">
         {toolbar(false)}
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
           <div
             ref={fileListRef}
             tabIndex={0}
             onKeyDown={searchMode ? undefined : handleFileListKeyDown}
-            style={{ height: listHeight, flexShrink: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
+            style={{ width: listWidth, flexShrink: 0, minHeight: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
           >
             {searchMode ? (
               <SearchPanel
@@ -1235,12 +1243,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
               </>
             )}
           </div>
-          {/* Resize divider — drag to grow/shrink the file list above. */}
+          {/* Resize divider — drag to grow/shrink the file list beside it. */}
           <div
             onMouseDown={onDragStart}
             style={{
-              flexShrink: 0, height: 4, width: '100%',
-              cursor: 'row-resize', zIndex: 10,
+              flexShrink: 0, width: 4, height: '100%',
+              cursor: 'col-resize', zIndex: 10,
               background: 'var(--border)',
             }}
             onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#9cbc7f'}

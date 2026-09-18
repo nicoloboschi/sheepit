@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, shell } = require('electron');
 const { spawn } = require('child_process');
 const net = require('net');
 const path = require('path');
@@ -107,6 +107,21 @@ async function createWindow() {
     },
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+  // **Nothing in the UI may open a window of this app.** Electron's default for
+  // `window.open` and `target="_blank"` is a bare BrowserWindow — a second
+  // frame with no address bar, no tabs, and none of the user's logins — and
+  // that default, not the buttons, is what made "open in your own browser"
+  // produce another Electron window.
+  //
+  // Handling it here rather than only at the call sites is the point: the UI is
+  // shared with the browser build, where `_blank` is exactly right, so a call
+  // site will eventually be written (or hot-reloaded, as this one was) without
+  // the helper. This makes the shell answer for the rule instead of trusting
+  // every caller to remember it.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
   await mainWindow.loadURL(isDev
     ? `http://127.0.0.1:${vitePort}`
     : `http://127.0.0.1:${backendPort}`);
@@ -216,6 +231,28 @@ ipcMain.on('browser:back', (_event, id) => viewOf(id)?.webContents.navigationHis
 ipcMain.on('browser:forward', (_event, id) => viewOf(id)?.webContents.navigationHistory.goForward());
 ipcMain.on('browser:reload', (_event, id) => viewOf(id)?.webContents.reload());
 ipcMain.on('browser:zoom', (_event, id, factor) => viewOf(id)?.webContents.setZoomFactor(factor));
+
+// "Open in your own browser" has to mean the user's own browser — Brave, Chrome,
+// whatever the OS opens a link with. In a tab, `target="_blank"` already does
+// that; inside this shell it opens another Electron window, which is the one
+// place the button could not do the single thing it says.
+//
+// Guarded to web URLs on purpose. `shell.openExternal` hands the string to the
+// OS, and the strings reaching it come from pull request bodies, CI links and
+// terminal output — none of which we wrote. A `file://` or a custom scheme
+// there would be the OS launching something rather than showing a page.
+function openExternalUrl(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') {
+      shell.openExternal(u.href);
+      return true;
+    }
+  } catch { /* not a URL at all */ }
+  return false;
+}
+
+ipcMain.on('shell:open-external', (_event, url) => { openExternalUrl(url); });
 ipcMain.handle('browser:screenshot', async (_event, id) => {
   const view = viewOf(id);
   if (!view) return '';

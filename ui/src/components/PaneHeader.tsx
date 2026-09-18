@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, Maximize2, Minimize2, Globe, GitCompare, Columns2, RotateCcw } from 'lucide-react';
+import { SquareTerminal, X, Maximize2, Minimize2, Globe, GitCompare, RotateCcw } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
 import DogStatus from './DogStatus';
 import { useDog } from '../flock';
-import { showsTerminal, type PaneView } from './TerminalCell';
+import { type PaneView } from './TerminalCell';
 import StatChips from './StatChips';
 import VoiceInputButton from './VoiceInputButton';
 import * as sharedWs from '../sharedWs';
@@ -229,31 +229,34 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Four states, and the two that show files or the browser both keep
-                the terminal: reading a file or watching a dev server is
-                something you do WHILE working, and a pane that gave its whole
-                width to a file tree had hidden the thing the pane is for. Git
-                is the exception and takes the pane — a diff is wide, and
-                reading one is its own activity rather than an accompaniment
-                to typing. */}
+            {/* Three states now that files joined the git group: the terminal,
+                the browser beside it, and the git view — which carries GitHub,
+                the working tree, the log and the file browser on its own rail.
+                Nothing here hides the terminal: reading a file, a diff or a dev
+                server is something you do WHILE working, and a pane that gave
+                its whole width to one of them had hidden the thing the pane is
+                for. Files left this switch because moving between a diff and
+                the file it changed should not be a different half-pane
+                arriving — on the rail it is one click at the same shape. */}
             {([
               { id: 'terminal', icon: <SquareTerminal size={12} />, title: 'Terminal', active: view === 'terminal' },
-              { id: 'split',    icon: <Columns2 size={12} />,       title: 'Terminal + files', active: view === 'split' },
               { id: 'browser',  icon: <Globe size={12} />,          title: 'Terminal + browser', active: view === 'split-preview' },
-              { id: 'git',      icon: <GitCompare size={12} />,     title: 'Git — working tree and log', active: !!view && !showsTerminal(view) },
+              { id: 'git',      icon: <GitCompare size={12} />,     title: 'Git — GitHub, working tree, log and files', active: view === 'split-github' || view === 'working' || view === 'log' || view === 'split' },
             ] as const).map(({ id, icon, title, active }) => (
               <button
                 key={id}
                 title={title}
-                // The first three map straight through; Git opens the working
-                // tree, or keeps whichever git sub-view is already showing.
+                // Terminal and browser map straight through; Git keeps whichever
+                // of its four views is already showing.
                 onClick={(e) => {
                   e.stopPropagation();
                   onViewChange(
                     id === 'terminal' ? 'terminal'
-                      : id === 'split' ? 'split'
                       : id === 'browser' ? 'split-preview'
-                      : (view && !showsTerminal(view) ? view : 'working'),
+                      // Git keeps whichever of its views is already showing —
+                      // the files included; from anywhere else it opens on
+                      // GitHub, which is the one you come to the group to read.
+                      : (view === 'working' || view === 'log' || view === 'split' ? view : 'split-github'),
                   );
                 }}
                 style={{

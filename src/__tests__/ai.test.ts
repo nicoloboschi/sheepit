@@ -1,8 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, readAgentTitle, CLEARED_SESSION_NAME } from '../ai.js';
+import { isRenameable, stripNameDecoration, looksLikeAssignedName, normalizeAssignedName, readAgentTitle, readContextTokens, CLEARED_SESSION_NAME } from '../ai.js';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+
+describe('readContextTokens', () => {
+  const write = (lines: string[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-'));
+    const p = join(dir, 'transcript.jsonl');
+    writeFileSync(p, lines.join('\n') + '\n');
+    return p;
+  };
+
+  it('sums a Claude turn with the cached part included', () => {
+    // The cache is nearly all of a long conversation: a real 451k-token
+    // session reports input_tokens: 32. Counting only that reports every
+    // long session as empty, which is the whole failure this guards.
+    const p = write([
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 32, cache_read_input_tokens: 450466, cache_creation_input_tokens: 547 } } }),
+    ]);
+    expect(readContextTokens(p)).toBe(451045);
+  });
+
+  it('takes the last turn, not the first', () => {
+    const p = write([
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 10, cache_read_input_tokens: 90 } } }),
+      JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 5, cache_read_input_tokens: 200000 } } }),
+    ]);
+    expect(readContextTokens(p)).toBe(200005);
+  });
+
+  it('reads a Codex usage record, which is already summed', () => {
+    const p = write([
+      JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 165411, cached_input_tokens: 164608, total_tokens: 165518 } } }),
+    ]);
+    expect(readContextTokens(p)).toBe(165411);
+  });
+
+  it('says nothing when no turn has been recorded yet', () => {
+    expect(readContextTokens(write([JSON.stringify({ type: 'user', message: { content: 'hi' } })]))).toBe(null);
+  });
+
+  it('survives a torn line, junk, and a missing file', () => {
+    const p = write([
+      '{"type":"assistant","message":{"usage":{"input_to',
+      'not json at all',
+      JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 7 } } }),
+    ]);
+    expect(readContextTokens(p)).toBe(7);
+    expect(readContextTokens('/nope/not/here.jsonl')).toBe(null);
+  });
+});
 
 describe('rename eligibility', () => {
   const path = '/Users/x/dev/memlake';

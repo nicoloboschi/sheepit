@@ -554,6 +554,40 @@ The reported turns (`appendAgentTurn`, persisted as `turns`) are still kept —
 ⌘K searches them and the hook trace shows them — but nothing names a pane from
 them any more.
 
+### The transcript also says how full the context is
+
+`readContextTokens` reads it from the same tail the title comes from, and the
+pen card shows it (`ctxTokens`, `.pane-card-ctx`). Both agents record it, in
+different places:
+
+- **Claude Code** puts a `usage` block on every assistant row, and the prompt
+  is `input + cache_read + cache_creation`. **The cached part is nearly all of
+  it** — a real 451,045-token session reports `input_tokens: 32` — so counting
+  only the obvious field reports every long conversation as empty.
+- **Codex** writes `token_usage_record` rows whose `usage.input_tokens` is that
+  same total, already summed.
+
+Three things about it that are easy to get wrong:
+
+- **It is what is used, not what fits.** Neither agent writes down the size of
+  the model's window, so the card shows a count (`451k`) and not a percentage.
+  A percentage would need a per-model limit kept by hand here, which goes stale
+  the next time a model ships. The number also drops after a compaction, which
+  is right: it really did.
+- **Stat before reading.** The count changes exactly when the agent replies,
+  and replying is what moves the transcript's mtime — so `contextTokens` stats
+  the file and only re-reads the 256KB tail when it moved. This runs inside the
+  session list, which is rebuilt every couple of seconds for every pane;
+  re-reading unconditionally would be megabytes a second for a number that had
+  not changed.
+- **The store's equality check is an allowlist**, so `ctxTokens` had to be
+  added to it. Leave it out and the number renders once and then freezes: it
+  climbs with every reply, and a list that calls itself unchanged never
+  re-renders.
+
+Unlike the title, this works for **both** agents — Codex panes have no name to
+offer but do report their context.
+
 **The title is taken as it is.** `normalizeAssignedName` is now *only* the
 writer/reader contract — the charset, six words, sixty characters, and a letter
 to lead with. Nothing in it judges what the title says.
@@ -906,30 +940,167 @@ you never looked at.
 
 ## What a pane can show
 
-Four states, and the switcher only offers those four:
+Six states, and the pane bar's switch offers **three** of them — terminal,
+browser, git — because the last four are one group behind one rail:
 
-| state | shows |
-|---|---|
-| `terminal` | the terminal, alone |
-| `split` | terminal **+ files** |
-| `split-preview` | terminal **+ the browser** |
-| `working` / `log` | git, full pane |
+| state | shows | reached from |
+|---|---|---|
+| `terminal` | the terminal, alone | the switch |
+| `split-preview` | terminal **+ the browser** | the switch |
+| `split-github` | terminal **+ pull requests and issues** | the git rail |
+| `working` | terminal **+ the working tree** | the git rail |
+| `log` | terminal **+ the commit log** | the git rail |
+| `split` | terminal **+ files** | the git rail, last |
 
-**Files and the browser are never shown alone.** Reading a file or watching a
-dev server is something you do *while* working in the terminal, and a pane that
-gave its whole width to a file tree had hidden the thing the pane is for. Git is
-the deliberate exception and takes the pane: a diff is wide, and reading one is
-its own activity rather than an accompaniment to typing.
+**Nothing is ever shown alone, and the terminal is never hidden.** Reading a
+file, watching a dev server, reading a pull request, going over what you have
+changed — every one of them is something you do *while* working in the
+terminal, and a pane that gave its whole width to one of them had hidden the
+thing the pane is for.
 
-So there is no `files` or `preview` in `PaneView`. A pane persisted in either
-(they existed before this) opens in the split it means — see `readPaneView`,
-which is also where the older `diff` → `working` migration lives. `showsTerminal()`
-is the single predicate for "xterm has a size right now"; three separate
-`view !== 'terminal' && view !== 'split'` tests drifting apart is exactly how a
-terminal ends up unfitted with its last row clipped.
+Git used to be the exception and take the whole pane, on the reasoning that a
+diff is wide and reading one is its own activity. It isn't: a diff is what you
+read *against* the code you are running, and the terminal beside it is where
+you run it. So the git group is four ordinary splits, and `PaneView` has no
+full-pane state left at all.
 
-Both splits share one divider and one stored width, because it is one question:
-how much of the pane is not the terminal.
+That is also why **`showsTerminal()` is gone**. It was the single predicate for
+"xterm has a size right now" — worth having while some views hid the terminal,
+because three separate `view !== 'terminal' && view !== 'split'` tests drifting
+apart is exactly how a terminal ends up unfitted with its last row clipped. Now
+that no view hides it, the predicate could only answer `true`, and a test that
+cannot fail is one every reader has to go and verify before trusting a branch
+on it. `isSplit` (`view !== 'terminal'`) is the only question left.
+
+So there is no `files` or `preview` in `PaneView` either. A pane persisted in
+one of those opens in the split it means — see `readPaneView`, which is also
+where the `diff` → `working` and `github` → `split-github` migrations live.
+
+Every split shares one divider and one stored width, because it is one
+question: how much of the pane is not the terminal.
+
+The git group's four views are a **vertical rail** (`GitTabRail`), not a strip
+across the top, and GitHub leads it. Four labelled buttons across the top of a
+half-pane column is most of that column; a 28px rail down its edge costs the
+diff nothing. All four views carry the same rail, so moving between a pull
+request, what you have changed, what you have committed and the files
+themselves is one click and never changes the pane's shape.
+
+**The file browser is the fourth of them, and it is last.** It used to be its
+own button on the pane bar's switch, which made "open the file this diff
+changed" a different half-pane arriving in place of the one you were reading —
+`GitDiffPane`'s own *open in Files* handle did exactly that. It answers the
+same question the other three do, *what is in this repository*, so it belongs
+on the same rail; it is last because it is the only one of the four that is not
+about a change. The state is still called `split` — the oldest of the group and
+the value already persisted in `sheepit:pane-views` — which is a legacy name to
+document, not to rename.
+
+### The GitHub view asks `gh`, and `gh` has two traps
+
+Everything in the GitHub view is one `gh` call the server made — no token, no
+OAuth app, no GitHub client of our own. Two things about that are easy to get
+wrong, and both shipped broken once.
+
+**Linked references are the one call that is GraphQL**, and not by preference:
+`gh pr view --json` has no `closingIssuesReferences` and `gh issue view --json`
+has no linked-pull-request field at all. That is checked against the binary —
+gh 2.57.0 prints both `--json` field lists in full when handed an unknown
+field, and neither name is in them — so no amount of adding to `PR_FIELDS`
+answers this. `gh api graphql` does, through the same signed-in `gh`, and one
+query serves both directions: `issueOrPullRequest` resolves the number and
+inline fragments pick the side, so it never waits to learn which kind answered
+and starts alongside the view and the diff. `includeClosedPrs: true` is
+load-bearing — the pull request that closed an issue is usually merged, and
+without it the commonest case comes back empty.
+
+**The kind in `/gh/:kind/:num` is a hint, not an answer.** Pull requests and
+issues share one numbering sequence, so a bare `#448` typed into the search
+says nothing about which it is, and neither does a `/issues/N` link — GitHub
+redirects those to a PR happily. The server resolves it instead of trusting the
+caller, and the order is load-bearing:
+
+- **`gh pr view N` is the probe.** It succeeds *only* for a pull request; on an
+  issue it fails outright with `Could not resolve to a PullRequest with the
+  number of N`. That failure is the signal.
+- **`gh issue view N` is the fallback**, because it answers for **both**. That
+  is also why it must never go first: asking it first labels every pull request
+  an issue and silently drops its diff.
+
+The reply carries the kind that actually answered, so the pane draws the right
+mark and does not wait for a diff an issue will never have. Guessing from the
+filter instead is what made typing an issue id report "could not load".
+
+**`null` is not `[]`.** A failed `gh` and an empty repository were the same
+empty array in the list route, so a rate-limited or logged-out refresh rendered
+as a confident **"None."** — and the 30s cache then held that lie on screen. A
+half that could not be fetched is `null` and says so with a Retry; `[]` means
+the repository genuinely has none. For the same reason **a failure is never
+cached**, or the refresh button returns the failure it was pressed to clear,
+which reads as the button being broken.
+
+Failures carry the reason (`{ error }`, the first line of `gh`'s stderr) rather
+than a bare null. "Could not resolve to a PullRequest", `gh: command not found`
+and an expired token are three different problems with three different fixes,
+and a pane that says only "could not load" sends you off to guess which one you
+have — the same argument as [the hook trace](#the-hook-trace): read it for the
+gaps.
+
+### Never ask a *list* for `statusCheckRollup`
+
+It is the check runs of every row, and `gh` fetches them all. Measured on one
+repository: **0.73s and 9.7KB without it, 10.1s and 633KB with it** — for one
+word per row, which the list draws as a single dot.
+
+On **closed** pull requests it does not merely cost that, it fails outright:
+`gh` exits 1 with `unexpected end of JSON input`. That is worse than slow,
+because a failed half comes back `null`, `isGoodGh` rightly refuses to cache a
+failure, and every later look pays the eleven seconds again. **A list that is
+never cacheable is a list that always loads**, which is exactly how it was
+reported: "it takes seconds, they should all be cached by now."
+
+The detail view still shows CI, and should — `gh pr view` asks about one pull
+request, where the rollup is affordable and is the point of the panel. The rule
+is about breadth, not the field: cheap per item, ruinous per list.
+
+### One cache per repository, not per worktree
+
+Everything else in `api.ts` coalesces on the **working directory**, because
+that is what `git status` and friends answer for. The PR/issue routes are the
+exception: they key on **`owner/repo`** (`repoSlug()`), because nothing they
+ask for is branch-scoped — `gh pr list`, `gh pr view N` and `gh pr diff N` all
+answer for the repository, whichever checkout you happen to ask from.
+
+Keying those by directory is a real cost, not a tidiness point. Eight worktrees
+of one project — `memlake`, `memlake1` … `memlake7` — are eight directories and
+one GitHub repo, so every one of them fetched, rate-limited and held its own
+copy of the identical pull request list. Measured after the change: the first
+worktree pays 0.84s for a list and 1.87s for an issue, and the next two pay
+0.02s and 0.001s.
+
+**The branch's own PR is the exception to the exception.** `githubPr` /
+`/git/:id/github` stays keyed on the directory, because `gh pr view` with *no
+number* resolves the PR of whatever branch that worktree has checked out —
+which is the one thing here that genuinely differs between two clones of one
+repo. Re-key that one and every worktree would report the first one's PR.
+
+`repoSlug()` falls back to the directory when there is no GitHub remote, or
+every such directory would collide under a single empty key. Its own 5-minute
+TTL is long on purpose: it reads a git config value that changes approximately
+never.
+
+The **client** cache in `GithubPane.tsx` is keyed on the repository too, not on
+the session. It cannot be at first sight — a pane does not know its repository
+until something tells it — so **every answer carries `repo`**, and `repoOf`
+remembers it per session for every later lookup. An explicit `?repo=` wins over
+that memo, so a link to somebody else's pull request is shared from the first
+look rather than after the first answer.
+
+That leaves exactly one fetch per session, the one that learns the slug, and
+the server answers it from its own repo-keyed cache in about a millisecond.
+Everything after it — other panes in other worktrees, switching between pens,
+coming back to a PR you read ten seconds ago — is served from memory without
+touching the network.
 
 ### Only ports that answer
 
@@ -1071,6 +1242,30 @@ macOS treat a headless renderer as background work.
   instead of taking the click — the preload covers buttons, inputs and links.
 - Its profile is `persist:sheepit-browser`, separate from the headless one:
   logins are made once per browser.
+- **A link that leaves goes to the OS, not to another window of this app.**
+  `target="_blank"` is right in a tab — the browser showing sheepit *is* the
+  user's browser — but inside the shell it opens another Electron window, which
+  made "open in your own browser" the one button that could not do the single
+  thing it says. `ui/src/openExternal.ts` asks the shell
+  (`shell:open-external` → `shell.openExternal`) when it is there and falls
+  back to `window.open` when it is not, so every caller writes one thing.
+  **The backstop is the shell, not the callers**: the main window sets a
+  `setWindowOpenHandler` that denies every `window.open` and hands the URL to
+  the OS. Electron's default there is a bare `BrowserWindow`, and that default
+  — not the buttons — is what produced a second frame. The UI is shared with
+  the browser build, where `_blank` is exactly right, so a call site will
+  eventually be written without the helper; this way the rule holds anyway.
+  (The pane's own `WebContentsView` has a different handler on purpose: a
+  `_blank` inside a page you are browsing loads *in the pane*, because that is
+  the browser, not a link leaving it.)
+  Anchors keep their `href` and only their plain left click is taken: a
+  modified or middle click means "new tab" or "save", which the surrounding
+  browser honours better than the OS can. **Web URLs only** — `http`, `https`
+  and `mailto` — checked in the main process, which is the side that cannot be
+  talked out of it, and again in the UI so a scheme it would refuse falls back
+  to the browser instead of silently doing nothing. The strings reaching it
+  come from pull request bodies, CI links and terminal output; handing the OS
+  an arbitrary scheme is asking it to launch something rather than show a page.
 
 In dev the window loads Vite on 4444, so UI edits hot-reload as in a tab; only
 a change under `electron/` needs the app relaunched, which costs no sessions.

@@ -762,55 +762,53 @@
   display: flex; flex-direction: column;
   background: var(--background);
 }
+/* Browser chrome is chrome: neutral graphite like the bars above it, never the
+   olive the rest of the pane is tinted with. */
 .preview-bar {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; gap: 3px;
   padding: 5px 7px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome);
   flex-shrink: 0;
 }
 .preview-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 5px; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
   border: none; background: none; cursor: pointer;
   color: var(--muted-foreground);
+  transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
 }
 .preview-btn:hover { background: var(--accent); color: var(--foreground); }
-.preview-btn:disabled { opacity: 0.5; cursor: default; }
+.preview-btn:active:not(:disabled) { transform: scale(0.9); }
+.preview-btn:disabled { opacity: 0.35; cursor: default; }
 /* The screenshot's path is on the clipboard — the one moment this row of
    controls has something to report. */
 .preview-btn-done, .preview-btn-done:hover { color: var(--success); }
+/* A pill, so the address reads as the one field on a row of buttons. It sits
+   *in* the bar rather than on it — inset, darker than the chrome — which is
+   what tells you it takes typing and the things beside it take clicks. */
 .preview-address {
   flex: 1; min-width: 0;
-  background: var(--background); border: 1px solid var(--border);
-  border-radius: 5px; padding: 3px 8px;
+  margin: 0 4px;
+  background: var(--background); border: 1px solid transparent;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.18);
+  border-radius: 999px; padding: 3px 10px;
   font-family: var(--font-mono); font-size: 11px;
   color: var(--foreground); outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.preview-address:focus { border-color: var(--primary); }
-.preview-ports {
-  display: flex; align-items: center; gap: 4px;
-  padding: 4px 7px; flex-shrink: 0;
-  overflow-x: auto; white-space: nowrap;
-  border-bottom: 1px solid var(--border);
-  background: var(--secondary);
+.preview-address:hover { border-color: var(--chrome-line); }
+.preview-address:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
 }
-.preview-port {
-  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
-  padding: 2px 7px; border-radius: 10px;
-  border: 1px solid var(--border); background: none; cursor: pointer;
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--muted-foreground);
-}
-.preview-port:hover { border-color: var(--primary); color: var(--foreground); }
-/* Started by this pane — the dev server the agent just ran, which is the one
-   you almost always want. */
-.preview-port-own {
-  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
-  color: var(--primary);
-}
-.preview-port-name { opacity: 0.6; font-size: 10px; }
 .preview-body { position: relative; flex: 1; min-height: 0; background: var(--background); }
+
+/* Word-level diff: the row's background says the line changed, these say which
+   part of it did. They sit on top of that background, so they have to be
+   stronger than it without becoming the text's own colour. */
+.diff-word-add { background: color-mix(in srgb, var(--success) 34%, transparent); border-radius: 2px; }
+.diff-word-del { background: color-mix(in srgb, var(--destructive) 34%, transparent); border-radius: 2px; }
 
 /* ── A narrow preview ──────────────────────────────────────────────────────
    Keyed off the pane, not the window: half a screen, or a quad on a large
@@ -820,11 +818,6 @@
 .preview-pane { container-type: inline-size; }
 @container (max-width: 340px) {
   /* The icon says the same thing, and the tooltip says the rest. */
-}
-@container (max-width: 260px) {
-  /* The port chips are the fastest way to load anything here, so they stay and
-     scroll; their process names are what go. */
-  .preview-port-name { display: none; }
 }
 .preview-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -1631,6 +1624,14 @@
   min-width: 0;
 }
 .pane-card-pr { font-weight: 600; flex-shrink: 0; }
+/* Context in use. Tabular figures so the number does not jitter sideways as it
+   climbs, and muted: it is something you glance at, not a status. */
+.pane-card-ctx {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
 .pane-card-dirty-dot {
   width: 6px;
   height: 6px;
@@ -2643,3 +2644,10 @@
   z-index: 1;
   pointer-events: none;
 }
+
+/* The floating headless pane is dragged by its own pane bar — say so with the
+   cursor, but leave the controls on it alone. */
+.pip-box .pane-bar-row { cursor: move; }
+.pip-box .pane-bar-row button,
+.pip-box .pane-bar-row input,
+.pip-box .pane-bar-row a { cursor: auto; }

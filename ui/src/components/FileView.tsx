@@ -56,7 +56,8 @@ import * as sharedWs from '../sharedWs';
 // without loading this module's editor stack. Re-exported for convenience.
 export { parseDiff } from '../diff';
 export type { DiffLine, DiffHunk, DiffFile } from '../diff';
-import type { DiffLine, DiffHunk, DiffFile } from '../diff';
+import type { DiffLine, DiffHunk } from '../diff';
+import { changedSpan, parseDiff } from '../diff';
 
 interface HunkRow extends DiffLine { oldNum: number | null; newNum: number | null; }
 
@@ -68,6 +69,25 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
     if (line.type !== 'add') old++;
     if (line.type !== 'del') nw++;
   }
+
+  // What changed *inside* a line, the way GitHub shows it. A removed line and
+  // the added line that replaced it are the two in the same position of the
+  // run of dels and the run of adds that follows it; anything unpaired (three
+  // lines removed, one added) keeps the plain row colour.
+  const spans = new Map<number, [number, number]>();
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i]!.type !== 'del') continue;
+    let d = i; while (d < rows.length && rows[d]!.type === 'del') d++;
+    let a = d; while (a < rows.length && rows[a]!.type === 'add') a++;
+    for (let k = 0; k < Math.min(d - i, a - d); k++) {
+      const span = changedSpan(rows[i + k]!.content, rows[d + k]!.content);
+      if (!span) continue;
+      spans.set(i + k, [span.aStart, span.aEnd]);
+      spans.set(d + k, [span.bStart, span.bEnd]);
+    }
+    i = a - 1;
+  }
+
   return (
     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 8, padding: '2px 12px', background: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
@@ -84,7 +104,17 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
               {isAdd ? '+' : isDel ? '-' : ' '}
             </div>
             <pre style={{ margin: 0, padding: '1px 8px 1px 0', color: isAdd ? 'var(--diff-add-fg)' : isDel ? 'var(--diff-del-fg)' : 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0 }}>
-              {row.content}
+              {(() => {
+                const span = spans.get(i);
+                if (!span || span[0] >= span[1]) return row.content;
+                return (
+                  <>
+                    {row.content.slice(0, span[0])}
+                    <span className={isAdd ? 'diff-word-add' : 'diff-word-del'}>{row.content.slice(span[0], span[1])}</span>
+                    {row.content.slice(span[1])}
+                  </>
+                );
+              })()}
             </pre>
           </div>
         );

@@ -34,6 +34,10 @@ export interface Session {
    *  actually touched, which is the only answer for a session working on a
    *  branch with no PR of its own. Nothing here is scraped from output. */
   prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
+  /** How many tokens the agent's context holds right now, read from its own
+   *  transcript. What is *used* — neither agent writes down how big the window
+   *  is, which is why the card shows a count and not a percentage. */
+  ctxTokens?: number;
   /** Background-only session; kept alive by the backend but not shown as a workspace. */
   isHeadless?: boolean;
   /** No work in it yet: newly started, or just `/clear`ed. */
@@ -187,6 +191,11 @@ export interface StoreState {
   workspaceOrder: string[];
   /** Session id of the pane currently in zen (fullscreen) mode, or null. */
   zenSessionId: string | null;
+  /** Session id shown in the floating picture-in-picture dialog, or null.
+   *  The headless pane lives here: it has no pen, and it is something you
+   *  keep an eye on *while* reading another pane — so it floats above zen
+   *  instead of taking zen's place. */
+  pipSessionId: string | null;
 
   /**
    * What each open browser pane is showing, reported by the pane itself.
@@ -329,6 +338,7 @@ export interface StoreState {
 
   toggleZen: (sessionId: string) => void;
   exitZen: () => void;
+  setPip: (sessionId: string | null) => void;
   navigateSession: (direction: 'up' | 'down') => { workspaceId: string; paneIndex?: number } | null;
 
   // ── Global terminal font size (applies to every pane) ────────────────────
@@ -834,6 +844,7 @@ const useStore = create<StoreState>((set, get) => ({
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
   selectedFieldId: null,
   zenSessionId: null,
+  pipSessionId: null,
   browserUrls: {},
   browserNav: null,
   zenOpenSeq: 0,
@@ -997,6 +1008,10 @@ const useStore = create<StoreState>((set, get) => ({
           && p.prRefs?.length === s.prRefs?.length
           && (p.prRefs ?? []).every((r, n) => r.num === s.prRefs?.[n]?.num && r.kind === s.prRefs[n]?.kind)
           && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless
+          // Without this the context number renders once and then freezes: it
+          // climbs with every reply, and a list that calls itself unchanged
+          // never re-renders it.
+          && p.ctxTokens === s.ctxTokens
           && p.fresh === s.fresh;
       });
     // Seed the busy flag for panes this tab has no opinion about yet.
@@ -1036,6 +1051,7 @@ const useStore = create<StoreState>((set, get) => ({
       // survives a change of pen now, so a dead id here would otherwise sit in
       // the state (and in the URL) until something happened to replace it.
       ...(prev.zenSessionId && !liveSessionIds.has(prev.zenSessionId) ? { zenSessionId: null } : {}),
+      ...(prev.pipSessionId && !liveSessionIds.has(prev.pipSessionId) ? { pipSessionId: null } : {}),
     });
   },
 
@@ -1714,6 +1730,10 @@ const useStore = create<StoreState>((set, get) => ({
 
   exitZen() {
     set({ zenSessionId: null });
+  },
+
+  setPip(sessionId: string | null) {
+    set({ pipSessionId: sessionId });
   },
 
   setBrowserUrl(sessionId: string, url: string | null) {

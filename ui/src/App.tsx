@@ -284,9 +284,12 @@ export default function App() {
         // Headless sessions are intentionally not given a workspace or selected.
         // They remain backend-live and can only exist once (enforced server-side).
         if (msg.headless === true) {
-          // It has no workspace row by design, so its only presentation is Zen.
-          // The following sessions refresh fills sessionMap for TerminalCell.
-          if (useStore.getState().zenSessionId !== newId) store.toggleZen(newId);
+          // It has no workspace row by design, so its presentation is the
+          // floating PiP dialog — which sits *above* zen rather than
+          // replacing it, because it is a shell you glance at while reading
+          // another pane. Asking for it again while it is up puts it away.
+          const open = useStore.getState().pipSessionId === newId;
+          store.setPip(open ? null : newId);
           break;
         }
         // Optimistically add session to the store so it appears in sidebar immediately
@@ -678,6 +681,7 @@ export default function App() {
             send={send}
           />
           <ZenOnlyTerminal send={send} />
+          <PipTerminal send={send} />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
         </div>
@@ -736,6 +740,86 @@ function ZenOnlyTerminal({ send }: { send: (msg: Record<string, unknown>) => voi
         send({ type: 'close_session', session_id: sessionId });
       }}
     />
+  );
+}
+
+/** The headless pane, floating over everything else.
+ *
+ *  It is a shell you keep an eye on *while* working in a pane, not instead of
+ *  one — so it is its own layer above zen (z-index over zen's 1000) rather
+ *  than zen's occupant. Pressing zen in its bar still blows it up full size;
+ *  that is the same session, so the pip stands down while it is there. */
+function PipTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
+  const sessionId = useStore(s => s.pipSessionId);
+  const live      = useStore(s => !!(sessionId && s.sessionMap[sessionId]));
+  const inZen     = useStore(s => !!sessionId && s.zenSessionId === sessionId);
+
+  // Dragged by its own pane bar — the one strip that is chrome rather than
+  // terminal. Buttons and the rename input inside it keep their clicks.
+  // Until it is dragged it has no position of its own and stays parked in the
+  // bottom-right corner.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const grabRef = useRef<{ dx: number; dy: number } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    const el = e.target as HTMLElement;
+    if (!el.closest('.pane-bar-row') || el.closest('button, input, a, [role="button"]')) return;
+    const box = boxRef.current;
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    grabRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    setPos({ x: r.left, y: r.top });
+    box.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const grab = grabRef.current, box = boxRef.current;
+    if (!grab || !box) return;
+    const r = box.getBoundingClientRect();
+    const clamp = (v: number, max: number) => Math.max(0, Math.min(v, max));
+    setPos({
+      x: clamp(e.clientX - grab.dx, window.innerWidth - r.width),
+      y: clamp(e.clientY - grab.dy, window.innerHeight - r.height),
+    });
+  };
+
+  if (!sessionId || !live || inZen) return null;
+  return (
+    <div
+      ref={boxRef}
+      className="pip-box"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => { grabRef.current = null; }}
+      onPointerCancel={() => { grabRef.current = null; }}
+      style={{
+        position: 'fixed', zIndex: 1002,
+        ...(pos
+          ? { left: pos.x, top: pos.y }
+          : { right: 24, bottom: 24 }),
+        width: 520, height: 340, minWidth: 260, minHeight: 160,
+        // Native resize handle — the browser already has one.
+        resize: 'both', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column',
+        background: 'var(--border)', padding: 1, borderRadius: 6,
+        boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
+      }}
+    >
+      <TerminalCell
+        sessionId={sessionId}
+        gridId={`__headless__:${sessionId}`}
+        paneIndex={0}
+        isActive
+        isQuad={false}
+        onActivate={() => {}}
+        onClose={() => {
+          useStore.getState().setPip(null);
+          send({ type: 'close_session', session_id: sessionId });
+        }}
+      />
+    </div>
   );
 }
 

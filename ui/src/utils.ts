@@ -27,6 +27,35 @@ if ('serviceWorker' in navigator && !isNativeApp()) {
  */
 let _nativeNotifier: ((title: string, body: string) => void) | null = null;
 
+/** Put text on this machine's clipboard.
+ *
+ *  `navigator.clipboard` is a secure-context API, and sheepit is routinely
+ *  reached over plain http on a LAN — from a phone, from another laptop —
+ *  where it is simply not there. The old `execCommand` route still works in
+ *  that case, and a link nobody can copy is the whole feature missing.
+ *
+ *  Lives here rather than in the pane that first needed it: the browser bar
+ *  copies a screenshot path and the GitHub view copies a pull request URL, and
+ *  a second implementation of this is a second one to get the fallback wrong. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* insecure context, or the write was denied */ }
+  try {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand('copy');
+    el.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function setNativeNotifier(fn: (title: string, body: string) => void): void {
   _nativeNotifier = fn;
 }

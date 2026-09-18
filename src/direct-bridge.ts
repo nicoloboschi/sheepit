@@ -15,7 +15,7 @@ import { exec } from 'child_process';
 import { PubSub } from './pubsub.js';
 import { config } from './config.js';
 import type { BridgeMessage, Session } from './protocol.js';
-import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -25,7 +25,7 @@ import { SessionStore, type StoredSession } from './session-store.js';
 import { mergePrRefs, type PrRef } from './pr-refs.js';
 import { isSearchableTranscript } from './search.js';
 import { logger } from './server.js';
-import { readAiConfig } from './ai.js';
+import { readAiConfig, readContextTokens } from './ai.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -899,6 +899,9 @@ export class DirectBridge {
   /** PR/issue references the agent's hooks reported, newest first (see
    *  pr-refs.ts). Nothing here comes from terminal output. */
   private sessionRefs = new Map<string, PrRef[]>();
+  /** Each pane's context size, and the transcript mtime it was read at — see
+   *  contextTokens. */
+  private ctxCache = new Map<string, { mtimeMs: number; tokens: number | null }>();
   /** Where each pane's agent keeps its own transcript, as the agent reported
    *  it (see setAgentSession). Search reads these; nothing else does. */
   private agentSessions = new Map<string, AgentSessionRef>();
@@ -1867,8 +1870,42 @@ export class DirectBridge {
         // touched, which is the only answer for a branch with no PR of its
         // own (a local checkout of someone else's, or work on main).
         prRefs: this.sessionRefs.get(sess.id),
+        // How full the agent's context is, from its own transcript — re-read
+        // only when that file has actually changed. See contextTokens.
+        ctxTokens: this.contextTokens(sess.id),
       };
     });
+  }
+
+  /**
+   * How full this pane's agent context is, or undefined when there is no
+   * agent, no transcript, or no turn recorded yet.
+   *
+   * **Stat first, read only if it moved.** The number changes exactly when the
+   * agent replies, and replying is what moves the transcript's mtime — so an
+   * idle pane costs one `statSync` and nothing else. Re-reading the 256KB tail
+   * for every pane on every sweep would be megabytes a second spent on a
+   * number that had not changed: this runs in the session list, which is built
+   * every couple of seconds for every pane.
+   */
+  private contextTokens(sessionId: string): number | undefined {
+    const path = this.resolveAgentTranscript(sessionId);
+    if (!path) return undefined;
+    try {
+      const { mtimeMs } = statSync(path);
+      const hit = this.ctxCache.get(sessionId);
+      // There IS an agent here, so a transcript with no usage in it yet means
+      // zero, not unknown. Reporting nothing would read as "this pane cannot
+      // tell you", when the true answer is that it has not spent anything.
+      if (hit && hit.mtimeMs === mtimeMs) return hit.tokens ?? 0;
+      const tokens = readContextTokens(path);
+      this.ctxCache.set(sessionId, { mtimeMs, tokens });
+      return tokens ?? 0;
+    } catch {
+      // The transcript was moved or removed under us. Nothing to report, and
+      // the next reply makes a new one.
+      return undefined;
+    }
   }
 
   // ── Git & PR cache ───────────────────────────────────────────────────────

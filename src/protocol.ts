@@ -46,6 +46,11 @@ export interface Session {
    *  session's branch: a session can work on a PR that its branch knows
    *  nothing about. */
   prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
+  /** How many tokens the agent's context holds right now, read from its own
+   *  transcript. Absent for a pane with no agent, or one that has not replied
+   *  yet. It is what is *used*: nothing in either agent's transcript says how
+   *  big the window is, which is why this is shown as a count. */
+  ctxTokens?: number;
   /** A background-only session. It stays running but is not presented as a workspace. */
   isHeadless?: boolean;
 }
