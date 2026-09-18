@@ -158,23 +158,12 @@ export function ChangedFiles(
 
 // ── File sidebar ──────────────────────────────────────────────────────────────
 
-const BLOCKS = 5 as const;
-
-interface StatBarProps {
-  add: number;
-  del: number;
-}
-
-function StatBar({ add, del }: StatBarProps) {
-  const total = add + del || 1;
-  const greenN = Math.round((add / total) * BLOCKS);
-  const redN = BLOCKS - greenN;
-  return (
-    <span style={{ display: 'inline-flex', gap: 1, flexShrink: 0 }}>
-      {Array.from({ length: greenN }).map((_, i) => <span key={`g${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#9CBC7F', display: 'inline-block' }} />)}
-      {Array.from({ length: redN }).map((_, i) => <span key={`r${i}`} style={{ width: 8, height: 8, borderRadius: 1, background: '#E0907B', display: 'inline-block' }} />)}
-    </span>
-  );
+/** What happened to a file, in the colours the diff body already uses for it:
+ *  green for an addition, terracotta for a deletion, amber for a change. The
+ *  icon carried this and the name did not, so scanning the tree meant reading
+ *  11px glyphs. */
+function statusColor(file: { isNew?: boolean; isDeleted?: boolean }): string {
+  return file.isNew ? '#9CBC7F' : file.isDeleted ? '#E0907B' : '#D9B84A';
 }
 
 interface FileSidebarProps {
@@ -236,11 +225,14 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
         onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'var(--card)'; }}
         onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { if (!isFocused) e.currentTarget.style.background = 'transparent'; }}
       >
-        {file.isNew ? <FilePlus size={11} color="#9CBC7F" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#E0907B" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
-        <span style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: 'var(--font-mono)', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
+        {file.isNew ? <FilePlus size={11} color="#9CBC7F" style={{ flexShrink: 0 }} /> : file.isDeleted ? <FileMinus size={11} color="#E0907B" style={{ flexShrink: 0 }} /> : <FileCode size={11} color="#D9B84A" style={{ flexShrink: 0 }} />}
+        <span style={{ fontSize: 11, color: statusColor(file), fontFamily: 'var(--font-mono)', overflow: 'hidden', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textOverflow: 'ellipsis' }}>
           {name}
         </span>
-        <StatBar add={file.additions} del={file.deletions} />
+        {/* The counts, not a bar of blocks: five squares say which way a file
+            leans, and "+240 −3" says that and how much. */}
+        {file.additions > 0 && <span style={{ fontSize: 10, color: '#9CBC7F', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>+{file.additions}</span>}
+        {file.deletions > 0 && <span style={{ fontSize: 10, color: '#E0907B', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>−{file.deletions}</span>}
         {onOpenFile && (
           <button
             title="Open in Files tab"

@@ -20,8 +20,15 @@ interface DesktopBrowser {
   reload(id: string): void;
   zoom(id: string, factor: number): void;
   screenshot(id: string): Promise<string>;
-  onState(cb: (id: string, state: Pick<LiveBrowserState, 'url' | 'title' | 'loading' | 'canGoBack' | 'canGoForward'>) => void): () => void;
+  find(id: string, text: string, forward: boolean, findNext: boolean): void;
+  stopFind(id: string): void;
+  onFindOpen(cb: (id: string) => void): () => void;
+  onFindResult(cb: (id: string, result: FindResult) => void): () => void;
+  onState(cb: (id: string, state: Pick<LiveBrowserState, 'url' | 'title' | 'loading' | 'canGoBack' | 'canGoForward' | 'error'>) => void): () => void;
 }
+
+/** What the page found: how many matches, and which one is selected. */
+export interface FindResult { matches: number; active: number }
 
 /** Present only inside the desktop shell. */
 export const desktopBrowser = (window as unknown as { sheepitDesktop?: { browser: DesktopBrowser } })
@@ -49,12 +56,16 @@ function covered(el: HTMLElement, r: DOMRect): boolean {
   return false;
 }
 
-export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onState, commands }: {
+export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onState, commands, onFindOpen, onFindResult }: {
   url?: string | null;
   navSeq?: number;
   zoom?: number;
   onState: (state: LiveBrowserState) => void;
   commands: { current: LiveBrowserCommands | null };
+  /** ⌘F pressed inside the page. The bar cannot be drawn over the view — a
+   *  native view is above the whole page — so the pane owns it. */
+  onFindOpen?: () => void;
+  onFindResult?: (result: FindResult) => void;
 }): React.ReactElement {
   const b = desktopBrowser!;
   const [id] = useState(() => `view-${Date.now()}-${nextId++}`);
@@ -65,7 +76,7 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
   useEffect(() => {
     b.open(id, 'about:blank');
     const off = b.onState((viewId, s) => {
-      if (viewId === id) onStateRef.current({ ...s, status: 'ready', error: null, streaming: true });
+      if (viewId === id) onStateRef.current({ ...s, status: s.error ? 'error' : 'ready', streaming: true });
     });
     return () => { off(); b.close(id); };
   }, [b, id]);
@@ -98,6 +109,14 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
     return () => cancelAnimationFrame(raf);
   }, [b, id]);
 
+  const findRef = useRef({ open: onFindOpen, result: onFindResult });
+  findRef.current = { open: onFindOpen, result: onFindResult };
+  useEffect(() => {
+    const offOpen = b.onFindOpen(viewId => { if (viewId === id) findRef.current.open?.(); });
+    const offResult = b.onFindResult((viewId, r) => { if (viewId === id) findRef.current.result?.(r); });
+    return () => { offOpen(); offResult(); };
+  }, [b, id]);
+
   useEffect(() => {
     commands.current = {
       navigate: u => b.navigate(id, u),
@@ -105,6 +124,8 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
       back: () => b.back(id),
       forward: () => b.forward(id),
       screenshot: () => b.screenshot(id),
+      find: (text, forward, findNext) => b.find(id, text, forward, findNext),
+      stopFind: () => b.stopFind(id),
     };
     return () => { commands.current = null; };
   }, [b, id, commands]);

@@ -31,7 +31,7 @@
  * `localhost` port works whatever device you are looking from.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus } from 'lucide-react';
+import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus, Search, ChevronUp, ChevronDown, X } from 'lucide-react';
 import { externalClick } from '../openExternal';
 import { copyText } from '../utils';
 
@@ -206,8 +206,56 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
     }
   }, [live?.url, shot?.state]);
 
+  /* ── Find in the page ──────────────────────────────────────────────────────
+     Chromium already has find-in-page — it highlights every match, walks them
+     and counts them — and no UI for it in a view we place ourselves. So this
+     is the UI, and it is a row of the pane's own chrome rather than something
+     floating over the page: a native view sits above the whole window, so an
+     overlay on the page is either invisible or (worse) covers the view and
+     makes it hide itself. Desktop only; the streamed browser leaves
+     `find` undefined and the bar never opens. */
+  const [find, setFind] = useState<{ query: string; matches: number; active: number } | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
+  const lastQueryRef = useRef('');
+  const paneRef = useRef<HTMLDivElement | null>(null);
+
+  const openFind = useCallback(() => {
+    setFind(f => f ?? { query: '', matches: 0, active: 0 });
+    // The input may be mounting in this very commit.
+    requestAnimationFrame(() => { findInputRef.current?.focus(); findInputRef.current?.select(); });
+  }, []);
+  const closeFind = useCallback(() => {
+    setFind(null);
+    lastQueryRef.current = '';
+    liveCommands.current?.stopFind?.();
+  }, []);
+  /** `findNext` is what tells Chromium "same query, step on" rather than
+   *  "start again from the top". */
+  const runFind = useCallback((query: string, forward = true) => {
+    if (!query) { lastQueryRef.current = ''; liveCommands.current?.stopFind?.(); return; }
+    const again = query === lastQueryRef.current;
+    lastQueryRef.current = query;
+    liveCommands.current?.find?.(query, forward, again);
+  }, []);
+
+  // ⌘F with the focus still in sheepit — the address bar, a button. The same
+  // chord pressed inside the page is caught by the shell and arrives as
+  // `onFindOpen` on the surface below.
+  useEffect(() => {
+    if (!desktopBrowser) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'f' || e.altKey || !(e.metaKey || e.ctrlKey)) return;
+      const root = paneRef.current;
+      if (!root || !document.activeElement || !root.contains(document.activeElement)) return;
+      e.preventDefault();
+      openFind();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [openFind]);
+
   return (
-    <div className="preview-pane" onClick={e => e.stopPropagation()}>
+    <div className="preview-pane" ref={paneRef} onClick={e => e.stopPropagation()}>
       <div className="preview-bar">
         <button className="preview-btn" title="Back" disabled={!live?.canGoBack}
           onClick={() => liveCommands.current?.back()}><ArrowLeft size={12} /></button>
@@ -263,6 +311,29 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
         </a>
       </div>
 
+      {find && (
+        <div className="preview-find">
+          <Search size={12} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
+          <input
+            ref={findInputRef}
+            className={`preview-find-input${find.query && find.matches === 0 ? ' preview-find-none' : ''}`}
+            value={find.query}
+            placeholder="Find in page"
+            spellCheck={false}
+            onChange={e => { const q = e.target.value; setFind(f => f && { ...f, query: q }); runFind(q); }}
+            onKeyDown={e => {
+              e.stopPropagation();
+              if (e.key === 'Enter') { e.preventDefault(); runFind(find.query, !e.shiftKey); }
+              if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+            }}
+          />
+          <span className="preview-find-count">{find.query ? `${find.active}/${find.matches}` : ''}</span>
+          <button className="preview-btn" title="Previous match (⇧⏎)" onClick={() => runFind(find.query, false)}><ChevronUp size={12} /></button>
+          <button className="preview-btn" title="Next match (⏎)" onClick={() => runFind(find.query, true)}><ChevronDown size={12} /></button>
+          <button className="preview-btn" title="Close (Esc)" onClick={closeFind}><X size={12} /></button>
+        </div>
+      )}
+
       <div className="preview-body">
         {server.available || desktopBrowser ? (
           <>
@@ -272,8 +343,24 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
             {live?.loading && <div className="preview-loading" />}
             {/* In the desktop app the page is a native view over the pane;
                 everywhere else it is the headless browser, streamed. */}
+            {/* A load that failed. The view behind this is blank — Electron
+                shows no error page of its own — so without it a refused
+                connection and a slow page look exactly alike. It covers the
+                native view, which is what makes the view hide itself. */}
+            {live?.status === 'error' && live.error && (
+              <div className="preview-error">
+                <ShieldAlert size={16} color="var(--destructive)" />
+                <div className="preview-error-code">{live.error}</div>
+                {live.url && live.url !== 'about:blank' && <div className="preview-error-url">{live.url}</div>}
+                <button className="preview-error-retry" onClick={() => liveCommands.current?.reload()}>Try again</button>
+              </div>
+            )}
             {desktopBrowser
-              ? <NativeBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands} />
+              ? <NativeBrowserSurface
+                  url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands}
+                  onFindOpen={openFind}
+                  onFindResult={r => setFind(f => f && { ...f, matches: r.matches, active: r.active })}
+                />
               : <LiveBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands} />}
           </>
         ) : (

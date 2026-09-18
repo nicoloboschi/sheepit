@@ -598,9 +598,18 @@ interface FilesPaneProps {
   /** Hand an .html file to the Preview tab, which renders it instead of
    *  showing its source. */
   onPreviewFile?: (path: string) => void;
+  /** Where to start, instead of the session's own directory. `~` and absolute
+   *  paths both work. */
+  initialPath?: string | null;
+  /** Filled in with "browse to this directory", for the Files dialog's places
+   *  sidebar — the mirror of `openFileRef` for folders. */
+  browseRef?: React.MutableRefObject<((path: string) => void) | null>;
+  /** The directory being shown, whenever it changes — so the Files dialog can
+   *  offer to favourite it. */
+  onDirChange?: (dir: string) => void;
 }
 
-export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile }: FilesPaneProps) {
+export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile, initialPath, onDirChange, browseRef }: FilesPaneProps) {
   const [dir,          setDir]          = useState<string | null>(null);
   const [entries,      setEntries]      = useState<Entry[]>([]);
   const [cwd,          setCwd]          = useState<string | null>(null);
@@ -749,7 +758,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   // THIS pane's root. `browse` pins cwd via `prev ?? data.cwd`, so without this
   // reset the root stays stuck on whichever pane's repo was opened first —
   // making the breadcrumb / "go up" / relative paths point at another repo.
-  useEffect(() => { if (!sessionId) return; setCwd(null); browse(null, { autoReadme: true }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
+  useEffect(() => { if (!sessionId) return; setCwd(null); browse(initialPath ?? null, { autoReadme: !initialPath }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
+
+  useEffect(() => { if (dir) onDirChange?.(dir); }, [dir]); // eslint-disable-line
 
   // Load pinned tabs whenever the session changes (per-session storage key).
   useEffect(() => {
@@ -792,6 +803,14 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       onFileSelect?.(filePath);
     };
   }, [openFileRef, browse, onFileSelect]);
+
+  // The same handle for directories: the Files dialog's places sidebar drives
+  // it. A prop would not do — picking Home while standing in a folder *under*
+  // home is a real navigation, and a value that has not changed says nothing.
+  useEffect(() => {
+    if (!browseRef) return;
+    browseRef.current = (dirPath: string) => { void browse(dirPath); };
+  }, [browseRef, browse]);
 
   const selectFile = (path: string) => {
     setSelectedFile(path);

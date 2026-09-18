@@ -518,7 +518,10 @@ export default function FileView({
         {isNew ? <FilePlus size={13} color="#9CBC7F" style={{ flexShrink: 0 }} />
           : isDeleted ? <FileMinus size={13} color="#E0907B" style={{ flexShrink: 0 }} />
           : <FileCode size={13} color="var(--muted-foreground)" style={{ flexShrink: 0 }} />}
-        <span title={shownPath} style={{ fontSize: 11, color: 'var(--foreground)', fontFamily: 'var(--font-mono)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {/* In a diff the name says what happened to the file, in the same
+            colours as the body: green added, terracotta deleted, amber
+            changed. Outside a diff there is no status, so it stays plain. */}
+        <span title={shownPath} style={{ fontSize: 11, color: hunks ? (isNew ? '#9CBC7F' : isDeleted ? '#E0907B' : '#D9B84A') : 'var(--foreground)', fontFamily: 'var(--font-mono)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
         {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}

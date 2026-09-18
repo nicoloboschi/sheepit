@@ -46,6 +46,19 @@ contextBridge.exposeInMainWorld('sheepitDesktop', {
     reload: id => ipcRenderer.send('browser:reload', id),
     zoom: (id, factor) => ipcRenderer.send('browser:zoom', id, factor),
     screenshot: id => ipcRenderer.invoke('browser:screenshot', id),
+    find: (id, text, forward, findNext) => ipcRenderer.send('browser:find', id, text, forward, findNext),
+    stopFind: id => ipcRenderer.send('browser:stop-find', id),
+    /** ⌘F pressed while the page had focus — the pane opens its find bar. */
+    onFindOpen: cb => {
+      const handler = (_event, id) => cb(id);
+      ipcRenderer.on('browser:find-open', handler);
+      return () => ipcRenderer.removeListener('browser:find-open', handler);
+    },
+    onFindResult: cb => {
+      const handler = (_event, id, result) => cb(id, result);
+      ipcRenderer.on('browser:find-result', handler);
+      return () => ipcRenderer.removeListener('browser:find-result', handler);
+    },
     onState: cb => {
       const handler = (_event, id, state) => cb(id, state);
       ipcRenderer.on('browser:state', handler);

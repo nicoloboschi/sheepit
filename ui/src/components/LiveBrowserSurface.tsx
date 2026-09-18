@@ -121,6 +121,10 @@ export interface LiveBrowserCommands {
   forward: () => void;
   /** A PNG of the page, base64. Empty if the browser did not answer. */
   screenshot: () => Promise<string>;
+  /** Find-in-page. Only the desktop app's native view has it — the streamed
+   *  browser leaves it undefined, and the pane's find bar stays away. */
+  find?: (text: string, forward: boolean, findNext: boolean) => void;
+  stopFind?: () => void;
 }
 
 export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom = 1, onState, commands }: {

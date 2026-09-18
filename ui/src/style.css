@@ -802,7 +802,49 @@
   border-color: var(--primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
 }
+/* Find in page. A row of chrome, not an overlay: the desktop app's page is a
+   native view above the whole window, so nothing can be drawn on top of it. */
+.preview-find {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 7px; flex-shrink: 0;
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome);
+}
+.preview-find-input {
+  flex: 1; min-width: 0;
+  background: var(--background); border: 1px solid transparent;
+  border-radius: 999px; padding: 3px 10px;
+  font-size: 11px; color: var(--foreground); outline: none;
+}
+.preview-find-input:focus { border-color: var(--primary); }
+/* Typed something the page does not have. */
+.preview-find-none { color: var(--destructive); }
+.preview-find-count {
+  flex-shrink: 0; padding: 0 2px;
+  font-size: 10px; color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
 .preview-body { position: relative; flex: 1; min-height: 0; background: var(--background); }
+
+/* What went wrong with the load, over the blank view that failed. */
+.preview-error {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 20px; text-align: center;
+  background: var(--background);
+}
+.preview-error-code {
+  font-family: var(--font-mono); font-size: 12px; color: var(--foreground);
+  word-break: break-all;
+}
+.preview-error-url { font-size: 11px; color: var(--muted-foreground); word-break: break-all; }
+.preview-error-retry {
+  margin-top: 4px; padding: 3px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: none; cursor: pointer;
+  font-size: 11px; color: var(--foreground);
+}
+.preview-error-retry:hover { border-color: var(--primary); color: var(--primary); }
 
 /* Word-level diff: the row's background says the line changed, these say which
    part of it did. They sit on top of that background, so they have to be

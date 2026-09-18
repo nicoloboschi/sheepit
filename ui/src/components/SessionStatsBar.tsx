@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog } from 'lucide-react';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import { useSheepdog } from '../useSheepdog';
 import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
+import FilesDialog from './FilesDialog';
 
 // Workspace-level toolbar: workspace name (click to rename) + actions (Knowledge)
 // on the left; layout picker + zoom on the right. The terminal/git/files switch
@@ -50,6 +51,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filesOpen,    setFilesOpen]    = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
   const { sheep, bleating, grazing } = useFlockCounts(sessionId);
 
@@ -283,6 +285,13 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     () => useStore.getState().setSearchOpen(true),
   );
 
+  /* The file browser, over the whole app rather than inside one pane —
+     what you would otherwise leave sheepit for a Finder window to do. */
+  const filesButton = action(
+    'files', <FolderOpen size={14} />, 'Browse files',
+    () => setFilesOpen(v => !v), filesOpen,
+  );
+
   const knowledgeButton = action(
     'knowledge', <BookOpen size={14} />, 'Knowledge',
     () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
@@ -325,12 +334,14 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       {penCounts}
       <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
       {searchButton}
+      {filesButton}
       {knowledgeButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />
       {layoutButtons && <div>{layoutButtons}</div>}
       {zoomButtons && <div>{zoomButtons}</div>}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} />}
     </div>
   );
 }

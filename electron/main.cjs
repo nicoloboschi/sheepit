@@ -139,7 +139,7 @@ const watchedOwners = new WeakSet();
 /** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
 const APP_SHORTCUTS = new Set(['k', 'n', 'ArrowUp', 'ArrowDown']);
 
-function browserState(view) {
+function browserState(view, error) {
   const wc = view.webContents;
   return {
     url: wc.getURL(),
@@ -147,6 +147,7 @@ function browserState(view) {
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
+    error: error ?? null,
   };
 }
 
@@ -186,11 +187,31 @@ ipcMain.on('browser:open', (event, id, url) => {
   watchOwner(event.sender);
 
   const push = () => {
-    if (!event.sender.isDestroyed() && views.has(id)) event.sender.send('browser:state', id, browserState(view));
+    if (!event.sender.isDestroyed() && views.has(id)) {
+      event.sender.send('browser:state', id, browserState(view, views.get(id)?.error));
+    }
   };
   for (const name of ['did-navigate', 'did-navigate-in-page', 'did-start-loading', 'did-stop-loading', 'page-title-updated']) {
-    view.webContents.on(name, push);
+    view.webContents.on(name, () => {
+      // A new navigation clears the last failure: whatever happens now is the
+      // page's answer, not the previous one's.
+      if (name === 'did-start-loading' || name === 'did-navigate') {
+        const entry = views.get(id);
+        if (entry) entry.error = null;
+      }
+      push();
+    });
   }
+  // A load that failed. Electron leaves the view blank for most of these — no
+  // Chromium error page — so the pane has to say what happened itself.
+  view.webContents.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
+    // -3 is ERR_ABORTED: a navigation replaced by the next one, which is what
+    // clicking a second link during a load looks like. Not a failure.
+    if (!isMainFrame || errorCode === -3) return;
+    const entry = views.get(id);
+    if (entry) entry.error = errorDescription || `Load failed (${errorCode})`;
+    push();
+  });
   // A target=_blank link stays in the pane rather than opening a bare window.
   view.webContents.setWindowOpenHandler(({ url: next }) => {
     view.webContents.loadURL(next).catch(() => {});
@@ -200,8 +221,23 @@ ipcMain.on('browser:open', (event, id, url) => {
   // every key before the UI does, so without this ⌘K did nothing while you
   // were reading a page. Only chords a page has no use for: ⌘←/→ stay with it
   // (line start/end in a text field), as do ⌘+/−/0 and every editing chord.
+  // What the page found, on its way to the pane's find bar.
+  view.webContents.on('found-in-page', (_e, result) => {
+    if (event.sender.isDestroyed() || !views.has(id)) return;
+    event.sender.send('browser:find-result', id, { matches: result.matches, active: result.activeMatchOrdinal });
+  });
   view.webContents.on('before-input-event', (inputEvent, input) => {
     if (input.type !== 'keyDown' || !input.meta || input.control || input.alt) return;
+    // ⌘F is the page's, not the app's: it opens the find bar of the pane
+    // showing it. Chromium has find-in-page and no UI for it here, so the bar
+    // is the UI and this is the only way to reach it while the page has focus.
+    if (input.key === 'f') {
+      inputEvent.preventDefault();
+      if (event.sender.isDestroyed()) return;
+      event.sender.focus();
+      event.sender.send('browser:find-open', id);
+      return;
+    }
     if (!APP_SHORTCUTS.has(input.key)) return;
     inputEvent.preventDefault();
     if (event.sender.isDestroyed()) return;
@@ -231,6 +267,16 @@ ipcMain.on('browser:back', (_event, id) => viewOf(id)?.webContents.navigationHis
 ipcMain.on('browser:forward', (_event, id) => viewOf(id)?.webContents.navigationHistory.goForward());
 ipcMain.on('browser:reload', (_event, id) => viewOf(id)?.webContents.reload());
 ipcMain.on('browser:zoom', (_event, id, factor) => viewOf(id)?.webContents.setZoomFactor(factor));
+// Chromium's own find-in-page: it highlights every match, scrolls to the
+// active one and counts them, which is the whole feature. `findNext` means
+// "same query, step on"; false restarts the search from the top.
+ipcMain.on('browser:find', (_event, id, text, forward, findNext) => {
+  const view = viewOf(id);
+  if (!view) return;
+  if (!text) { view.webContents.stopFindInPage('clearSelection'); return; }
+  view.webContents.findInPage(text, { forward, findNext });
+});
+ipcMain.on('browser:stop-find', (_event, id) => viewOf(id)?.webContents.stopFindInPage('clearSelection'));
 
 // "Open in your own browser" has to mean the user's own browser — Brave, Chrome,
 // whatever the OS opens a link with. In a tab, `target="_blank"` already does
