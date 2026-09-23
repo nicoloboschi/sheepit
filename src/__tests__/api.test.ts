@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import express from 'express'
 import { createServer } from 'http'
 import type { AddressInfo } from 'net'
-import { createApiRouter, rollupState } from '../api.js'
+import { createApiRouter, rollupState, parsePorcelain } from '../api.js'
 import type { DirectBridge } from '../direct-bridge.js'
 import type { LogBuffer } from '../server.js'
 import type { AIService } from '../ai.js'
@@ -252,5 +252,27 @@ describe('rollupState', () => {
   it('stays silent on a state it does not recognise', () => {
     // Better no icon than a confident wrong one — GitHub can add states.
     expect(rollupState(rollup('SOMETHING_NEW'))).toBe(null)
+  })
+})
+
+describe('parsePorcelain', () => {
+  const root = '/repo'
+
+  it('keeps the whole path when the index column is blank', () => {
+    // The bug this exists for: the route trimmed git's output, so a first line
+    // reading " M hindsight-system-evals/uv.lock" arrived without its leading
+    // space and the path came back as "indsight-system-evals/uv.lock".
+    expect(parsePorcelain(' M src/app.ts', root)).toEqual({ '/repo/src/app.ts': 'modified' })
+  })
+
+  it('reads staged, untracked, deleted and renamed lines', () => {
+    const out = ['A  new.ts', '?? scratch.md', ' D gone.ts', 'R  old.ts -> moved.ts', 'MM both.ts'].join('\n')
+    expect(parsePorcelain(out, root)).toEqual({
+      '/repo/new.ts': 'added',
+      '/repo/scratch.md': 'untracked',
+      '/repo/gone.ts': 'deleted',
+      '/repo/moved.ts': 'renamed',
+      '/repo/both.ts': 'modified',
+    })
   })
 })

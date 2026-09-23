@@ -2687,9 +2687,12 @@
   pointer-events: none;
 }
 
-/* The floating headless pane is dragged by its own pane bar — say so with the
-   cursor, but leave the controls on it alone. */
-.pip-box .pane-bar-row { cursor: move; }
-.pip-box .pane-bar-row button,
-.pip-box .pane-bar-row input,
-.pip-box .pane-bar-row a { cursor: auto; }
+/* A floating panel is dragged by its handle — its own header, or the pane bar
+   of the terminal inside it. Say so with the cursor, but leave the controls on
+   those strips alone. */
+.floating-panel .floating-panel-head,
+.floating-panel .pane-bar-row { cursor: move; }
+.floating-panel .floating-panel-head button,
+.floating-panel .pane-bar-row button,
+.floating-panel .pane-bar-row input,
+.floating-panel .pane-bar-row a { cursor: auto; }

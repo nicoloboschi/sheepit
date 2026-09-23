@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw, GitPullRequest, CircleDot, ExternalLink, Link2, Check,
-  CircleCheck, CircleX, Clock, MessageSquare, GitMerge, Search,
+  CircleCheck, CircleX, Clock, MessageSquare, GitMerge, Search, X,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -65,7 +65,19 @@ interface ListRow {
 /** A half that is `null` is one `gh` could not answer for — distinct from an
  *  empty array, which means the repository genuinely has none. Rendering the
  *  two the same way is how a rate-limited refresh came to say "None.". */
-interface GhList { prs: ListRow[] | null; issues: ListRow[] | null; repo?: string | null; }
+interface GhList {
+  prs: ListRow[] | null;
+  issues: ListRow[] | null;
+  repo?: string | null;
+  /** How many there are in the repository, against the rows above — a list of
+   *  30 must not claim the repository has 30. Null when GitHub would not say. */
+  prTotal?: number | null;
+  issueTotal?: number | null;
+  /** Search only: how many GitHub says there are, and the query it answered —
+   *  ours plus the `repo:` scope, so the panel can show what it really asked. */
+  searchTotal?: number | null;
+  q?: string;
+}
 
 interface Comment { author: string; body: string; createdAt: string; }
 interface CheckRun { name: string; workflow: string; conclusion: string; url: string; }
@@ -157,8 +169,32 @@ function cacheSet(key: string, value: unknown): void {
  */
 const repoOf = new Map<string, string>();
 
-const listKey = (sid: string, kind: string, state: string): string =>
-  `${repoOf.get(sid) ?? sid}|list|${kind}|${state}`;
+/** Rows per page. `gh` has no offset, so "more" is the same query with a
+ *  bigger limit; the server caps it, because a list nobody scrolls to the end
+ *  of should not fetch a thousand rows to prove it could. */
+const PAGE = 30;
+
+/** Where the scroll stops asking. The server caps it at the same number; past
+ *  a few hundred rows the question is a search, not a list. */
+const MAX_ROWS = 300;
+
+/** "30 of 214" while there are more, and just the number once the list holds
+ *  all of them — a count that keeps saying "214 of 214" is reading work for
+ *  nothing. Falls back to the rows when GitHub would not say a total. */
+function countLabel(shown: number, total: number | null | undefined): string {
+  return typeof total === 'number' && total > shown ? `${shown} of ${total}` : String(total ?? shown);
+}
+
+/** An explicit repo wins over the memo, here too: the GitHub panel names the
+ *  repository it wants, which is usually not the one this session stands in. */
+const listKey = (
+  sid: string, kind: string, state: string, repo?: string, limit = PAGE, q = '',
+): string =>
+  // A search is its own answer: the kind and state filters are not part of it,
+  // because the query says those itself.
+  q
+    ? `${repo ?? repoOf.get(sid) ?? sid}|search|${q}|${limit}`
+    : `${repo ?? repoOf.get(sid) ?? sid}|list|${kind}|${state}|${limit}`;
 
 /** An explicit repo wins over the memo: a link to somebody else's PR names its
  *  repository outright, so it is shared from the very first look. */
@@ -317,7 +353,12 @@ function Row(
         background: active ? 'var(--accent)' : 'none',
         borderLeft: active ? '2px solid var(--primary)' : '2px solid transparent',
         border: 'none', borderBottom: '1px solid var(--border)',
-        padding: '8px 10px', cursor: 'pointer', color: 'var(--foreground)',
+        padding: '8px 10px', cursor: 'pointer',
+        // A draft is a pull request that is not asking anything of you yet, so
+        // the whole row steps back — the number and icon already did (see
+        // stateColor), and a title in full white kept pulling the eye to the
+        // one row that did not want it.
+        color: row.isDraft ? 'var(--muted-foreground)' : 'var(--foreground)',
       }}
       className={active ? undefined : 'hover:bg-white/5'}
     >
@@ -350,6 +391,10 @@ const STATE_OPTIONS = [['open', 'Open'], ['closed', 'Closed'], ['merged', 'Merge
 
 interface GithubPaneProps {
   sessionId: string | null;
+  /** `owner/repo` to read instead of the session's own. The pane still needs a
+   *  session — the routes are session-scoped, and `gh` runs somewhere — but
+   *  every answer, and every cache key, belongs to this repository. */
+  repo?: string | null;
   /** The reference being read, or null for none. Owned by the pane above so a
    *  link clicked in the terminal, or the pane bar's PR chip, can put one
    *  here. */
@@ -357,7 +402,7 @@ interface GithubPaneProps {
   onSelect: (ref: GhRef | null) => void;
 }
 
-export default function GithubPane({ sessionId, selected, onSelect }: GithubPaneProps) {
+export default function GithubPane({ sessionId, repo, selected, onSelect }: GithubPaneProps) {
   const [list, setList] = useState<GhList | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [listFailed, setListFailed] = useState(false);
@@ -374,10 +419,17 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
   const [itemAt, setItemAt] = useState<number | null>(null);
 
   const [kind, setKind] = useState<KindFilter>('pr');
+  /** How deep the list goes. Grows as you scroll; back to one page whenever
+   *  the question changes, because the rows below are answers to the old one. */
+  const [limit, setLimit] = useState(PAGE);
   // Open only: the reason to open this list is the work in front of you, and a
   // repository's closed PRs outnumber its open ones by a hundred to one.
   const [state, setState] = useState<StateFilter>('open');
   const [query, setQuery] = useState('');
+  /** The submitted GitHub search, passed to GitHub exactly as typed. Empty
+   *  means the plain list. */
+  const [search, setSearch] = useState('');
+  useEffect(() => { setLimit(PAGE); }, [repo, kind, state, search]);
   const [copied, setCopied] = useState(false);
   const [focusedFileIdx, setFocusedFileIdx] = useState(0);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -390,9 +442,10 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
    * miss, and spend ten seconds fetching a list eight sibling worktrees already
    * have. Asking `/repo` first costs one local `git remote` read.
    */
-  const [slugReady, setSlugReady] = useState(() => !!sessionId && repoOf.has(sessionId));
+  const [slugReady, setSlugReady] = useState(() => !!repo || (!!sessionId && repoOf.has(sessionId)));
 
   useEffect(() => {
+    if (repo) { setSlugReady(true); return; }
     if (!sessionId) return;
     if (repoOf.has(sessionId)) { setSlugReady(true); return; }
     setSlugReady(false);
@@ -405,11 +458,11 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       // session, which is worse but still works.
       .finally(() => { if (!cancelled) setSlugReady(true); });
     return () => { cancelled = true; };
-  }, [sessionId]);
+  }, [sessionId, repo]);
 
   const loadList = useCallback(async (force = false) => {
     if (!sessionId || !slugReady) return;
-    const hit = force ? undefined : cacheGet<GhList>(listKey(sessionId, kind, state));
+    const hit = force ? undefined : cacheGet<GhList>(listKey(sessionId, kind, state, repo ?? undefined, limit, search));
     if (hit) {
       setList(hit.value);
       setListFailed(false);
@@ -422,7 +475,7 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
     // like a refresh, not like the list being emptied and refilled.
     setListLoading(true); setListFailed(false);
     try {
-      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/gh/list?kind=${kind}&state=${state}`);
+      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/gh/list?kind=${kind}&state=${state}&limit=${limit}${repo ? `&repo=${encodeURIComponent(repo)}` : ''}${search ? `&q=${encodeURIComponent(search)}` : ''}`);
       const data = await res.json() as GhList | null;
       if (!data) { setListFailed(true); setList(null); return; }
       // Only a wholly good answer is worth keeping: caching a half that failed
@@ -430,11 +483,11 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       // Learn the repository before storing, so this lands under the shared
       // key rather than under the session that happened to ask first.
       if (data.repo) repoOf.set(sessionId, data.repo);
-      if (data.prs !== null && data.issues !== null) cacheSet(listKey(sessionId, kind, state), data);
+      if (data.prs !== null && data.issues !== null) cacheSet(listKey(sessionId, kind, state, repo ?? undefined, limit, search), data);
       setList(data);
     } catch { setListFailed(true); }
     finally { setListLoading(false); }
-  }, [sessionId, kind, state, slugReady]);
+  }, [sessionId, repo, kind, state, limit, search, slugReady]);
 
   const loadItem = useCallback(async (force = false) => {
     if (!sessionId || !selected || !slugReady) return;
@@ -492,10 +545,18 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  /** A number, `#123`, or a pasted GitHub URL — all of them name one thing, and
-   *  typing the number is the fastest way to it. */
+  /**
+   * One box, three things — in the order that a keystroke could mean them.
+   *
+   * A number or a pasted URL names one pull request or issue, and typing the
+   * number is the fastest way to it. Anything else is **GitHub's own search**,
+   * sent exactly as typed: `is:pr review-requested:@me`, `label:bug
+   * sort:updated`, the same string that works in the box on github.com. An
+   * empty box goes back to the plain list.
+   */
   const submitQuery = (): void => {
     const raw = query.trim();
+    if (!raw) { setSearch(''); return; }
     const url = raw.match(/github\.com\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)/);
     if (url) {
       onSelect({ kind: url[3] === 'issues' ? 'issue' : 'pr', num: Number(url[4]), repo: `${url[1]}/${url[2]}` });
@@ -503,7 +564,7 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       return;
     }
     const n = raw.match(/^#?(\d+)$/);
-    if (!n) return;
+    if (!n) { setSearch(raw); return; }
     // A bare number does not say whether it is a pull request or an issue, and
     // guessing from the filter above was wrong half the time — typing an issue
     // id asked `gh pr view`, which fails outright on an issue. The server
@@ -520,14 +581,17 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       onClick={(e) => e.stopPropagation()}
     >
       <Segmented value={kind} options={KIND_OPTIONS} onChange={setKind} />
-      <Segmented value={state} options={STATE_OPTIONS} onChange={setState} />
+      {/* The state filter is the list's, not the search's: a query says
+          `state:closed` itself, and leaving ours on screen beside it would be
+          two controls claiming the same thing. */}
+      {!search && <Segmented value={state} options={STATE_OPTIONS} onChange={setState} />}
       <span style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 90 }}>
         <Search size={12} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') submitQuery(); }}
-          placeholder="#id or URL"
+          placeholder="#id, URL, or a GitHub search"
           style={{
             fontSize: 12.5, padding: '4px 7px', width: '100%', minWidth: 0,
             background: 'var(--background)', color: 'var(--foreground)',
@@ -538,6 +602,30 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       {listLoading
         ? <RefreshCw size={13} color="var(--muted-foreground)" className="animate-spin" />
         : <button onClick={() => loadList(true)} title="Refresh the list" style={iconBtn} className="hover:text-foreground"><RefreshCw size={13} /></button>}
+      {search && (
+        // What GitHub was actually asked, including the `repo:` scope the
+        // server adds when the query names none — a search you cannot read
+        // back is one you cannot correct.
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', fontSize: 11.5, color: 'var(--muted-foreground)' }}>
+          <span style={{ fontFamily: mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {list?.q ?? search}
+          </span>
+          {typeof list?.searchTotal === 'number' && (
+            <span style={{ flexShrink: 0 }}>
+              · {list.searchTotal} result{list.searchTotal === 1 ? '' : 's'}
+              {list.searchTotal > (list.prs?.length ?? 0) + (list.issues?.length ?? 0) ? `, showing ${(list.prs?.length ?? 0) + (list.issues?.length ?? 0)}` : ''}
+            </span>
+          )}
+          <button
+            onClick={() => { setSearch(''); setQuery(''); }}
+            title="Back to the list"
+            style={{ ...iconBtn, flexShrink: 0 }}
+            className="hover:text-foreground"
+          >
+            <X size={12} />
+          </button>
+        </span>
+      )}
     </div>
   );
 
@@ -551,7 +639,7 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
         k === kind && (
           <div key={heading}>
             <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted-foreground)', padding: '9px 10px 4px', position: 'sticky', top: 0, background: 'var(--background)' }}>
-              {heading}{rows ? ` (${rows.length})` : ''}
+              {heading}{rows ? ` (${countLabel(rows.length, k === 'pr' ? list.prTotal : list.issueTotal)})` : ''}
             </div>
             {rows === null ? (
               // Not "None." — GitHub did not answer, and saying the repository
@@ -578,8 +666,24 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
     </div>
   );
 
+  /** The deepest the rows could go, so the scroll knows when to stop asking
+   *  and the heading knows whether "more" exists at all. */
+  const shownRows = (kind === 'pr' ? list?.prs : list?.issues)?.length ?? 0;
+  const totalRows = (kind === 'pr' ? list?.prTotal : list?.issueTotal) ?? null;
+  const hasMore = totalRows !== null ? shownRows < totalRows : shownRows >= limit;
+
   const listColumn = (
     <div
+      // Infinite scroll, not a button: the rows are a column you read
+      // downwards, and "load more" at the bottom of a scroll you are already
+      // doing is a click that says nothing the scroll did not.
+      onScroll={e => {
+        if (listLoading || !hasMore || limit >= MAX_ROWS) return;
+        const el = e.currentTarget;
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 240) {
+          setLimit(l => Math.min(MAX_ROWS, l + PAGE));
+        }
+      }}
       style={{
         // ~20% of the half-pane, with a floor so it stays a list rather than a
         // column of ellipses, and a ceiling so a wide window does not hand it
@@ -597,6 +701,12 @@ export default function GithubPane({ sessionId, selected, onSelect }: GithubPane
       ) : listLoading && !list ? (
         <Loading what="the list" />
       ) : sections}
+      {list && listLoading && shownRows > 0 && (
+        <div style={{ padding: '8px 10px', fontSize: 11.5, color: 'var(--muted-foreground)' }}>Loading more…</div>
+      )}
+      {list && !hasMore && shownRows > PAGE && (
+        <div style={{ padding: '8px 10px', fontSize: 11.5, color: 'var(--muted-foreground)' }}>That is all of them.</div>
+      )}
     </div>
   );
 

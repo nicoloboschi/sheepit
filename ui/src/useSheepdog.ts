@@ -51,8 +51,10 @@ async function createSheepdog(): Promise<void> {
   await post('/api/sheepdog', { session_id: id });
   await post(`/api/sessions/${encodeURIComponent(id)}/rename`, { name: 'sheepdog' });
   sharedWs.send({ type: 'input', session_id: id, data: `${command ?? 'hermes'}\r` });
-  // It has no pen, so zen is where it is seen — same as headless.
-  useStore.getState().toggleZen(id);
+  // It has no pen, so the floating panel is where it is seen — same as the
+  // headless shell. The dog is something you watch *while* working, which is
+  // the one thing zen cannot be.
+  useStore.getState().setPip(id);
 }
 
 /** Open the dog if there is one, start one if there is not.
@@ -67,7 +69,7 @@ async function startOrOpen(): Promise<void> {
     const existing = await (await fetch('/api/sheepdog')).json() as { sessionId?: string | null };
     if (existing.sessionId) {
       const store = useStore.getState();
-      if (store.zenSessionId !== existing.sessionId) store.toggleZen(existing.sessionId);
+      if (store.pipSessionId !== existing.sessionId) store.setPip(existing.sessionId);
       return;
     }
     await createSheepdog();
@@ -79,11 +81,11 @@ async function startOrOpen(): Promise<void> {
 export function useSheepdog() {
   const dog = useDog();
 
-  /** Zen, never the grid: the dog has no pen to select. Pressing it while the
-   *  dog is already open is how you put it away again. */
+  /** The floating panel, never the grid: the dog has no pen to select.
+   *  Pressing it while the dog is already up is how you put it away again. */
   const toggle = useCallback(() => {
     const store = useStore.getState();
-    if (dog && store.zenSessionId === dog.sessionId) { store.exitZen(); return; }
+    if (dog && store.pipSessionId === dog.sessionId) { store.setPip(null); return; }
     void startOrOpen();
   }, [dog]);
 

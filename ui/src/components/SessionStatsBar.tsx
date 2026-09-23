@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen } from 'lucide-react';
+import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen, Github } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import { useSheepdog } from '../useSheepdog';
 import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
 import FilesDialog from './FilesDialog';
+import GithubDialog from './GithubDialog';
 
 // Workspace-level toolbar: workspace name (click to rename) + actions (Knowledge)
 // on the left; layout picker + zoom on the right. The terminal/git/files switch
@@ -41,6 +42,8 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
   const hasHeadlessSession = useStore(s => s.sessions.some(session => session.isHeadless));
+  const pipSessionId = useStore(s => s.pipSessionId);
+  const headlessPanelOpen = useStore(s => !!s.pipSessionId && !!s.sessionMap[s.pipSessionId]?.isHeadless);
   // Display name for the active workspace: its title, else its root pane's name.
   const workspaceName = useStore(s => {
     const ws = sessionId ? s.workspaces[sessionId] : undefined;
@@ -52,6 +55,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen,    setFilesOpen]    = useState(false);
+  const [githubOpen,   setGithubOpen]   = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
   const { sheep, bleating, grazing } = useFlockCounts(sessionId);
 
@@ -292,6 +296,13 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     () => setFilesOpen(v => !v), filesOpen,
   );
 
+  /* GitHub over the whole app, not one pane: pull requests and issues for the
+     repositories the flock is in, plus the ones you keep. */
+  const githubButton = action(
+    'github', <Github size={14} />, 'Pull requests and issues',
+    () => setGithubOpen(v => !v), githubOpen,
+  );
+
   const knowledgeButton = action(
     'knowledge', <BookOpen size={14} />, 'Knowledge',
     () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
@@ -302,12 +313,15 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
      existing pane is still on a pen's own menu — but nobody's first sheepdog
      should have to be assembled by hand. Once there is one, this goes to it,
      and it turns the colour of a bleating sheep when the dog is calling. */
+  // Pressed means *this panel is up*, not "a dog exists" — the same thing the
+  // other panel buttons mean, and what makes double-clicking a panel away read
+  // as the button popping out.
   const sheepdogButton = action(
     'sheepdog',
     <Dog size={14} style={sheepdog.dog?.state === 'alerting' ? { color: 'var(--bleating)' } : undefined} />,
     sheepdog.label,
     sheepdog.toggle,
-    Boolean(sheepdog.dog),
+    !!sheepdog.dog && pipSessionId === sheepdog.dog.sessionId,
   );
 
   const newSessionButtons = onCreateSession && <>
@@ -315,7 +329,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
     {action('headless', <TerminalSquare size={14} />,
       hasHeadlessSession ? 'Open headless session' : 'New headless session',
-      () => onCreateSession(true))}
+      () => onCreateSession(true), headlessPanelOpen)}
     {action('settings', <Settings size={14} />, 'Settings', () => setSettingsOpen(true))}
   </>;
 
@@ -335,6 +349,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
       {searchButton}
       {filesButton}
+      {githubButton}
       {knowledgeButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />
@@ -342,6 +357,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       {zoomButtons && <div>{zoomButtons}</div>}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} />}
+      {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
     </div>
   );
 }

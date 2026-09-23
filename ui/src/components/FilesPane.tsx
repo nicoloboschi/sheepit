@@ -645,6 +645,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const [creating,     setCreating]     = useState<'file' | 'folder' | null>(null);
   const [createName,   setCreateName]   = useState('');
   const [fileFilter,   setFileFilter]   = useState('');
+  /** The path bar in edit mode: the text being typed, or null while the
+   *  breadcrumb is showing. A browser's address bar, for a file browser. */
+  const [pathDraft,    setPathDraft]    = useState<string | null>(null);
   const [showFileFilter, setShowFileFilter] = useState(false);
   /** Recursive search mode — replaces the entries list with a SearchPanel
    *  scoped to the currently-browsed directory. Toggled from the toolbar. */
@@ -669,8 +672,8 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   useEffect(() => { setHlQuery(highlightQuery ?? null); }, [highlightQuery]);
   useEffect(() => { setHlLine(highlightLine ?? null); }, [highlightLine]);
 
-  const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}) => {
-    if (!sessionId) return;
+  const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}): Promise<boolean> => {
+    if (!sessionId) return false;
     const seq = ++browseSeqRef.current;
     setLoading(true);
     try {
@@ -680,7 +683,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       const res  = await fetch(url);
       const data = await res.json();
       // A newer navigation superseded this one — drop the stale result.
-      if (seq !== browseSeqRef.current) return;
+      if (seq !== browseSeqRef.current) return false;
       if (data.error) throw new Error(data.error);
       setDir(data.dir);
       setCwd(prev => prev ?? data.cwd);
@@ -691,8 +694,10 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         const toOpen = readme ?? firstFile ?? null;
         if (toOpen) setSelectedFile(toOpen.path);
       }
+      return true;
     } catch (e) {
       if (seq === browseSeqRef.current) console.error(e);
+      return false;
     } finally {
       if (seq === browseSeqRef.current) setLoading(false);
     }
@@ -818,6 +823,26 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     onFileSelect?.(path);
   };
 
+  /**
+   * Go where the path bar says.
+   *
+   * A typed or pasted path is usually a directory, but just as often it is the
+   * *file* you copied from a terminal — so a path that will not open as a
+   * directory is opened as a file, in its parent, rather than reported as an
+   * error. `~` and `~/…` work because the server expands them.
+   */
+  const submitPath = useCallback(async (raw: string) => {
+    const target = raw.trim().replace(/\/+$/, '') || '/';
+    setPathDraft(null);
+    if (await browse(target)) return;
+    const parent = target.includes('/') ? target.slice(0, target.lastIndexOf('/')) || '/' : null;
+    if (parent && await browse(parent)) {
+      setSelectedFile(target);
+      setMobileView('preview');
+      setOpenTabs(tabs => tabs.includes(target) ? tabs : [...tabs, target]);
+    }
+  }, [browse]);
+
   const openFileTab = useCallback((path: string) => {
     setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
     selectFile(path);
@@ -942,7 +967,10 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     // Left/h: go to parent directory
     if (e.key === 'ArrowLeft' || e.key === 'h') {
       e.preventDefault();
-      if (dir && cwd && dir !== cwd) {
+      // Up is up, all the way to `/` — the trail is absolute now, and a
+      // keyboard that stopped at the pane's own directory would disagree with
+      // the crumbs above it.
+      if (dir && dir !== '/') {
         const parent = dir.split('/').slice(0, -1).join('/') || '/';
         browse(parent);
       }
@@ -957,7 +985,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       return;
     }
     if (e.key === 'Backspace') {
-      if (dir && cwd && dir !== cwd) {
+      if (dir && dir !== '/') {
         e.preventDefault();
         const parent = dir.split('/').slice(0, -1).join('/') || '/';
         browse(parent);
@@ -966,39 +994,29 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     }
   }, [filteredEntries, focusedEntry, browse, dir, cwd, selectFile]);
 
-  // Breadcrumb segments for the current `dir`, with navigation targets.
-  //  - When `dir` is under `cwd` (the common case), we anchor the trail at
-  //    the project root: first crumb is cwd's basename → cwd; remaining
-  //    crumbs are relative subdirectories.
-  //  - When `dir` is outside `cwd` (the user browsed up past the project, or
-  //    into /tmp, etc.), we render absolute path segments instead of
-  //    pretending they live under cwd — otherwise the trail ends up showing
-  //    something like "project/Users/me/other-tree" which is misleading.
-  const { crumbs, absolute: crumbsAbsolute } = (() => {
-    if (!dir) return { crumbs: [] as { label: string; path: string }[], absolute: false };
-    const insideCwd = !!cwd && (dir === cwd || dir.startsWith(cwd + '/'));
-    if (insideCwd) {
-      const rel = dir === cwd ? '' : dir.slice(cwd!.length + 1);
-      const rootLabel = cwd!.split('/').pop() || '/';
-      const out: { label: string; path: string }[] = [{ label: rootLabel, path: cwd! }];
-      if (rel) {
-        const segs = rel.split('/');
-        let cur = cwd!;
-        for (const s of segs) { cur += '/' + s; out.push({ label: s, path: cur }); }
-      }
-      return { crumbs: out, absolute: false };
-    }
+  /**
+   * The trail, always from `/`.
+   *
+   * It used to start at the pane's own directory whenever you were inside it,
+   * showing `vipershell/src/components` — shorter, and a lie by omission: the
+   * same three words describe eight worktrees of one project, and the path you
+   * want to copy out of here is the one the shell beside it would accept.
+   * Every crumb is a real absolute path now, and "go up" walks past the pane's
+   * directory to the root like any file manager.
+   */
+  const crumbs = ((): { label: string; path: string }[] => {
+    if (!dir) return [];
     const out: { label: string; path: string }[] = [];
     let cur = '';
     for (const s of dir.split('/').filter(Boolean)) {
       cur += '/' + s;
       out.push({ label: s, path: cur });
     }
-    return { crumbs: out, absolute: true };
+    return out;
   })();
 
-  // "Go up" target: disabled at cwd (when inside cwd) or at filesystem root.
-  const upDir = dir && dir !== cwd && dir !== '/'
+  // "Go up" target: only the filesystem root has none.
+  const upDir = dir && dir !== '/'
     ? (dir.split('/').slice(0, -1).join('/') || '/')
     : null;
 
@@ -1013,16 +1031,49 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           <ChevronLeft size={14} />
         </button>
       ) : null}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, overflow: 'hidden', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-        {showBack ? (
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, overflow: 'hidden', fontFamily: 'var(--font-mono)', fontSize: 11 }}
+        // Click the trail — anywhere that is not a crumb — to type a path
+        // instead, the way a browser's address bar swaps in for its
+        // breadcrumbs. The crumbs are the common case and keep their clicks.
+        onClick={(e) => {
+          if (showBack || pathDraft !== null) return;
+          if ((e.target as HTMLElement).closest('button')) return;
+          setPathDraft(dir ?? '');
+        }}
+        title={pathDraft === null && !showBack ? 'Click to type or paste a path' : undefined}
+      >
+        {pathDraft !== null && !showBack ? (
+          <input
+            autoFocus
+            value={pathDraft}
+            onChange={e => setPathDraft(e.target.value)}
+            onFocus={e => e.currentTarget.select()}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { void submitPath(pathDraft); }
+              // Escape belongs to this field before it belongs to anything
+              // around it — a floating panel would otherwise close mid-typing.
+              if (e.key === 'Escape') { e.stopPropagation(); setPathDraft(null); }
+            }}
+            onBlur={() => setPathDraft(null)}
+            spellCheck={false}
+            placeholder="/path/to/somewhere"
+            style={{
+              flex: 1, minWidth: 0, padding: '2px 6px',
+              fontFamily: 'inherit', fontSize: 'inherit',
+              background: 'var(--background)', color: 'var(--foreground)',
+              border: '1px solid var(--primary)', borderRadius: 4, outline: 'none',
+            }}
+          />
+        ) : showBack ? (
           <span style={{ color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {selectedFile?.split('/').pop() ?? ''}
           </span>
         ) : (
           <>
-            {/* Leading "/" for absolute paths outside cwd so it's clear the
-                trail doesn't start at the project root. */}
-            {crumbsAbsolute && <span style={{ color: 'var(--muted-foreground)', flexShrink: 0 }}>/</span>}
+            {/* The trail always starts at the root, so it always leads with a
+                slash — the path reads as the path the shell would take. */}
+            <span style={{ color: 'var(--muted-foreground)', flexShrink: 0 }}>/</span>
             {crumbs.map((c, i) => {
               const isLast = i === crumbs.length - 1;
               return (

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import {
-  RefreshCw, ChevronDown, ChevronRight, FilePlus, FileMinus, FileCode,
+  RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FilePlus, FileMinus, FileCode,
   GitCommitHorizontal, FolderOpen,
 } from 'lucide-react';
 import { parseDiff, type DiffFile } from '../diff';
+import { usePoll } from '../hooks/usePoll';
 import { preferences } from '../preferences';
 
 const TREE_WIDTH_KEY = 'sheepit:diff-tree-width';
@@ -321,10 +322,83 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
   );
 }
 
+
+/**
+ * One commit's diff, in the same viewer the working tree and pull requests
+ * use. Reached by clicking a row in the log — which is the only thing you can
+ * want from a list of commits, and until now the rows did nothing at all.
+ *
+ * Read-only: these files are a snapshot of what that commit changed, not what
+ * is on disk now, so no `gitRoot` goes in and nothing here offers to edit
+ * them. The same reason a pull request's diff is read-only.
+ */
+function CommitDiff(
+  { sessionId, commit, onBack }: { sessionId: string; commit: Commit & { date: string }; onBack: () => void },
+) {
+  const [files, setFiles] = useState<DiffFile[] | null>(null);
+  const [focusedIdx, setFocusedIdx] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFiles(null);
+    setFocusedIdx(0);
+    fetch(`/api/git/${encodeURIComponent(sessionId)}/diff?mode=commit&commit=${encodeURIComponent(commit.hash)}`)
+      .then(r => r.text())
+      .then(t => { if (!cancelled) setFiles(parseDiff(t)); })
+      .catch(() => { if (!cancelled) setFiles([]); });
+    return () => { cancelled = true; };
+  }, [sessionId, commit.hash]);
+
+  const jumpToFile = (path: string): void => {
+    scrollRef.current?.querySelector(`[data-file="${CSS.escape(path)}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0 }}>
+        <button
+          onClick={onBack}
+          title="Back to the log"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 0, display: 'flex' }}
+          className="hover:text-foreground"
+        >
+          <ChevronLeft size={13} />
+        </button>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#8EBFA2', flexShrink: 0 }}>{commit.short}</span>
+        <span style={{ fontSize: 12, color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {commit.subject}
+        </span>
+        <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10, color: 'var(--muted-foreground)' }}>
+          {commit.author} · {commit.relDate}
+        </span>
+      </div>
+      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {files === null
+          ? <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading the diff…</div>
+          : files.length === 0
+            ? <div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Nothing in this commit.</div>
+            : (
+              <ChangedFiles
+                files={files}
+                focusedIndex={focusedIdx}
+                onSelect={setFocusedIdx}
+                onJump={jumpToFile}
+                scrollRoot={scrollRef}
+              />
+            )}
+      </div>
+    </>
+  );
+}
+
 // ── Full log ──────────────────────────────────────────────────────────────────
 
 function FullLog({ sessionId }: { sessionId: string }) {
   const [commits, setCommits] = useState<(Commit & { date: string })[]>([]);
+  /** The commit being read, or null for the list. */
+  const [openCommit, setOpenCommit] = useState<(Commit & { date: string }) | null>(null);
   const [loading, setLoading] = useState(false);
   /** Bumped by the reload button. The log is not polled — a commit you made
    *  yourself is the only thing that changes it — so this is how it refreshes. */
@@ -360,6 +434,10 @@ function FullLog({ sessionId }: { sessionId: string }) {
     </div>
   );
 
+  if (openCommit) {
+    return <CommitDiff sessionId={sessionId} commit={openCommit} onBack={() => setOpenCommit(null)} />;
+  }
+
   if (loading) return <>{bar}<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading…</div></>;
   if (commits.length === 0) return <>{bar}<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>No commits</div></>;
 
@@ -385,7 +463,14 @@ function FullLog({ sessionId }: { sessionId: string }) {
             {date}
           </div>
           {cs.map(c => (
-            <div key={c.hash} style={{ padding: '8px 16px', borderBottom: '1px solid var(--card)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div
+              key={c.hash}
+              onClick={() => setOpenCommit(c)}
+              title="Show what this commit changed"
+              style={{ padding: '8px 16px', borderBottom: '1px solid var(--card)', display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
+              onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--card)'; }}
+              onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'transparent'; }}
+            >
               <GitCommitHorizontal size={13} color="#9CBC7F" style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: 'var(--foreground)', marginBottom: 2 }}>{c.subject}</div>
@@ -489,9 +574,12 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
       .catch(() => {});
   }, [sessionId]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!sessionId || mode === 'log') return;
-    setLoading(true); setError(null);
+    // A refresh behind an existing diff must not empty the pane: the rows on
+    // screen are the best answer anyone has until the new ones arrive.
+    if (!quiet) setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/diff`);
       const text = await res.text();
@@ -499,6 +587,28 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
     } catch (e) { setError((e as Error).message); }
     finally     { setLoading(false); }
   }, [sessionId, mode]);
+
+  /**
+   * Keep up with the repository, rather than showing whatever it looked like
+   * when the view was opened.
+   *
+   * The diff was fetched once, on mount. An agent working in the pane beside
+   * it stages a file, commits, or touches another — and the diff went on
+   * saying what was true minutes ago, with nothing on screen admitting it. The
+   * manual refresh button existed precisely because of this, which is the
+   * tell: you should not have to ask a view of the working tree whether it is
+   * still a view of the working tree.
+   *
+   * Only while it is actually on screen. `usePoll` already stops in a hidden
+   * tab; `offsetParent` is the same question one level down, because a pane in
+   * a pen you are not showing sits under `display: none` and forking `git
+   * diff HEAD` for it every few seconds — on twenty panes, in repositories
+   * this size — is the kind of thing that pegs a core.
+   */
+  usePoll(() => {
+    if (!containerRef.current?.offsetParent) return;
+    void load(true);
+  }, 5000, sessionId, mode !== 'log');
 
   useEffect(() => { setFiles(null); setFocusedFileIdx(0); }, [mode]);
   useEffect(() => { load(); }, [load]); // eslint-disable-line

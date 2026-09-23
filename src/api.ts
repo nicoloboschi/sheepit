@@ -256,6 +256,136 @@ function repoSlug(cwd: string): Promise<string | null> {
   });
 }
 
+/**
+ * GitHub's own issue/PR search, with the query passed through **verbatim** —
+ * `is:pr review-requested:@me`, `label:bug sort:updated`, whatever you would
+ * type into the box on github.com.
+ *
+ * It goes through GraphQL rather than `gh search issues` for two reasons: the
+ * search command's JSON has neither `isDraft` nor `stateReason`, so its rows
+ * would render differently from the list's for no reason a user could see, and
+ * `search` hands back `issueCount` — the real total — in the same call.
+ *
+ * GitHub pages this at 100, and a search that needs more than 100 rows wants
+ * refining rather than scrolling, so the cap is honest and the count says how
+ * many there really are.
+ */
+async function ghSearch(
+  q: string, limit: number, cwd: string,
+): Promise<{ prs: unknown[]; issues: unknown[]; searchTotal: number | null }> {
+  const query = 'query($q:String!,$n:Int!){search(query:$q,type:ISSUE,first:$n){issueCount nodes{'
+    + '__typename '
+    + '... on PullRequest{number title state isDraft updatedAt url author{login}} '
+    + '... on Issue{number title state stateReason updatedAt url author{login}}'
+    + '}}}';
+  const sh = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const out = await execAsync(
+    `gh api graphql -f query=${sh(query)} -f q=${sh(q)} -F n=${Math.min(100, limit)} 2>/dev/null`,
+    { cwd, maxBuffer: 8 * 1024 * 1024 },
+  ).then(r => r.stdout).catch(() => '');
+  const search = (() => { try { return JSON.parse(out)?.data?.search; } catch { return null; } })();
+  if (!search) return { prs: [], issues: [], searchTotal: null };
+  const rows = Array.isArray(search.nodes) ? search.nodes : [];
+  const shape = (n: any, kind: 'pr' | 'issue') => ({
+    number: n.number,
+    title: n.title,
+    // The list route's rows come from `gh ... list`, which shouts its states;
+    // GraphQL says OPEN too, but a mixed case here would break every
+    // `state === 'MERGED'` test downstream.
+    state: String(n.state ?? '').toUpperCase(),
+    isDraft: !!n.isDraft,
+    stateReason: n.stateReason ?? null,
+    updatedAt: n.updatedAt,
+    url: n.url,
+    kind,
+    author: n.author?.login ?? '',
+  });
+  return {
+    prs: rows.filter((n: any) => n.__typename === 'PullRequest').map((n: any) => shape(n, 'pr')),
+    issues: rows.filter((n: any) => n.__typename === 'Issue').map((n: any) => shape(n, 'issue')),
+    searchTotal: typeof search.issueCount === 'number' ? search.issueCount : null,
+  };
+}
+
+/**
+ * `git status --short --porcelain` into `{ absolute path: status }`.
+ *
+ * Its own function so the column arithmetic can be tested without a working
+ * tree: the two leading columns are the index and the working tree, and an
+ * unstaged change leaves the first one blank, so a line that lost its leading
+ * space lost the first letter of its path too.
+ */
+export function parsePorcelain(statusOut: string, root: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const line of statusOut.split('\n')) {
+    if (!line) continue;
+    // Format: XY filename  or  XY old -> new (for renames)
+    const x = line[0]; // index status
+    const y = line[1]; // working tree status
+    let filePath = line.slice(3);
+    // Handle renames: "R  old -> new"
+    const arrowIdx = filePath.indexOf(' -> ');
+    if (arrowIdx !== -1) filePath = filePath.slice(arrowIdx + 4);
+    filePath = filePath.replace(/^"(.*)"$/, '$1'); // remove quotes
+
+    // Determine status: untracked, added, modified, deleted, renamed
+    let status = 'modified';
+    if (x === '?' && y === '?') status = 'untracked';
+    else if (x === 'A') status = 'added';
+    else if (x === 'D' || y === 'D') status = 'deleted';
+    else if (x === 'R') status = 'renamed';
+
+    files[root + '/' + filePath] = status;
+  }
+  return files;
+}
+
+/**
+ * How many pull requests and issues a repository has, in the state being
+ * listed.
+ *
+ * No `gh ... list` can answer this: it returns rows, so counting them counts
+ * the limit you passed. One GraphQL call asks for the two `totalCount`s and
+ * nothing else, which is what lets a list of thirty say "30 of 214" instead of
+ * quietly claiming the repository has thirty.
+ *
+ * **`closed` includes merged**, because that is what `gh pr list --state
+ * closed` returns — measured: 18 rows, every one of them MERGED, against a
+ * GraphQL `[CLOSED]` count of 0. A total that disagrees with the rows under it
+ * is worse than no total.
+ */
+async function ghTotals(
+  slug: string, state: string, cwd: string,
+): Promise<{ prTotal: number | null; issueTotal: number | null }> {
+  const none = { prTotal: null, issueTotal: null };
+  const [owner, name] = slug.split('/');
+  if (!owner || !name) return none;
+  const prStates = state === 'open' ? '(states:[OPEN])'
+    : state === 'closed' ? '(states:[CLOSED,MERGED])'
+    : state === 'merged' ? '(states:[MERGED])'
+    : '';
+  // `merged` is not a thing an issue can be, so that list asks for none and
+  // this counts none.
+  const wantIssues = state !== 'merged';
+  const issueStates = state === 'open' ? '(states:[OPEN])' : state === 'closed' ? '(states:[CLOSED])' : '';
+  const query = 'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){'
+    + `pullRequests${prStates}{totalCount}`
+    + (wantIssues ? `issues${issueStates}{totalCount}` : '')
+    + '}}';
+  const sh = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const out = await execAsync(
+    `gh api graphql -f query=${sh(query)} -F owner=${sh(owner)} -F name=${sh(name)} 2>/dev/null`,
+    { cwd },
+  ).then(r => r.stdout).catch(() => '');
+  try {
+    const repo = JSON.parse(out)?.data?.repository;
+    return {
+      prTotal: typeof repo?.pullRequests?.totalCount === 'number' ? repo.pullRequests.totalCount : null,
+      issueTotal: typeof repo?.issues?.totalCount === 'number' ? repo.issues.totalCount : null,
+    };
+  } catch { return none; }
+}
+
 /** PASS / FAIL / PENDING from `statusCheckRollup`, or null when there are no
  *  checks at all. Shared by the branch's own PR chip and the PR browser, which
  *  must not disagree about whether CI is green on the same pull request. */
@@ -1003,7 +1133,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.get('/git/:sessionId/gh/list', async (req, res) => {
     try {
       const cwd = getSessionCwd(req.params.sessionId);
-      if (!cwd) return res.json(null);
+      if (!cwd) {
+        logBuffer.log('WARNING', `gh list: session ${req.params.sessionId} has no directory, nothing to run gh in`);
+        return res.json(null);
+      }
       // Both are whitelisted rather than escaped — they are interpolated into
       // a command line, and a fixed set of words is a stronger guarantee than
       // quoting. `gh issue list` has no `merged` state, so an issue query for
@@ -1012,13 +1145,51 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const state = ['open', 'closed', 'merged', 'all'].includes(stateQ) ? stateQ : 'open';
       const kindQ = String(req.query.kind ?? 'both').toLowerCase();
       const kind = ['pr', 'issue', 'both'].includes(kindQ) ? kindQ : 'both';
+      // An explicit repository, for the GitHub panel: it lists repos you keep,
+      // not the one this session happens to stand in. Checked against GitHub's
+      // own name shape rather than escaped — it reaches a shell, and this
+      // endpoint is reachable by anything that can reach sheepit (same rule as
+      // the detail route below).
+      const repoQ = typeof req.query.repo === 'string' ? req.query.repo : '';
+      const repo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoQ) ? repoQ : null;
+      const repoArg = repo ? ` --repo '${repo}'` : '';
+      // How many rows to fetch. `gh` has no offset, so "more" is the same
+      // query with a bigger limit — it pages internally and hands back one
+      // list. Refetching the rows already on screen is the price of not
+      // maintaining a cursor for a list whose first page is what people read.
+      const limitQ = Number(req.query.limit ?? 30);
+      const limit = Number.isSafeInteger(limitQ) ? Math.min(300, Math.max(30, limitQ)) : 30;
 
       // Keyed on the repository, so every worktree of it shares one answer.
       // Falls back to the directory when there is no GitHub remote, or every
       // such directory would collide under one empty key.
-      const slug = await repoSlug(cwd);
+      const slug = repo ?? (await repoSlug(cwd));
       const scope = slug ?? cwd;
-      const key = `${scope}#list#${kind}#${state}`;
+
+      /* ── Search ────────────────────────────────────────────────────────────
+         A query is GitHub's, not ours: it goes through exactly as typed. The
+         one thing added is the repository, and only when the query names no
+         scope of its own — that is what github.com's in-repo search box does
+         with its prefilled `repo:owner/name`, and without it every search from
+         a panel that is standing in a repository would search all of GitHub.
+
+         The kind and state filters are deliberately NOT applied here. A search
+         says `is:pr` or `state:closed` itself, and quietly appending ours
+         would mean the box did not do what it says. */
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      if (q) {
+        const scoped = slug && !/\b(repo|org|owner|user):/i.test(q) ? `repo:${slug} ${q}` : q;
+        const searchKey = `${scope}#search#${scoped}#${limit}`;
+        const found = await coalescedSWR(
+          githubItem, searchKey, GH_FRESH_MS,
+          (v: any) => !!v && (v.prs?.length > 0 || v.issues?.length > 0 || v.searchTotal === 0),
+          async () => ({ ...(await ghSearch(scoped, limit, cwd)), state, kind, repo: slug, limit, q: scoped }),
+        );
+        if ((found as any)?.searchTotal == null) logBuffer.log('WARNING', `gh search failed: ${scoped}`);
+        return res.json(found);
+      }
+
+      const key = `${scope}#list#${kind}#${state}#${limit}`;
       const value = await coalescedSWR(githubItem, key, GH_FRESH_MS, isGoodGh, async () => {
         // **`null` means the call failed; `[]` means there is nothing.**
         //
@@ -1028,8 +1199,15 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // pull requests renders as — and the 30s cache then held that on
         // screen for half a minute. A list that cannot say "I don't know" will
         // eventually say something false instead.
+        // A failure is logged with gh's own first line of stderr. It used to go
+        // to /dev/null, so "it can't load issues" left nothing to read: the
+        // pane said "could not reach GitHub" and the log said nothing at all.
         const run = (cmd: string) => execAsync(cmd, { cwd, maxBuffer: 8 * 1024 * 1024 })
-          .then(r => r.stdout.trim()).catch(() => null);
+          .then(r => r.stdout.trim())
+          .catch((e: any) => {
+            logBuffer.log('WARNING', `gh failed in ${cwd}: ${cmd.split(' --json')[0]} — ${firstLine(e?.stderr) || e?.message || 'no output'}`);
+            return null;
+          });
         // **Never ask a list for `statusCheckRollup`.** It is the check runs of
         // every row — measured on one repository: 0.73s and 9.7KB without it,
         // 10.1s and 633KB with it, for one word per row that the list then
@@ -1048,7 +1226,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // empty answer, and must not read as a failure.
         const [prRaw, issueRaw] = await Promise.all([
           wantPrs
-            ? run(`gh pr list --state ${state} --limit 30 --json number,title,author,state,isDraft,updatedAt,url 2>/dev/null`)
+            ? run(`gh pr list${repoArg} --state ${state} --limit ${limit} --json number,title,author,state,isDraft,updatedAt,url`)
             : Promise.resolve('[]'),
           wantIssues
             // `stateReason` is on the issue list and NOT on the pull request
@@ -1056,7 +1234,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
             // exit non-zero and null the whole PR half. It is what tells a
             // resolved issue from an abandoned one, which is a colour here and
             // not a detail: closed-as-completed is done, not broken.
-            ? run(`gh issue list --state ${state} --limit 30 --json number,title,author,state,stateReason,updatedAt,url 2>/dev/null`)
+            ? run(`gh issue list${repoArg} --state ${state} --limit ${limit} --json number,title,author,state,stateReason,updatedAt,url`)
             : Promise.resolve('[]'),
         ]);
         const parse = (raw: string | null, k: 'pr' | 'issue') => {
@@ -1069,9 +1247,18 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
             }));
           } catch { return null; }
         };
+        // How many there are in total, which no `gh ... list` will say: it
+        // returns rows, so counting them counts the limit. One GraphQL call
+        // asks for the two `totalCount`s and nothing else — cheap, and the
+        // only way a list of 30 can honestly say "30 of 214".
+        const totals = slug ? await ghTotals(slug, state, cwd) : { prTotal: null, issueTotal: null };
+
         // The repository this answer belongs to. The client keys its own cache
         // on it, and cannot know it before asking — so every answer says.
-        return { prs: parse(prRaw, 'pr'), issues: parse(issueRaw, 'issue'), state, kind, repo: slug };
+        return {
+          prs: parse(prRaw, 'pr'), issues: parse(issueRaw, 'issue'),
+          state, kind, repo: slug, limit, ...totals,
+        };
       });
       // A failure is never cached. Holding one for 30s means the refresh button
       // returns the same failure it was pressed to clear, which reads as the
@@ -1095,7 +1282,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const repoQ = typeof req.query.repo === 'string' ? req.query.repo : '';
       const repo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoQ) ? repoQ : null;
       const cwd = getSessionCwd(req.params.sessionId);
-      if (!cwd) return res.json(null);
+      if (!cwd) {
+        logBuffer.log('WARNING', `gh ${kind} #${num}: session ${req.params.sessionId} has no directory, nothing to run gh in`);
+        return res.json(null);
+      }
 
       // Not keyed on the requested kind: both kinds of request for one number
       // resolve to the same thing, so keying on it would fetch it twice. Keyed
@@ -1188,7 +1378,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // "gh: command not found" and an expired token are three different
         // problems with three different fixes, and a pane that says only
         // "could not load" sends you off to guess which one you have.
-        if (!it) return { error: reason || 'GitHub did not answer' };
+        if (!it) {
+          logBuffer.log('WARNING', `gh ${kind} #${num}${repo ? ` in ${repo}` : ''} failed: ${reason || 'GitHub did not answer'}`);
+          return { error: reason || 'GitHub did not answer' };
+        }
 
         // Only a PR has a diff, and it is the one output here with no natural
         // bound — so it is the only one that is capped.
@@ -1326,6 +1519,31 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
+  /**
+   * The GitHub repositories the flock is standing in, for the GitHub panel's
+   * left column — "the ones you have open", without the panel asking once per
+   * pane. Distinct slugs: eight worktrees of one project are one repository,
+   * which is the same reason the gh caches are keyed on the slug.
+   *
+   * The cached session list, like `/search`: this is asked every time the
+   * panel opens, and `listSessions()` does a machine-wide `ps` when its TTL
+   * has lapsed. `repoSlug` is itself coalesced for five minutes, so the git
+   * reads behind this are paid approximately never.
+   */
+  router.get('/github/repos', async (_req, res) => {
+    try {
+      const sessions = bridge.getCachedSessions().length
+        ? bridge.getCachedSessions()
+        : await bridge.listSessions();
+      const slugs = await Promise.all(
+        [...new Set(sessions.map(s => s.path).filter((p): p is string => !!p))].map(p => repoSlug(p)),
+      );
+      res.json({ repos: [...new Set(slugs.filter((x): x is string => !!x))].sort() });
+    } catch {
+      res.json({ repos: [] });
+    }
+  });
+
   router.get('/git/:sessionId/root', async (req, res) => {
     try {
       const { sessionId } = req.params;
@@ -1367,6 +1585,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       let diff = '';
       if (mode === 'commit' && commit) {
         diff = await run(`git diff ${sh(commit)}^..${sh(commit)}`);
+        // The very first commit in a repository has no `^`, so that diff is an
+        // error and comes back empty — `git show` is what answers for it.
+        if (!diff) diff = await run(`git show --format= --patch ${sh(commit)}`);
       } else if (mode === 'branch') {
         const baseBranch = base || 'origin/main';
         // Try the requested base; if it doesn't exist, fall back to HEAD
@@ -1466,30 +1687,17 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const root = await run('git rev-parse --show-toplevel 2>/dev/null');
       if (!root) return res.json({ files: {} });
 
-      const statusOut = await run('git status --short --porcelain 2>/dev/null');
-      const files: Record<string, string> = {};
-      for (const line of statusOut.split('\n')) {
-        if (!line) continue;
-        // Format: XY filename  or  XY old -> new (for renames)
-        const x = line[0]; // index status
-        const y = line[1]; // working tree status
-        let filePath = line.slice(3);
-        // Handle renames: "R  old -> new"
-        const arrowIdx = filePath.indexOf(' -> ');
-        if (arrowIdx !== -1) filePath = filePath.slice(arrowIdx + 4);
-        filePath = filePath.replace(/^"(.*)"$/, '$1'); // remove quotes
-
-        // Determine status: untracked, added, modified, deleted, renamed
-        let status = 'modified';
-        if (x === '?' && y === '?') status = 'untracked';
-        else if (x === 'A') status = 'added';
-        else if (x === 'D' || y === 'D') status = 'deleted';
-        else if (x === 'R') status = 'renamed';
-
-        // Store as absolute path
-        files[root + '/' + filePath] = status;
-      }
-      res.json({ files, root });
+      // NOT the trimming `run` above. Porcelain's first two columns are the
+      // index and the working tree, and an unstaged change leaves the first
+      // one blank — so ` M path` trimmed to `M path`, and `slice(3)` then ate
+      // the first letter of the path. The file whose name came back as
+      // `indsight-system-evals/uv.lock` is a real one from this machine: only
+      // ever the FIRST line, and only when its change was unstaged, which is
+      // why it looked random.
+      const statusOut = await execAsync('git status --short --porcelain 2>/dev/null', { cwd })
+        .then(r => r.stdout.replace(/\n$/, ''))
+        .catch(() => '');
+      res.json({ files: parsePorcelain(statusOut, root), root });
     } catch {
       res.json({ files: {} });
     }

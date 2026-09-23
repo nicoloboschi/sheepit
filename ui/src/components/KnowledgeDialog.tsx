@@ -1,30 +1,24 @@
 import { BookOpen } from 'lucide-react';
-import ConfigDialog from './ConfigDialog';
+import FloatingPanel from './FloatingPanel';
 import NotesPane from './NotesPane';
 
 interface KnowledgeDialogProps {
   onClose: () => void;
 }
 
-/** Knowledge (notes) opens as an overlay dialog over the current workspace, so
- *  it never replaces the active terminal/workspace context. The close button is
- *  provided by DialogContent (top-right), so we don't add our own. */
+/** Knowledge (notes) floats over the work, like the other globals — it is
+ *  something you read and add to *while* working in a pane, and a full-screen
+ *  dialog made it the opposite. */
 export default function KnowledgeDialog({ onClose }: KnowledgeDialogProps) {
   return (
-    <ConfigDialog open onClose={onClose}>
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 border-b shrink-0"
-        style={{
-          borderColor: 'var(--border)',
-          // Leave room on the right for DialogContent's built-in close button.
-          paddingRight: 44,
-          background: 'linear-gradient(135deg, rgba(156, 188, 127,0.10) 0%, rgba(111, 169, 140,0.07) 100%), #10130f',
-        }}
-      >
-        <BookOpen size={15} style={{ color: 'var(--primary)' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>Knowledge</span>
-      </div>
+    <FloatingPanel
+      title="Knowledge"
+      icon={<BookOpen size={13} style={{ color: 'var(--primary)' }} />}
+      onClose={onClose}
+      width={880}
+      height={620}
+    >
       <NotesPane />
-    </ConfigDialog>
+    </FloatingPanel>
   );
 }

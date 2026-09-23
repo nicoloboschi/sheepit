@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X } from 'lucide-react';
-import ConfigDialog from './ConfigDialog';
+import FloatingPanel from './FloatingPanel';
 import FilesPane from './FilesPane';
 import useStore from '../store';
 import { preferences } from '../preferences';
@@ -75,18 +75,13 @@ export default function FilesDialog({ onClose }: FilesDialogProps) {
   ];
 
   return (
-    <ConfigDialog open onClose={onClose}>
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 border-b shrink-0"
-        style={{
-          borderColor: 'var(--border)',
-          paddingRight: 44,
-          background: 'linear-gradient(135deg, rgba(156, 188, 127,0.10) 0%, rgba(111, 169, 140,0.07) 100%), #10130f',
-        }}
-      >
-        <FolderOpen size={15} style={{ color: 'var(--primary)' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>Files</span>
-      </div>
+    <FloatingPanel
+      title="Files"
+      icon={<FolderOpen size={13} style={{ color: 'var(--primary)' }} />}
+      onClose={onClose}
+      width={980}
+      height={640}
+    >
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div
           style={{
@@ -169,6 +164,6 @@ export default function FilesDialog({ onClose }: FilesDialogProps) {
         </div>
         <FilesPane sessionId={sessionId} openFileRef={openFileRef} browseRef={browseRef} initialPath={path} onDirChange={setDir} />
       </div>
-    </ConfigDialog>
+    </FloatingPanel>
   );
 }
