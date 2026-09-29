@@ -56,7 +56,7 @@ export function ChangedFiles(
   { files, focusedIndex, onSelect, onJump, scrollRoot, gitRoot, sessionId, onOpenFile }: ChangedFilesProps,
 ) {
   // How wide the tree is, kept across reloads: on a wide pane a deep path is
-  // worth the room, in a quad it is not.
+  // worth the room, in a narrow split it is not.
   const [treeWidth, setTreeWidth] = useState(
     () => clampTreeWidth(Number(preferences.getItem(TREE_WIDTH_KEY)) || DEFAULT_TREE_WIDTH),
   );
@@ -107,7 +107,7 @@ export function ChangedFiles(
 
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-      <div style={{ width: treeWidth, flexShrink: 0, position: 'sticky', top: 0, maxHeight: '100vh', overflowY: 'auto', display: 'flex' }}>
+      <div style={{ width: treeWidth, maxWidth: '40%', flexShrink: 0, position: 'sticky', top: 0, maxHeight: '100vh', overflowY: 'auto', display: 'flex' }}>
         <FileSidebar
           files={files}
           focusedIndex={focusedIndex}

@@ -22,12 +22,11 @@ unless the surrounding code is already being rewritten.
 |---|---|
 | **Session** | A backend PTY process. 1:1 with a pane. Identified by `sessionId`. Never use "session" to refer to a sidebar row. |
 | **Pane** | A single terminal rendered in the UI. Backed by exactly one session. Has a `paneIndex` (0-based within its workspace). `TerminalCell` renders one pane. |
-| **Workspace** | A sidebar row. A collection of 1–4 panes sharing a layout, name, and last-command. Identified by `workspaceId`, which equals the `sessionId` of the workspace's **root pane**. |
+| **Workspace** | A sidebar row. An ordered, **unbounded** collection of panes sharing a name — of which it shows exactly **one** at a time. Identified by a synthetic `workspaceId` that is never any session's id. |
 | **Field** | A user-made group of workspaces. Identified by `fieldId`. Membership lives on the workspace (`Workspace.fieldId`); every pen starts in the default field, and the sidebar shows one field at a time. |
-| **Root pane** | The pane at `paneIndex === 0`. Its session id *is* the workspace id. Anchor: closing it closes the whole workspace; currently not movable between workspaces. Surfaced in code as `isGridRoot`. |
-| **Layout** | Shape of a workspace: `single` / `horizontal` / `vertical` / `three` / `quad`. Type alias: `GridLayout`. |
+| **Shown pane** | The one pane of a workspace that is on screen. `workspaces[id].cells[activeCell]`. Every other pane in the pen is as much in the background as a pane in any other pen — see [One pane on screen](#one-pane-on-screen). |
 | **Sheepdog** | The one pane appointed to watch the others (`dogSessionId` in `config.json`, `Session.isDog`). It is a pane, and it is **never a sheep** — see [The sheepdog](#the-sheepdog). |
-| **Active pane** | The focused pane inside the active workspace. Drives the Git/Files/Search tabs. Stored as `gridStates[workspaceId].activeCell`. |
+| **Active pane** | Same thing as the shown pane: with one pane on screen, focused and shown cannot differ. Drives the Git/Files/Search tabs. |
 | **Active workspace** | The workspace shown in the main area (sidebar selection). Stored as `currentSessionId` (legacy name; really means this). |
 
 ### The flock — user-facing vocabulary
@@ -39,7 +38,7 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 | UI word | Means | Store field |
 |---|---|---|
 | **Sheep** | A pane — one terminal, backed by one session | `workspaces[id].cells[n]` |
-| **Pen** | A workspace — one sidebar row, holding 1–4 sheep | `workspaces[id]` |
+| **Pen** | A workspace — one sidebar row, holding any number of sheep and showing one | `workspaces[id]` |
 | **Field** | A group of pens you put together | `fields[id]` |
 | **The flock** | Every pen together (the sidebar heading) | `workspaceOrder` |
 | **Bleating** | A sheep waiting for your input | `sessionNeedsAttention[sessionId]` |
@@ -50,9 +49,9 @@ mapping lives in `ui/src/flock.ts`, which is where the counts come from too.
 through `sheepCount()` instead of each call site remembering to pass the
 plural twice.
 
-A pen is the enclosure, not the animals: it keeps its name, layout and
-position whether or not anything is running in it, which is why closing a pen
-closes what it holds. The flock is every pen together — so pens live *inside*
+A pen is the enclosure, not the animals: it keeps its name and its position
+whether or not anything is running in it, which is why closing a pen closes
+what it holds. The flock is every pen together — so pens live *inside*
 the flock, and a pen is never itself called a flock.
 
 A sheep that is neither bleating nor grazing is just standing there — but that
@@ -89,9 +88,10 @@ all skip it (`isDogPane` in `flock.ts`), or "27 sheep" would be twenty-six
 sheep and a dog. It is drawn by `DogStatus`, not `SheepStatus`.
 
 ### Terms to avoid
-- ❌ "primary session" / "primary pane" → ✅ **root pane**
+- ❌ "root pane" / "primary pane" → ✅ **pane** (every pane in a pen is equal; there is no anchor)
 - ❌ "grid" as a user-facing noun (in UI strings, comments, or docs) → ✅ **workspace** (or **pen** in UI copy)
-- ❌ "split" as a noun → ✅ **pane** (or "non-root pane" when the distinction matters)
+- ❌ "layout" / "quad" / "split the pen" → ✅ nothing; a pen has no shape (see [One pane on screen](#one-pane-on-screen))
+- ❌ "zen" → ✅ nothing; the mode is gone, a pane is always full size
 - ❌ "session" to mean "sidebar row" → ✅ **workspace**
 - ❌ "sheeps" → ✅ **sheep** (its own plural)
 - ❌ "flock" for a single workspace → ✅ **pen** (the flock is all of them)
@@ -100,10 +100,10 @@ sheep and a dog. It is drawn by `DogStatus`, not `SheepStatus`.
 - ❌ counting the dog as a sheep → ✅ **the dog is a pane, never a sheep**
 
 ### Legacy field names — don't rename, just document
-- `gridStates` in the store = the per-workspace state map (keyed by `workspaceId`).
 - `gridId` in component props = `workspaceId`. Both names are acceptable in code; prefer `workspaceId` in new code.
-- `currentSessionId` in the store = the **active workspace id** (which is the root pane's session id — same thing).
-- `splitSessionIds` in the store = session ids of non-root panes that must stay hidden from the sidebar.
+- `currentSessionId` in the store = the **active workspace id**. It is a synthetic `ws-…` id, not a session id, and has not been one since pens were decoupled from their first pane.
+- `activeCell` on a workspace = the index of the **shown pane**. There are no cells in a grid sense any more.
+- `TerminalGrid` renders one pane and nothing else; the name is the last thing left of the grid.
 
 ## Brand palette — pasture colors
 
@@ -143,7 +143,7 @@ the gradient fill itself is the light surface there.
 ### Chrome is not green
 
 The **sidebar and the bars along the top** — the flock column, the workspace
-bar above the grid, the mobile header, and a pane's own chrome bar — are
+bar above the pen, the mobile header, and a pane's own chrome bar — are
 **neutral graphite** (`--chrome`, `--chrome-line`), not the olive the other
 surfaces are tinted with. They were olive, on the reasoning that the sidebar is
 the pasture the flock stands in. But chrome is the furniture around every pane,
@@ -199,8 +199,8 @@ A pen **folds** to one line — its name and one dot per sheep
 (`SheepDot.tsx`, `Workspace.collapsed`). The dots are not decoration: the
 reason to look at this list is to see that something wants you, and a fold
 that hid a bleating sheep to save four rows would have saved the wrong four.
-They read the same `sheepStateOf()` as the pane bar and the pasture, so the
-sidebar cannot disagree with the pane. `SheepStatus` is not reused at that
+They read the same `sheepStateOf()` as the pane bar and the pasture, so no two
+of them can disagree. `SheepStatus` is not reused at that
 size — it is a 44×38 animal whose posture and glyph are the whole point, and
 none of that survives at 6px.
 
@@ -230,7 +230,7 @@ of chrome above a list is one too many in a sidebar whose whole job is the
 list.
 
 **The shown field lives in the URL**, not in preferences:
-`#<workspaceId>[/zen:<sessionId>][/f:<fieldId>][/b:<page>]`. Two tabs standing in two
+`#<workspaceId>[/p:<sessionId>][/f:<fieldId>][/b:<page>]`. Two tabs standing in two
 different fields is the point, and one shared storage key would have the second
 tab drag the first; a refresh keeps each tab where it was, and a link carries
 the field with it. On restore the field is applied *after* the workspace —
@@ -317,16 +317,17 @@ which reads as a border with marks on it.
 
 It draws in two places, from one component:
 
-- around each **pen** in the sidebar (`.pen-body`), wrapping the pane grid
+- around each **pen** in the sidebar (`.pen-body`), wrapping the pane cards
   only — the pen's name, star and row menu sit *above* the fence. A name
   inside the enclosure cost a row of pen the sheep needed.
 - around the **workspace** in the main area (`.workspace-pen`) — **grass only**
   (`rails={false}`). A fence is a thing you look at a pen from *outside*, which
   is what the sidebar does; the workspace is the pen you are standing in, and
   at full-window size the rails were furniture drawn around furniture, since
-  the pane inside is already framed by its own border. The ground stays,
+  the pane inside is already framed by its own border, and there is exactly
+  one of them. The ground stays,
   because that is what makes the gutters and margins read as a field rather
-  than as empty space. Skipped entirely on mobile, where the grid is one
+  than as empty space. Skipped entirely on mobile, where the pen is one
   full-screen pane. `gate={44}` is now only consulted when rails are drawn.
 
 Both draw **grass** on the same canvas: scattered faintly over the whole pen
@@ -372,7 +373,7 @@ brand gradient so a handle keeps announcing itself as a handle.
 A pane has **one** chrome bar, at the top. It used to have two — a header and
 a footer under the terminal, ~34px and ~36px, each carrying a single line —
 and they were merged. Terminal content is tall and narrow, so vertical rows
-are the scarce resource: in a quad that merge handed ~72px of height back.
+are the scarce resource, and that merge handed ~72px of height back per pane.
 `--pane-chrome` / `--pane-chrome-active` still carry the gradient, and the
 light-theme variants live on the tokens, so nothing branches on `theme` in JS.
 
@@ -381,15 +382,16 @@ The bar carries **identity, not telemetry**, in three ruled groups. The
 agent's logo is not, since you already know what you started. Then the name
 with the cwd as its subtitle. Then, flush right: what the pane is connected to
 (agent mark, git handle, PR) │ what it is showing (the view switch) │
-what you can do to it (mic, zen, close). The agent mark is drawn as a *mark*,
+what you can do to it (mic, close). The agent mark is drawn as a *mark*,
 not a chip — no fill, no border, same weight as the git icon beside it — and
-mic, zen and close share one `.pane-bar-btn` style so the right end reads as
+mic and close share one `.pane-bar-btn` style so the right end reads as
 one row of controls. The **branch name is deliberately not here** —
 it was the only arbitrary-length string on the bar, so it set the width of
 everything and squeezed the title, which matters more. The git icon still
 carries the dirty state in its colour and opens the popover with the branch,
-its ahead/behind counts and the rest; the sidebar's pen card keeps the branch
-too. CPU / memory / URL-count readouts were deliberately removed. The process
+its ahead/behind counts and the rest. **The bar is the only place the PR is
+shown** — the sidebar's pen card used to carry it as well and no longer does;
+see [The pen card](#the-pen-card-two-rows-two-abreast). CPU / memory / URL-count readouts were deliberately removed. The process
 list (with kill) is still a real tool, so it keeps one small `ListTree` handle
 that appears only when there is something behind it — don't reintroduce the
 inline readouts. The list of every URL seen in the pane hung off that same
@@ -401,8 +403,8 @@ terminal](#nothing-reads-the-terminal-as-text)).
 name carries the path as its subtitle (`.pane-bar-title-block`). That stable
 height is what lets the view switch sit up on the main row with the actions
 rather than being pushed to a row of its own. `.pane-bar-actions` takes
-`margin-left: auto`, so the bar always ends exactly on the zen and close
-buttons however long the name or branch run.
+`margin-left: auto`, so the bar always ends exactly on the close button
+however long the name or branch run.
 
 **Nothing in the bar may change size with selection.** It used to grow 30px →
 34px and the sheep 36px → 42px when a pane became active, which resized the
@@ -418,83 +420,283 @@ The 280px popover that used to hold that one field is gone.
 The class names say `pane-bar-*`, not `pane-footer-*`; there is no footer to
 name any more.
 
-### Zen mode
+## One pane on screen
 
-Zen **leaves the sidebar showing**: the pane and its backdrop start at
-`calc(var(--flock-width) + 24px)`, so the flock list stays lit and clickable
-while you read one pane. Picking a pen is what you do next, and zen no longer
-ends to let you do it — `setCurrentSessionId` and `setActivePane` re-point
-`zenSessionId`, so zen is a **mode** you turn on once, not a property of one
-pane. (It was neither before: hidden workspaces sit under `display: none`,
-which hides a `position: fixed` child too, so picking a pen dropped you out of
-zen without turning it off and left a stale `/zen:` in the URL.) `--flock-width`
-is published by `Sidebar.tsx` and is 0 below the `md` breakpoint, where the
-list is a sheet and zen is the whole screen. The workspace bar stays showing
-for the same reason — New session, search and layout are still in reach — via
-`--topbar-bottom`, published by `SessionStatsBar` (0 when the bar is hidden).
+A pen holds **as many sheep as you like and shows one of them**. There is no
+grid, no layout, no resize separator and no zen mode.
 
-Its frame is a **hairline and a shadow**, not the lit green border it had. Zen
-is where you read for minutes at a time — the last place to put the brand
-colour around the text — and being the only lit thing over a dimmed grid is
-already all the emphasis it needs.
+The grid was up to four panes in eight variants (`single`, `horizontal`,
+`vertical`, four `three-*` orientations, `quad`), and zen was an overlay you
+entered to read one of them without the other three. In practice zen was never
+turned off — because everything worth putting beside a terminal had already
+moved *inside* a pane: the browser, a pull request, the working tree, the
+commit log, the files. Two terminals side by side was the one thing the grid
+offered that nothing else did, and it is the one thing nobody was reading. So
+the grid went, and zen went with it: a mode you never leave is not a mode, it
+is the layout, and keeping it as an overlay meant paying for a backdrop, an
+entrance animation, `position: fixed`, and a hit-test grid in the desktop
+shell to keep a native browser view from floating over it.
 
-That frame is set **outside** the `isZen` spread in `TerminalCell`'s style
-object, and must stay there. A key written after a spread wins even when its
-value is `undefined`, so `background`, `boxShadow` and `outline` — which come
-after it — silently erased what the spread had set, and zen lost both the
-hairline and the shadow to a `background: isZen ? undefined : …` that read like
-it was deferring to the block above. Each of the three branches on `isZen`
-itself now, where the ordering cannot bite.
+What this buys, besides the deletion: a pen is no longer capped at four, since
+four was the size of a 2×2 grid and there is no grid to be the size of.
 
-The **selection ring is off in zen**, like the glow and the dimming beside it.
-The outline was the one of the three that never got the `!isZen` guard, so zen
-came up ringed in brand green — but only on a pen holding more than one sheep,
-since the condition is `isMultiPane && isActive`. That is why it looked
-arbitrary: same tab, same mode, and the ring depended on how many sheep the pen
-you happened to zen into was holding. A **file drop still outlines a zen
-pane** — that is feedback about what is under the cursor, not a statement about
-which pane is selected, and in zen there is no grid to pick a pane out of.
+- **Nothing is drawn above the pane.** A tab strip was built and removed: it
+  spends a row of terminal, on every pen, on a list the sidebar is already
+  drawing — and drawing better, with each sheep's name, its PR, its context and
+  its own animal, none of which fits in a tab. Vertical rows are what terminal
+  content is short of, which is the same argument that merged the pane's two
+  chrome bars into one. **The sidebar is the switcher**; ⌘↑/↓ walks the same
+  sheep without leaving the keyboard.
+- **Every sheep in a pen stays mounted**, all but one under `display: none`.
+  Unmounting would tear down its xterm on every switch and rebuild it from the
+  daemon's ring — a visible stall, and the scroll position gone. Bounded the
+  same way `PaneTerminal` bounds pens: only the pen you are standing in mounts
+  its sheep, and at most a dozen pens are alive.
+- **"On screen" means the shown pane, not the pen.** `isOnScreen` in the store
+  is the single test, and `updateActivity`, `sessionAttention` and `markUnseen`
+  all go through it. They asked `cells.includes()` before, which was right when
+  a pen drew all four at once and would now swallow the "finished" notification
+  from every pane you are not looking at.
+- **Becoming the shown pane is a resize.** A hidden pane sits under
+  `display: none`, so the pane taking over goes from no size to the whole pen
+  and has to refit and tell the PTY. That is the old zen-refit effect, keyed on
+  `isActive` now. Its two `requestAnimationFrame` ids stay in a **ref**: a
+  switch runs the effect on two panes at once, and one global slot meant the
+  pane handing over cancelled the fit of the pane taking over.
+- **Nothing on a pane says "selected" any more.** The ring, the glow and the
+  dimming of the unselected panes all went: the pane on screen is the selected
+  pane by construction. The only outline left is the file-drop one, which is
+  feedback about what is under the cursor.
+- **Another sheep in this pen** is one button in the workspace bar
+  (`onAddSheep`), where the layout picker used to be — with one pane on screen,
+  "split" and "add" were always the same action wearing eight icons. It claims
+  the new session for the pen *before* asking for the session list, or
+  `renderSessions` gives it a pen of its own.
+- **The URL carries the shown pane**: `#<workspaceId>[/p:<sessionId>][/f:<fieldId>][/b:<page>]`.
+  This is the old `/zen:` segment doing the job it was really doing — a link to
+  a pen alone lands you on whichever sheep that pen last had open, which is not
+  the one the link was about.
 
-**Switching pens in zen changes what is in the frame, not the frame.** The
-box does not move between one pen and the next, so anything that animates,
-re-runs or resizes on the way is the pane appearing to be torn down and put
-back — which is what it looked like. Four things had to stop:
+### The pen card: two rows, two abreast
 
-- **The entrance plays once per *opening*.** `zenOpenSeq` (bumped only when
-  `toggleZen` turns zen on from off — never by `setCurrentSessionId` or
-  `setActivePane`) and the module-level `playedZenOpen` in `TerminalCell`
-  agree on that between panes: the pane taking over does not replay what the
-  pane handing over already ran. It is read during render, not in an effect,
-  or the pane shows at full size for a frame and *then* fades in from nothing.
-  It is sticky while a pane is zen because an inline `animation` that vanished
-  on the next render — and a pane renders on every burst of output — would cut
-  the fade off part-way.
-- **The backdrop is one of those animations.** It is rendered by whichever
-  pane is zen, so a switch tears one down and puts an identical one up in the
-  same commit. Invisible — unless it fades itself back in.
-- **The zen pane and the shown workspace move in one `set`.** They were two,
-  and the state between them pointed zen at a pane whose workspace was still
-  `display: none`, which hides a `position: fixed` child.
-- **The PTY is only told a size that changed.** Every resize is a SIGWINCH and
-  a full-screen app answers one by repainting its whole frame; four fits
-  converge on one newly-visible pane (the zen effect, the ResizeObserver's
-  50ms and 200ms passes, the tab-active handler) and they mostly agree on the
-  answer, so a switch cost three or four repaints of an agent's UI.
-  `sendResize` in `TerminalCell` drops the repeats, and forgets what it sent
-  on `__ws_open__`, where a reconnected server has to be told again.
+The sidebar's pen card is a **list** of pane cards (`.pane-grid-list`) rather
+than a picture of the layout, and the list runs **two cards to a sidebar
+line**. That is not a layout coming back: a layout meant "these panes are on
+screen together, arranged so", and two columns here means only that a sidebar
+line is wide enough to seat two cards and a column of one wasted half of it.
 
-The zen refit's two `requestAnimationFrame` ids live in a ref rather than on
-`window` for the same reason: a switch runs that effect on *two* panes, and one
-global slot meant the pane handing zen over cancelled the fit of the pane
-taking it.
+Two is fixed rather than `auto-fill`. The sidebar runs 180–500px, so an
+auto-fill with any honest minimum would sit at one column across most of that
+range — which is the thing being fixed. The cards shed fields instead (below).
 
-Zen insets the pane by **24px**, not the 40px it used to. It exists to read
-one pane, so most of the window should be pane — but it still has to read as
-an overlay floating over the grid rather than a mode that replaced it. 40px
-was too much backdrop (~11% of a 1440px screen's width); 12px was too little
-to see it was an overlay at all. `.pane-zen` also trims the terminal's own
-padding — in a grid that inset keeps a pane's text off its neighbours, and
-alone on screen there is no neighbour to keep it off.
+**A pen holding one sheep spans both columns** (`:only-child`), which is much
+the commonest pen and now reads exactly as it did — full width, every field. An
+odd *last* card stays at half width on purpose: stretching it would make its
+row taller than the ones above it for nothing.
+
+What a card can afford also changed when the grid went. Its position used to
+mean something — it *was* the grid — and it could be a 78px tile because there
+were at most four, arranged in a square. Now it is one cell of a list that may
+hold a dozen sheep, so every pixel is multiplied by the whole flock. A card is
+~46px and two rows:
+
+1. **the name**, up to **two** lines (it was three)
+2. **the info row** — agent mark, context count, time, the sheep
+
+**The PR is gone from the card.** It was the only field here answering a
+question about somebody else's work rather than about this pane, it was the
+widest thing in the row, and the pane's own bar carries it where there is room
+to say more than a number (state, checks, the popover). In a card two abreast
+it was spending the row's scarcest space on its least scannable field.
+
+**The count is brand green; the name above it is foreground.** Two different
+hues, because two things of equal weight in one small card have to be picked
+apart by position otherwise — and the name is prose you read while the count is
+a measure you scan. It matters most when the name is itself numeric ("pr 4066"
+beside "33%"). Green is the right colour of the palette to spend here: amber
+and terracotta both mean something is wrong, and nothing is wrong about a
+context having tokens in it. The empty dash drops the hue along with the
+number, since the colour is what says *there is a measure here*.
+
+**A real count is drawn bright, not muted.** It was `--muted-foreground` at 0.85, which on the card's olive put
+it within a few percent of the timestamp beside it *and* of the dash that is
+meant to be its opposite — a row where every field is the same grey is a row
+you read one field at a time instead of scanning. The brightness is the signal
+here. The order, brightest to quietest: the name, the context count, then the
+time, which is also the first thing to shed.
+
+**An empty context is drawn as absence, not as the number zero.** Scanning
+twenty panes the first question is never "how full is this one", it is *is
+there anything in it at all* — and a `0` among `451k` and `88k` is a number you
+have to read before you know it means nothing, which at 10px in a half-width
+card reads as an `8` about as often. Zero draws a dim en-dash
+(`.pane-card-ctx-empty`); the exact count is in the `title` either way.
+
+That is deliberately **not** the fresh card's dashed border, which it often
+appears beside and which means something narrower: `fresh` is the agent's own
+report that nothing has been asked of it, while this is a context with nothing
+in it — true of a pane just `/clear`ed, and of a plain shell that never had an
+agent. And it stays a `!== undefined` test, not a truthy one: absent means
+there is no agent to ask and draws nothing at all.
+
+**The info row sheds, cheapest first, on the card's own width** — each card
+sets `container-type: inline-size`, so the `@container` ladder measures the
+card and not the window. Two abreast in a 180px sidebar a card is 73px:
+
+| below | drops | because |
+|---|---|---|
+| 128px | the time | the sheep beside it already says whether it is working *now* |
+
+**The context count never sheds.** It did, at 116px, while the PR was
+competing with it for the row — and that was the wrong survivor. It is also
+narrowest exactly when it matters most, since an empty context is one dash.
+What never sheds: the agent mark, the context count and the sheep — which pane
+this is, whether there is anything in it, and whether it wants you. The row
+keeps its height throughout, so a card stays two rows and the cards in a pen
+stay aligned.
+
+**The dirty dot is gone too.** A 6px amber circle whose only reading was "this
+tree has uncommitted changes" — true of nearly every pane you are working in,
+so it was on nearly every card, which is a signal that says nothing. It was
+also the card's one field in the palette's *warning* colour, and a wall of
+amber dots beside sheep that use amber for unread output made that state harder
+to spot. The git icon in the pane's own bar still carries the dirty state in
+its colour and opens the popover with the branch and counts.
+
+**The cwd row is gone.** It was there when a card was the only place a pane's
+identity was written down; the pane's own bar has carried the path as the
+title's subtitle since the two chrome bars merged, so the card said the same
+thing twice and charged a row per sheep for it. The full path is still on the
+card's `title`.
+
+The **sheep shrank to 26px** (22px in a tight card), from 42px. That is the one
+change here with a real cost — the animal's posture and glyph are the point of
+it — and it is paid because the full-size animal is still in the pane bar,
+where you are already looking, and because a pen is now a list of them.
+
+The sheep stays the last item **in** the info row rather than floating over the
+card's corner: floating it meant every row above had to reserve a gutter, which
+in a tight card ate the name down to "…ell".
+
+Pen chrome was trimmed with the cards (`.session-item`, `.pen-body`) — it is
+paid once per pen, and the sidebar is a column of pens. **The horizontal
+padding on `.pen-body` is fence geometry** (the posts stand 8px proud of the
+rails) and must not be trimmed; the vertical is free.
+
+### Side terminals: a shell beside the agent
+
+A pane's rail ends with **Terminals** (`split-terminals`), holding up to
+`MAX_SIDE_TERMINALS` = 4 shells **of that pane's own**: opened in its
+directory, headless so they never get a pen, and closed with it.
+
+**This is the side terminal that was given up when pens lost their grid**, and
+it is why that loss was affordable. What anyone actually wanted from two panes
+side by side was never two agents — it was a shell next to the agent, in the
+same repository, to run `npm test` or tail a log while it works. That belongs
+*inside* the pane beside the browser and the git views, not as a second pane in
+the sidebar.
+
+- **`sideOf` is the whole mechanism.** A side terminal is `isHeadless` (no pen)
+  *plus* `sideOf: <owning pane id>`. Its absence marks a **global** scratch
+  shell. Both lists filter on it — the panel takes `isHeadless && !sideOf`, a
+  pane's split takes `sideOf === me` — so neither offers to close the other's.
+  It is persisted, or a side terminal would come back with no pen *and* no
+  pane, reachable by nothing and closable only by `kill`.
+- **The server picks the directory, from the owning pane.** The client sends
+  `side_of` and no path: a path from the client is that tab's idea of the cwd,
+  and OSC 7 has usually moved it since.
+- **`restart` carries `side_of` too.** The restart button closes the old shell
+  by id and makes a new one; without the owner it came back belonging to
+  nobody, so restarting a pane's terminal silently moved it into the global
+  panel. The close also had to move *above* the branch on `sideOf` — while it
+  sat inside the global arm, a side-terminal restart left the old shell running
+  and made a second one beside it. The cap is counted after the close, so a
+  restart at the limit is a swap rather than a refusal.
+- **A pane takes its side terminals with it.** `closeSession` collects them
+  before the kill and closes them after, so the recursion never sees a
+  half-removed map. Leaving them would leak shells nothing can show or name.
+- **Capped per pane, not globally.** Twenty panes with four apiece is eighty
+  shells, so the cost is bounded where it is incurred.
+
+### A tile is not a pane
+
+Both grids render `TerminalCell` with `tile`, and that flag is load-bearing.
+
+**A tile has no tools at all** — no rail, no toggle in its bar, no view but the
+terminal. The tools are for *the work*: you read a diff against the agent that
+wrote it, you open the files of the repository it is changing. A scratch shell
+is not that. It is somewhere to type a command while the work happens
+elsewhere, it is a few hundred pixels wide, and it already sits inside a pane
+that has all six tools of its own — git in a tile would be a second opinion
+about the same repository in a quarter of the space. (It also settles the hall
+of mirrors: no rail means no Terminals tab offering a pane's terminals inside
+one of that pane's terminals.)
+
+Two more follow:
+
+- **It persists no view.** These come and go, and `sheepit:pane-views` would
+  fill with the ids of shells that no longer exist. It also fixed a sharper
+  bug: a tile that had once saved `split` kept reopening with the files out, so
+  changing the default alone did nothing for any tile that already existed.
+- **It never claims the global active-pane registries.** Every tile passes
+  `isActive` — it is the only thing in its box — so the genuinely global slots
+  are gated on `isActive && !tile`: the ⌘←/→ view cycle (which would point at a
+  scratch shell instead of the pane you are working in), and
+  `activeTerminalSend`, the one slot the mobile key bar types into, which four
+  tiles would otherwise fight over. Mount-time focus is gated too, or a tile
+  would steal focus from the pane it is sitting inside. Clicking a tile still
+  focuses it; xterm does that itself.
+
+A tile's `gridId` is `__headless__:<id>`, matching no workspace on purpose.
+Anything reading a pane's pen from it must cope with the miss — `isLastSheep`
+in `PaneHeader` did not, and called every scratch shell the last sheep in a pen
+it is not standing in.
+
+### The global scratch terminals keep a grid, and that is not a contradiction
+
+The **Terminals panel** (`TerminalsDialog`, a `FloatingPanel` beside Files /
+GitHub / Knowledge) holds up to `MAX_HEADLESS` = **4** shells that belong to no
+pane at all, tiled — 1 full, 2 side by side, 3 as one wide over two, 4 as a
+2×2. `TerminalTiles` draws both these and a pane's side terminals: they are the
+same picture of the same kind of thing, and a second copy would have drifted
+the moment one of them grew a button.
+
+That is the grid pens just lost, and the two decisions agree. A pen is where
+you **read**: one terminal at full width with the browser or a diff beside it,
+so four panes there were four things none of which you could work in. These are
+the opposite — shells you **watch**, in a box you park in a corner, where
+seeing all four at once is the entire point. No draggable separators:
+`react-resizable-panels` went out with the pen grid and is not coming back so
+somebody can nudge a scratch shell 40px wider. The panel resizes; the tiles
+follow. Three is one-over-two rather than three columns because a third of a
+900px panel is ~290px, under the 560px where a pane's own split stacks — three
+columns would put all three panes in their narrow layout at once.
+
+- **The cap is enforced server-side** (`create_session` in `server.ts`), which
+  is the only side that can count without racing two clients. The UI's
+  `MAX_HEADLESS` is a mirror used for the count and the disabled button; if
+  they drift the server still wins, handing back an existing shell rather than
+  making one.
+- **`restart` names its target now.** It used to mean "the" headless session,
+  which stopped being a thing that exists. It still happens server-side in one
+  step, for the original reason: a close and a create sent separately race the
+  lookup, and a create that lands first is handed back the very session it was
+  meant to replace.
+- **The panel holds no state.** Its contents are `sessions.filter(isHeadless)`,
+  so there is no second list to disagree with the server's, and nothing to
+  persist — these are real PTYs the daemon keeps, so they survive a server
+  restart and reopening the panel finds them.
+- **`pipSessionId` is the sheepdog's alone** again. The dog and the headless
+  shell shared that one slot, so raising either put the other away.
+- A scratch terminal's `gridId` is `__headless__:<id>`, matching no workspace
+  on purpose. Anything reading a pane's pen from it must cope with the miss —
+  `isLastSheep` in `PaneHeader` did not, and called every scratch shell the
+  last sheep in a pen it is not standing in.
+
+**What was deliberately given up in a pen**: two terminals side by side — an
+agent in one, its logs in the other. If that comes back it should be a *side terminal*
+inside a pane, beside the pane's own terminal, alongside the browser and git
+splits. It must not come back as a grid of pens.
 
 ### Rules of thumb
 
@@ -564,15 +766,39 @@ different places:
   is `input + cache_read + cache_creation`. **The cached part is nearly all of
   it** — a real 451,045-token session reports `input_tokens: 32` — so counting
   only the obvious field reports every long conversation as empty.
-- **Codex** writes `token_usage_record` rows whose `usage.input_tokens` is that
-  same total, already summed.
+- **Codex** writes an `event_msg` row whose payload type is `token_count`;
+  `info.last_token_usage.input_tokens` is the last prompt, already summed (its
+  `cached_input_tokens` is a subset, not an addition). Take the **last turn's**
+  figure, not `total_token_usage`, which is every turn's input added up and is
+  not what is in the context. The older `token_usage_record` row is still read
+  as a fallback — current Codex writes none, and reading only that one is why
+  Codex panes had stopped reporting any context at all.
 
 Three things about it that are easy to get wrong:
 
-- **It is what is used, not what fits.** Neither agent writes down the size of
-  the model's window, so the card shows a count (`451k`) and not a percentage.
-  A percentage would need a per-model limit kept by hand here, which goes stale
-  the next time a model ships. The number also drops after a compaction, which
+- **A percentage when the agent says how big its window is; a count when it
+  does not.** This is asymmetric on purpose, because the agents are:
+  - **Codex writes `info.model_context_window`** (258400 on a real gpt-5.4
+    rollout) beside the count, so its panes show `33%` — exact, and with
+    nothing kept by hand.
+  - **Claude Code records no window size anywhere the transcript can be read
+    from.** Not on the usage block, not on a system row, and **not in any hook
+    payload**. Claude Code's own status line shows a percentage because the
+    *status-line interface* hands it `context_window.context_window_size` —
+    a different channel, and not one sheepit is on. Installing a status line to
+    get at it would clobber the user's own.
+
+    The single trace of the window in the file is the trailing `cost-state`
+    row, whose `modelUsage` map keys a 1M session as `claude-opus-5[1m]` while
+    the assistant rows say plain `claude-opus-5`. Do not build on it: it is
+    undocumented, it is **absent from roughly half the live transcripts** on
+    this machine, it sometimes sits thousands of lines from the tail we read,
+    and its keys include whatever model a subagent happened to use. Assuming
+    200k when it is missing would report a real 1M session holding 536k tokens
+    as **268% full** — wrong, and wrong in the alarming direction.
+
+  So `ctxLimit` is present or absent, never guessed, and absent means *we do
+  not know*, never *unlimited*. The number also drops after a compaction, which
   is right: it really did.
 - **Stat before reading.** The count changes exactly when the agent replies,
   and replying is what moves the transcript's mtime — so `contextTokens` stats
@@ -581,12 +807,15 @@ Three things about it that are easy to get wrong:
   re-reading unconditionally would be megabytes a second for a number that had
   not changed.
 - **The store's equality check is an allowlist**, so `ctxTokens` had to be
-  added to it. Leave it out and the number renders once and then freezes: it
-  climbs with every reply, and a list that calls itself unchanged never
-  re-renders.
+  added to it — and `ctxLimit` with it. Leave either out and the number renders
+  once and then freezes: it climbs with every reply, and a list that calls
+  itself unchanged never re-renders. The limit matters for the same reason even
+  though it never changes within a session — on a fresh Codex pane it arrives a
+  sweep after the count, and that sweep changes nothing else.
 
 Unlike the title, this works for **both** agents — Codex panes have no name to
-offer but do report their context.
+offer but do report their context, and are the only ones that can be shown as a
+percentage.
 
 **The title is taken as it is.** `normalizeAssignedName` is now *only* the
 writer/reader contract — the charset, six words, sixty characters, and a letter
@@ -837,11 +1066,15 @@ client on the session object as `prRefs`.
 
 The bar shows the most recently touched reference, not the highest-numbered
 one — a session that has just checked out #3672 is about #3672 whatever else
-it read. `gh pr view` still runs (`/api/git/:id/github`) and is still the only
-source of *state* and *check results*, but it answers for the **branch**, so
-those decorations are painted only when its number and the reference agree.
-That split is the whole point: a session on `main`, or on a local checkout of
-someone else's PR, has no branch PR at all and used to show nothing.
+it read.
+
+**There is no "PR of this branch" lookup any more.** `/api/git/:id/github` used
+to run `gh pr view` with no number for every pane every 30s, to paint the
+branch's PR with its state and checks. Measured: ~45 calls a minute, a third
+of them failing on branches with no PR, all competing with the GitHub view for
+the same `gh`. The PR a pane is about is the one its agent reported, so the
+route now answers only the repository (from `repoSlug`) and the chip shows the
+reference without state.
 
 ### Searching the flock
 
@@ -940,17 +1173,24 @@ you never looked at.
 
 ## What a pane can show
 
-Six states, and the pane bar's switch offers **three** of them — terminal,
-browser, git — because the last four are one group behind one rail:
+Six states. The pane bar has **no view switch** — only one button that shows
+or hides the **tools**, and every tool is a tab on one rail beside the
+terminal (`ToolRail`, `TOOL_TABS`):
 
 | state | shows | reached from |
 |---|---|---|
-| `terminal` | the terminal, alone | the switch |
-| `split-preview` | terminal **+ the browser** | the switch |
-| `split-github` | terminal **+ pull requests and issues** | the git rail |
-| `working` | terminal **+ the working tree** | the git rail |
-| `log` | terminal **+ the commit log** | the git rail |
-| `split` | terminal **+ files** | the git rail, last |
+| `terminal` | the terminal, alone — tools hidden | the pane bar's toggle |
+| `split-github` | terminal **+ pull requests and issues** | the rail, first |
+| `working` | terminal **+ the working tree** | the rail |
+| `log` | terminal **+ the commit log** | the rail |
+| `split` | terminal **+ files** | the rail |
+| `split-preview` | terminal **+ the browser** | the rail |
+| `split-terminals` | terminal **+ shells in this pane's directory** | the rail, last |
+
+The toggle brings back whichever tool was showing when the tools were hidden
+(`lastToolRef`). There used to be a three-way switch — terminal, browser, git —
+which made the browser a different half-pane from the files beside it; on the
+rail it is one more click at the same shape, like the rest.
 
 **Nothing is ever shown alone, and the terminal is never hidden.** Reading a
 file, watching a dev server, reading a pull request, going over what you have
@@ -979,7 +1219,7 @@ where the `diff` → `working` and `github` → `split-github` migrations live.
 Every split shares one divider and one stored width, because it is one
 question: how much of the pane is not the terminal.
 
-The git group's four views are a **vertical rail** (`GitTabRail`), not a strip
+The tools are a **vertical rail** (`ToolRail`), not a strip
 across the top, and GitHub leads it. Four labelled buttons across the top of a
 half-pane column is most of that column; a 28px rail down its edge costs the
 diff nothing. All four views carry the same rail, so moving between a pull
@@ -1078,11 +1318,35 @@ copy of the identical pull request list. Measured after the change: the first
 worktree pays 0.84s for a list and 1.87s for an issue, and the next two pay
 0.02s and 0.001s.
 
-**The branch's own PR is the exception to the exception.** `githubPr` /
-`/git/:id/github` stays keyed on the directory, because `gh pr view` with *no
-number* resolves the PR of whatever branch that worktree has checked out —
-which is the one thing here that genuinely differs between two clones of one
-repo. Re-key that one and every worktree would report the first one's PR.
+### Nobody waits for GitHub
+
+Measured: a list costs 0.7–1.5s and one pull request 0.9–1.5s (the view with
+its checks and comments is the long pole), and GitHub itself takes 350ms+ even
+for a rate-limit ping — so a faster client (native HTTP instead of `gh`, tried:
+70–220ms saved per call) cannot make it instant. Only never asking while
+somebody waits can. Three pieces; the data lives on the server, keyed on the
+repository, so every worktree shares them:
+
+- **Watched lists refresh themselves.** A list somebody asked for in the last
+  5 minutes (`watchedLists`, `WATCH_MS`) is refetched every `GH_FRESH_MS` (30s)
+  by a timer, not by the next reader. An open view re-asks every 30s, so
+  "watched" means "somebody is looking at it".
+- **Every row of a list is loaded behind it** (`warmItems`), four at a time —
+  but only rows never loaded, rows whose `updatedAt` moved, and pull requests
+  whose checks are `PENDING` (CI finishing does not move `updatedAt`). That is
+  what keeps "every PR fresh within 30s" from being 60 items × 3 calls every
+  30s. A row's kind is a fact, so warming an issue skips probing it as a pull
+  request first (`fetchItem`'s `known`).
+- **The GitHub view re-asks every 30s** while on screen, which is a cache read
+  on the server.
+
+Measured after: a pull request or issue never opened before answers in
+**9–21ms**. Every `gh` call and every answer is logged with `[gh]` —
+`hit`/`stale`/`join`/`miss` and how long the reader waited, `bg` for work
+done behind them.
+
+The cache is in memory, so a server restart (every code change, in dev) starts
+it cold: the first list after one waits for GitHub.
 
 `repoSlug()` falls back to the directory when there is no GitHub remote, or
 every such directory would collide under a single empty key. Its own 5-minute
@@ -1221,8 +1485,8 @@ macOS treat a headless renderer as background work.
 - **The UI owns placement, the shell obeys.** The surface reports its box
   every frame (a pane moves without resizing, which a ResizeObserver misses),
   and `null` when it has no box, so a hidden pen hides its view.
-- **A native view is above the whole page**, so it cannot sit under zen's
-  backdrop, ⌘K or a menu. The surface hit-tests a grid of points over its box
+- **A native view is above the whole page**, so it cannot sit under ⌘K, a
+  floating panel or a menu. The surface hit-tests a grid of points over its box
   and hides the view when anything else is on top. That is what lets no
   overlay know the view exists; do not replace it with per-overlay hiding.
 - **A UI reload never unmounts React**, so `main.cjs` closes an owner's views
@@ -1497,8 +1761,10 @@ through sheepit's own front door.
 **It has no pen.** Like the headless singleton, the dog is filtered out of
 `workspaceSessions` in `renderSessions`, so it never gets a workspace and never
 appears in the sidebar — it is the animal watching the flock, not one of it.
-Zen is its only presentation, entered from the dog button in the workspace bar
-(`ZenOnlyTerminal` in `App.tsx`). Note that cells are pruned against
+Its presentation is the **floating panel** (`PipTerminal` in `App.tsx`),
+raised from the dog button in the workspace bar — a thing you keep an eye on
+*while* working in a pen, rather than something that takes the pen's one slot.
+Note that cells are pruned against
 `pennableSessionIds` rather than `liveSessionIds`: promoting a pane that
 already sits in a pen has to evict it from that pen, and promotion is not a
 restart.

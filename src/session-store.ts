@@ -8,6 +8,12 @@ export interface StoredSession {
   path: string;
   sessionType?: string | null;
   isHeadless?: boolean;
+  /** The pane this shell stands beside, when it is a *side terminal* — a
+   *  shell opened in a pane's Terminals split, in that pane's own directory.
+   *  Persisted so a side terminal comes back attached to its pane rather than
+   *  as an orphan nothing can reach: it is headless, so without this it would
+   *  have no pen AND no pane, and only `kill` could close it. */
+  sideOf?: string;
   /** Sticky DEC private modes active at the last write. Persisted because the
    *  ring cannot be trusted to still hold an app's one-time setup sequences. */
   modes?: number[];
@@ -47,6 +53,14 @@ const LEGACY_FILE = join(configDir(), 'direct-sessions.json');
  * sessions; it does nothing about two writers racing on the same session, and
  * running several servers at once is exactly when that happens.
  */
+/** Session ids are minted internally ("direct-42"), but they are also the only
+ *  thing naming a file on disk — a session's JSON here, its ring buffer under
+ *  `ring-buffers/` — and one of them arrives from a URL. Anything building a
+ *  path from an id asks this first, or `..%2f` climbs out of the directory. */
+export function isSafeSessionId(id: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(id);
+}
+
 export class SessionStore {
   private dir = sessionsDir();
   /** Coalesces bursts: a turn reports twice, and modes change per keystroke. */
@@ -58,9 +72,7 @@ export class SessionStore {
   }
 
   private fileFor(id: string): string {
-    // Session ids are minted internally ("direct-42"), but this builds a path,
-    // so refuse anything that could climb out of the directory.
-    if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`unsafe session id: ${id}`);
+    if (!isSafeSessionId(id)) throw new Error(`unsafe session id: ${id}`);
     return join(this.dir, `${id}.json`);
   }
 

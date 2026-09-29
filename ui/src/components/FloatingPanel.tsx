@@ -3,16 +3,16 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 /**
- * A panel that floats over everything, including zen.
+ * A panel that floats over everything.
  *
  * The things it holds are *globals* — the headless shell, the sheepdog, the
  * file browser, Knowledge. None of them belong to a pane, and none of them is
  * what you are working in: they are things you keep beside the work. A
- * full-screen dialog says the opposite, and zen's own occupant was worse
+ * full-screen dialog says the opposite, and taking the pen's own slot was worse
  * still, because then reading one pane and watching a shell were the same
  * slot.
  *
- * So: draggable, resizable, and above zen (which sits at 1000). Several can be
+ * So: draggable, resizable, and above the pen. Several can be
  * open at once and the one you touched last comes to the front.
  *
  * **It is portalled to `body`, and must stay that way.** A panel is opened
@@ -25,7 +25,7 @@ import { X } from 'lucide-react';
  * makes the z-index below mean what it says.
  */
 
-/** Rising z-index, so clicking a panel brings it forward. Starts above zen's
+/** Rising z-index, so clicking a panel brings it forward. Starts above the pen's
  *  pane (1000) and its backdrop (999). */
 let topZ = 1002;
 

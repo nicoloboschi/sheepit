@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow';
 import useStore from '../store';
 import SessionStatsBar from './SessionStatsBar';
 import TerminalGrid from './TerminalGrid';
-import type { Layout } from './TerminalGrid';
 
 // Legacy id for the old Notes-as-a-session. Knowledge is now an overlay dialog
 // (see KnowledgeDialog), so this is kept only to sanitize stale persisted state.
@@ -20,9 +19,6 @@ interface PaneTerminalProps {
 }
 
 export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JSX.Element {
-  const [gridLayout, setGridLayout] = useState<Layout>('single');
-  const changeLayoutRef = useRef<((l: Layout) => void) | null>(null);
-
   // Keep visited workspaces mounted (hidden) for instant switching. Each id
   // in this list is a workspace id (what `sessionId` holds after the workspace
   // refactor), not a backend session id.
@@ -64,13 +60,12 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
   // via drag-out-last-pane).
   const activeVisited = visitedIds.filter(id => allWorkspaceIds.includes(id));
 
-  // Create split: create a new session inheriting the ACTIVE pane's cwd and
-  // return its id. The caller (TerminalGrid) is responsible for attaching the
-  // new session to this workspace via `appendPaneToWorkspace`. Workspaces
-  // themselves have no path — we take the cwd from whichever pane is focused
-  // right now, which is what the user expects when they split.
-  const handleCreateSplit = useCallback(async (): Promise<string | null> => {
-    if (!sessionId) return null;
+  /** Put another sheep in this pen: a new session inheriting the shown pane's
+   *  cwd, appended to the pen and shown straight away. A pen has no path of
+   *  its own, so the cwd comes from whichever sheep you are looking at — which
+   *  is what you mean by "another one of these". */
+  const handleAddSheep = useCallback(async (): Promise<void> => {
+    if (!sessionId) return;
     const state = useStore.getState();
     const ws = state.workspaces[sessionId];
     const activeSid = ws?.cells[ws.activeCell] ?? null;
@@ -82,28 +77,24 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
         body: JSON.stringify({ path }),
       });
       const data = await res.json();
-      if (data.ok && data.session_id) {
-        // Refresh sessions list so the new session appears in sessionMap
-        // (the workspace reconciliation in renderSessions will NOT create a
-        // second workspace for it because TerminalGrid.ensureCells calls
-        // appendPaneToWorkspace synchronously after this returns).
-        send({ type: 'list_sessions' });
-        return data.session_id;
-      }
-      return null;
-    } catch { return null; }
+      if (!data.ok || !data.session_id) return;
+      // Claim it for this pen *before* asking for the session list:
+      // renderSessions gives any unclaimed session a pen of its own, which is
+      // exactly what we do not want here.
+      useStore.getState().appendPaneToWorkspace(sessionId, data.session_id);
+      send({ type: 'list_sessions' });
+    } catch { /* the pen is unchanged */ }
   }, [sessionId, send]);
 
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0" style={{ position: 'relative' }}>
       <SessionStatsBar
         sessionId={sessionId}
-        layout={gridLayout}
-        onLayoutChange={(l) => changeLayoutRef.current?.(l)}
+        onAddSheep={sessionId ? handleAddSheep : undefined}
         onCreateSession={(headless) => send({ type: 'create_session', path: null, ...(headless ? { headless: true } : {}) })}
       />
-      {/* Each workspace renders its own grid of panes. The terminal/git/files
-          switch lives inside each pane (see PaneHeader / TerminalCell). */}
+      {/* Each pen renders the one sheep it is showing. The terminal/git/files
+          switch lives inside the pane (see PaneHeader / TerminalCell). */}
       {activeVisited.map(vid => {
         const isVisible = vid === sessionId;
         return (
@@ -115,14 +106,7 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
             }}
           >
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <TerminalGrid
-                sessionId={vid}
-                onCreateSplit={handleCreateSplit}
-                onLayoutReady={vid === sessionId ? ({ layout: l, changeLayout }) => {
-                  setGridLayout(l);
-                  changeLayoutRef.current = changeLayout;
-                } : undefined}
-              />
+              <TerminalGrid sessionId={vid} />
             </div>
           </div>
         );

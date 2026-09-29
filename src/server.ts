@@ -11,7 +11,7 @@ import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'fs';
 import { gzipSync } from 'zlib';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
-import type { BridgeMessage } from './protocol.js';
+import { MAX_HEADLESS, MAX_SIDE_TERMINALS, type BridgeMessage } from './protocol.js';
 import type { AIService } from './ai.js';
 import { vibeSessionsDir } from './paths.js';
 
@@ -329,23 +329,65 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
           case 'create_session': {
             let path = msg.path as string | undefined;
             const initCommand = msg.init_command as string | undefined;
-            const isHeadless = msg.headless === true;
-            // A headless session is a singleton: callers can safely ask for one
-            // repeatedly without accidentally accumulating hidden PTYs.
+            // A **side terminal**: a shell for one pane's Terminals split. It
+            // is headless (it never gets a pen) but belongs to that pane, runs
+            // in its directory, and is closed with it.
+            const sideOf = typeof msg.side_of === 'string' ? msg.side_of : undefined;
+            const isHeadless = msg.headless === true || !!sideOf;
             if (isHeadless) {
-              const existing = (await bridge.listSessions()).find(s => s.isHeadless);
-              // `restart` is the "it has hung, start over" path. Closing and
-              // re-asking from the client cannot do this: the two messages
-              // race the singleton lookup above, and a create that arrives
-              // before the close has landed is handed back the very session
-              // it was trying to replace. Doing both here makes it one step.
-              if (existing && msg.restart === true) {
-                state.subscribedSessions.get(existing.id)?.();
-                state.subscribedSessions.delete(existing.id);
-                await bridge.closeSession(existing.id);
-              } else if (existing) {
-                send({ type: 'session_created', session_id: existing.id, path: existing.path, headless: true, existing: true });
-                break;
+              const all = await bridge.listSessions();
+
+              // `restart` is the "it has hung, start over" path, and it names
+              // its target: with more than one headless shell there is no "the"
+              // headless session to mean. Closing and re-asking from the client
+              // cannot do this itself — the two messages race the lookup below,
+              // and a create that lands before the close is handed back the
+              // very session it was trying to replace, so both halves happen
+              // here in one step.
+              //
+              // It runs BEFORE the branch on `sideOf`, because a side terminal
+              // is restarted too and its old shell has to go either way. While
+              // this sat inside the global branch, restarting a pane's terminal
+              // left the old one running and made a second beside it.
+              const restartId = msg.restart === true ? (msg.session_id as string | undefined) : undefined;
+              const doomed = restartId ? all.find(s => s.isHeadless && s.id === restartId) : undefined;
+              if (doomed) {
+                state.subscribedSessions.get(doomed.id)?.();
+                state.subscribedSessions.delete(doomed.id);
+                await bridge.closeSession(doomed.id);
+              }
+              // Counted after the close, so a restart at the cap is a swap and
+              // not a refusal.
+              const live = doomed ? all.filter(s => s.id !== doomed.id) : all;
+
+              if (sideOf) {
+                const owner = live.find(s => s.id === sideOf);
+                // The pane has to exist: the id arrives from a client and ends
+                // up as a parent nothing can verify later.
+                if (!owner) { send({ type: 'error', message: 'No such pane' }); break; }
+                if (live.filter(s => s.sideOf === sideOf).length >= MAX_SIDE_TERMINALS) {
+                  send({ type: 'error', message: `A pane holds at most ${MAX_SIDE_TERMINALS} terminals` });
+                  break;
+                }
+                // Its directory is the pane's, not the caller's: a shell beside
+                // an agent is wanted *in the repo that agent is working in*,
+                // and the pane's own cwd is what OSC 7 has been keeping current.
+                path = owner.path || path;
+              } else {
+                // Global scratch shells are capped rather than unique. There
+                // was exactly one, so asking for it repeatedly was safe and the
+                // client never had to track it; there are up to MAX_HEADLESS
+                // now, because one scratch terminal is not enough to run a
+                // build in and tail a log beside it. The cap is what keeps
+                // "ask for another" from accumulating hidden PTYs nobody can
+                // see to close.
+                if (live.filter(s => s.isHeadless && !s.sideOf).length >= MAX_HEADLESS) {
+                  // Full. Hand back the oldest rather than failing silently:
+                  // the caller asked to see a scratch terminal and there is one.
+                  const existing = live.find(s => s.isHeadless && !s.sideOf)!;
+                  send({ type: 'session_created', session_id: existing.id, path: existing.path, headless: true, existing: true });
+                  break;
+                }
               }
             }
             if (path === '__vibe__') {
@@ -361,8 +403,8 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             }
             const cols = msg.cols as number | undefined;
             const rows = msg.rows as number | undefined;
-            const sessionId = await bridge.createSession(path, cols, rows, isHeadless);
-            send({ type: 'session_created', session_id: sessionId, path: path || null, headless: isHeadless });
+            const sessionId = await bridge.createSession(path, cols, rows, isHeadless, sideOf);
+            send({ type: 'session_created', session_id: sessionId, path: path || null, headless: isHeadless, ...(sideOf ? { side_of: sideOf } : {}) });
             if (initCommand) {
               await bridge.sendKeys(sessionId, initCommand);
             }

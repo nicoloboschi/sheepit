@@ -187,10 +187,37 @@ function getCmLang(name: string): Extension[] {
   }
 }
 
+
+/**
+ * A date in as few characters as a header can spare: the time if it is today,
+ * day and month inside this year, the year beyond that. The exact stamps are
+ * in the tooltip, where there is room for them.
+ */
+function shortDate(ms: number): string {
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return '';
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  }
+  return String(d.getFullYear());
+}
+
+interface FileTimes { mtime: number; birthtime: number; readAt: number }
+
 export const isImage = (name: string): boolean => ['png','jpg','jpeg','gif','webp','svg','ico','bmp'].includes(ext(name));
 export const isPdf   = (name: string): boolean => ext(name) === 'pdf';
+/** Formats the browser's own <video> can play. No library: a local file over
+ *  HTTP with Range support is exactly the case the built-in player was made
+ *  for, and hls.js / video.js are for streaming protocols nothing here uses.
+ *  A codec the browser cannot decode fails in the player's own words, which is
+ *  more use than a format list kept by hand here. */
+export const isVideo = (name: string): boolean => ['mp4','webm','ogv','mov','m4v'].includes(ext(name));
 export const isMd    = (name: string): boolean => ['md','markdown','mdx'].includes(ext(name));
-export const isText  = (name: string): boolean => !isImage(name) && !isPdf(name);
+export const isText  = (name: string): boolean => !isImage(name) && !isPdf(name) && !isVideo(name);
 
 // ── Unified file view ─────────────────────────────────────────────────────────
 
@@ -241,7 +268,17 @@ export default function FileView({
   const mdFile  = isMd(name);
   const imgFile = isImage(name);
   const pdfFile = isPdf(name);
-  const textFile = isText(name);
+  const vidFile = isVideo(name);
+  /**
+   * An SVG is both: a picture, and the text that draws it.
+   *
+   * It rendered as a picture and nothing else, so the one image format you
+   * routinely need to *read* — to see why an icon is off by a pixel, or to
+   * change a colour — was the one file the viewer would not show you. It
+   * counts as text as well now: View draws it, Edit opens the XML.
+   */
+  const svgFile = ext(name) === 'svg';
+  const textFile = isText(name) || svgFile;
 
   // Directory of the markdown file — relative image srcs resolve against it.
   const mdDir = useMemo(() => {
@@ -289,7 +326,7 @@ export default function FileView({
   const [content, setContent] = useState('');
   // Start in the loading state when the content view will fetch on mount, so the
   // spinner shows immediately instead of a blank pane that fills in.
-  const [loading, setLoading] = useState(() => !!path && textFile && !(defaultMode === 'diff' && hasDiff));
+  const [loading, setLoading] = useState(() => !!path && textFile && !svgFile && !(defaultMode === 'diff' && hasDiff));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -304,8 +341,26 @@ export default function FileView({
   const diffHunks = hunks ?? fetchedHunks ?? [];
   // Live-update: `justUpdated` flashes the body when the file changes on disk;
   // `diskChanged` warns when it changed under unsaved edits (we don't clobber).
+  /** Made / changed / when we last went to the disk for it. Asked per file, so
+   *  it is right for one opened from search or a diff too, not only for one
+   *  clicked in a listing. */
+  const [times, setTimes] = useState<FileTimes | null>(null);
   const [justUpdated, setJustUpdated] = useState(false);
   const [diskChanged, setDiskChanged] = useState(false);
+
+  useEffect(() => {
+    if (!path) { setTimes(null); return; }
+    let cancelled = false;
+    setTimes(null);
+    fetch(`/api/fs/stat?path=${encodeURIComponent(path)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: FileTimes | null) => { if (!cancelled && d && typeof d.mtime === 'number') setTimes(d); })
+      .catch(() => { /* a file we cannot stat still shows its contents */ });
+    return () => { cancelled = true; };
+    // `content` is in here on purpose: saving rewrites the file, and a header
+    // still claiming the old "changed" time is the one moment this is wrong in
+    // a way anybody would notice.
+  }, [path, content]);
   const contentRef = useRef(content); contentRef.current = content;
   const isDirtyRef = useRef(isDirty); isDirtyRef.current = isDirty;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -335,9 +390,11 @@ export default function FileView({
     return () => io.disconnect();
   }, [bodyVisible, collapsed, mode, scrollRoot]);
 
-  // Load content for the content view (skipped for img/pdf which load via <img>/<iframe>).
+  // Load content for the content view (skipped for img/pdf which load via
+  // <img>/<iframe> — an SVG is the exception, being a picture whose source you
+  // can also read).
   useEffect(() => {
-    if (!path || mode === 'diff' || imgFile || pdfFile) return;
+    if (!path || mode === 'diff' || pdfFile || vidFile || (imgFile && !svgFile)) return;
     setError(null); setSaveMsg(null); setLoading(true);
     fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
       .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.text(); })
@@ -349,7 +406,7 @@ export default function FileView({
   // when it's rewritten (e.g. by Claude Code). We never clobber unsaved edits —
   // if the user has local changes we surface a "changed on disk" hint instead.
   useEffect(() => {
-    if (!path || imgFile || pdfFile) return;
+    if (!path || pdfFile || vidFile || (imgFile && !svgFile)) return;
     // Rides the shared WebSocket rather than an SSE stream per open file: a
     // browser allows only ~6 HTTP/1.1 connections per host and an SSE stream
     // never completes, so a handful of open files starved every other request
@@ -509,7 +566,9 @@ export default function FileView({
       )}
       <div style={containerStyle}>
       {/* Header — filename, stats, actions, and the content/diff toggle. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: showBody ? '1px solid var(--border)' : 'none', background: 'var(--card)', flexShrink: 0 }}>
+      {/* Wraps rather than overflowing: in a narrow tool pane the buttons drop
+          to a second row instead of widening the card past the pane. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: showBody ? '1px solid var(--border)' : 'none', background: 'var(--card)', flexShrink: 0 }}>
         {collapsible && (
           <div onClick={() => setCollapsed(c => !c)} style={{ display: 'flex', cursor: 'pointer', flexShrink: 0 }}>
             {collapsed ? <ChevronRight size={13} color="var(--muted-foreground)" /> : <ChevronDown size={13} color="var(--muted-foreground)" />}
@@ -521,11 +580,27 @@ export default function FileView({
         {/* In a diff the name says what happened to the file, in the same
             colours as the body: green added, terracotta deleted, amber
             changed. Outside a diff there is no status, so it stays plain. */}
-        <span title={shownPath} style={{ fontSize: 11, color: hunks ? (isNew ? '#9CBC7F' : isDeleted ? '#E0907B' : '#D9B84A') : 'var(--foreground)', fontFamily: 'var(--font-mono)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={shownPath} style={{ fontSize: 11, color: hunks ? (isNew ? '#9CBC7F' : isDeleted ? '#E0907B' : '#D9B84A') : 'var(--foreground)', fontFamily: 'var(--font-mono)', flex: '1 1 0', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shownPath}{isDirty ? ' •' : ''}
         </span>
         {justUpdated && <span className="file-updated-badge" style={{ flexShrink: 0 }}>updated</span>}
         {diskChanged && <span className="file-disk-changed-badge" title="This file changed on disk while you have unsaved edits" style={{ flexShrink: 0 }}>changed on disk</span>}
+        {/* Made, changed, and when sheepit last read it off the disk — beside
+            the name, because that is the file they are about. Short forms
+            here; the exact stamps are in the tooltip. */}
+        {times && (
+          <span
+            title={[
+              times.birthtime ? `Made ${new Date(times.birthtime).toLocaleString()}` : null,
+              `Changed ${new Date(times.mtime).toLocaleString()}`,
+              `Read from disk ${new Date(times.readAt).toLocaleString()}`,
+            ].filter(Boolean).join('\n')}
+            style={{ fontSize: 10.5, color: 'var(--muted-foreground)', flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {times.birthtime ? `made ${shortDate(times.birthtime)} · ` : ''}
+            changed {shortDate(times.mtime)} · read {shortDate(times.readAt)}
+          </span>
+        )}
         {(additions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#9CBC7F', fontFamily: 'monospace', flexShrink: 0 }}>+{additions}</span>}
         {(deletions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#E0907B', fontFamily: 'monospace', flexShrink: 0 }}>-{deletions}</span>}
 
@@ -582,9 +657,24 @@ export default function FileView({
       {showBody && error && <div style={{ padding: 16, color: '#E0907B', fontSize: 12 }}>{error}</div>}
       {showBody && !error && (
         <>
-          {imgFile && path && mode !== 'diff' && (
+          {imgFile && path && mode !== 'diff' && (!svgFile || mode === 'preview') && (
             <div style={{ padding: 16, overflow: 'auto', flex: fill ? 1 : undefined }}>
               <img src={`/api/fs/raw?path=${encodeURIComponent(path)}`} alt={name} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--border)' }} />
+            </div>
+          )}
+          {/* `preload="metadata"` so opening a file in the list costs the
+              first few KB and a duration, not the whole recording — the Files
+              view is somewhere you click through a directory. No `autoPlay`
+              for the same reason: sound starting because you selected a file
+              is the wrong default in an app full of terminals. */}
+          {vidFile && path && mode !== 'diff' && (
+            <div style={{ padding: 16, overflow: 'auto', flex: fill ? 1 : undefined, minHeight: 0 }}>
+              <video
+                src={`/api/fs/raw?path=${encodeURIComponent(path)}`}
+                controls
+                preload="metadata"
+                style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: '1px solid var(--border)', background: '#000', display: 'block' }}
+              />
             </div>
           )}
           {pdfFile && path && mode !== 'diff' && (
@@ -601,7 +691,7 @@ export default function FileView({
             </div>
           )}
 
-          {textFile && mode !== 'diff' && loading && loadingEl}
+          {textFile && !(svgFile && mode === 'preview') && mode !== 'diff' && loading && loadingEl}
 
           {textFile && mode === 'edit' && editable && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, minHeight: 0, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
@@ -616,7 +706,7 @@ export default function FileView({
               />
             </div>
           )}
-          {textFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
+          {textFile && !svgFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               {noHighlight ? (
                 <pre style={{ margin: 0, padding: '8px 12px', background: 'var(--background)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

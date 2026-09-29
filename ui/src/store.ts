@@ -35,11 +35,19 @@ export interface Session {
    *  branch with no PR of its own. Nothing here is scraped from output. */
   prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
   /** How many tokens the agent's context holds right now, read from its own
-   *  transcript. What is *used* — neither agent writes down how big the window
-   *  is, which is why the card shows a count and not a percentage. */
+   *  transcript. What is *used*, not what fits. */
   ctxTokens?: number;
+  /** The model's context window, when the agent records one. Codex does;
+   *  Claude Code does not, so its panes show the count. */
+  ctxLimit?: number;
   /** Background-only session; kept alive by the backend but not shown as a workspace. */
   isHeadless?: boolean;
+  /** Set on a **side terminal**: the pane it was opened beside. Headless, so
+   *  it gets no pen, but it belongs to one pane, runs in that pane's directory
+   *  and is closed with it. Its absence is what marks a *global* scratch
+   *  shell, which is how the Terminals panel and a pane's Terminals split tell
+   *  their own shells from each other's. */
+  sideOf?: string;
   /** No work in it yet: newly started, or just `/clear`ed. */
   fresh?: boolean;
   /** Agent-reported, as of the server's last sweep. Transitions arrive as
@@ -54,48 +62,31 @@ export interface ConfirmState {
 }
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected';
-/** Workspace layouts.
- *
- *  Most layouts are symmetric (all panes equal): `single`, `horizontal`,
- *  `vertical`, `quad`. Three-pane layouts are asymmetric — one pane is the
- *  "big" one and the other two are stacked opposite it. The orientation of
- *  the big pane is part of the layout itself:
- *
- *    three        — tall pane on the LEFT, 2 stacked on the right  (legacy default)
- *    three-right  — tall pane on the RIGHT, 2 stacked on the left
- *    three-top    — wide pane on the TOP, 2 side-by-side on the bottom
- *    three-bottom — wide pane on the BOTTOM, 2 side-by-side on the top
- *
- *  The convention is: cells[0] is always the big pane, cells[1] and cells[2]
- *  are the two smaller ones. This keeps the swap mechanics unchanged and
- *  lets the renderer branch only on the layout string. */
-export type GridLayout =
-  | 'single'
-  | 'horizontal'
-  | 'vertical'
-  | 'three' | 'three-right' | 'three-top' | 'three-bottom'
-  | 'quad';
 
-/** True if `l` is any of the four three-pane variants. */
-export function isThreeLayout(l: GridLayout): boolean {
-  return l === 'three' || l === 'three-right' || l === 'three-top' || l === 'three-bottom';
-}
-
-/** A Workspace is a sidebar row. It groups 1–4 panes (sessions rendered as
- *  terminal cells) under a single layout. Identified by a synthetic id that
- *  is NEVER equal to any session id — that decoupling is what lets us move
- *  any pane (including cell 0) between workspaces without re-keying anything.
+/** A Workspace is a sidebar row — a pen. It holds an ordered list of panes
+ *  (sessions) and shows exactly ONE of them at a time, whichever `activeCell`
+ *  names. There is no grid and no layout: reading two terminals at once is
+ *  something nobody does, and every split worth having (browser, pull request,
+ *  files, diff) lives *inside* a pane beside its terminal.
+ *
+ *  Identified by a synthetic id that is NEVER equal to any session id — that
+ *  decoupling is what lets any pane move between pens without re-keying
+ *  anything, and what lets a pen outlive the session it was made around.
  *
  *  Invariants:
- *   - `cells.length >= 1` always (empty workspaces are deleted immediately)
- *   - `cells.length <= MAX_WORKSPACE_PANES`
- *   - `0 <= activeCell < cells.length`
+ *   - `0 <= activeCell < cells.length` (or 0 when there are no cells)
  *   - each `cells[i]` is a session id that exists in `sessionMap`
+ *
+ *  `cells` is unbounded. It used to cap at four, because four was as many
+ *  panes as a 2x2 grid could draw; with one pane on screen the only limit is
+ *  how many sheep you care to keep in one pen.
  */
 export interface Workspace {
   id: string;
-  layout: GridLayout;
+  /** Session ids, in the order the pen's tab strip draws them. */
   cells: string[];
+  /** Which pane is on screen. Legacy name — it is an index into `cells`, and
+   *  there are no cells in a grid sense any more. */
   activeCell: number;
   /** User-assigned title for the workspace, shown in the sidebar. */
   title?: string;
@@ -104,7 +95,7 @@ export interface Workspace {
    *  opens in the main area exactly as before. */
   collapsed?: boolean;
   /** The field this pen stands in. Every pen ends up in exactly one; a pen
-   *  without one is assigned its repository's field on the next render (see
+   *  without one is assigned the default field on the next render (see
    *  assignFields). */
   fieldId?: string;
 }
@@ -130,43 +121,6 @@ export interface Field {
 export const DEFAULT_FIELD_ID = 'fld:default';
 export const DEFAULT_FIELD_NAME = 'All pens';
 
-// ── Layout helpers (grid up/downgrade) ──────────────────────────────────────
-
-export const MAX_WORKSPACE_PANES = 4;
-
-export function upgradeWorkspaceLayout(current: GridLayout, newCount: number): GridLayout {
-  switch (newCount) {
-    case 1: return 'single';
-    case 2: return current === 'vertical' ? 'vertical' : 'horizontal';
-    // Preserve a three-variant if we're already in one — user's orientation
-    // choice survives an appendPaneToWorkspace/removePaneFromWorkspace round trip.
-    case 3: return isThreeLayout(current) ? current : 'three';
-    default: return 'quad';
-  }
-}
-
-export function downgradeWorkspaceLayout(current: GridLayout, remaining: number): GridLayout {
-  if (remaining <= 1) return 'single';
-  if (remaining === 2) return current === 'vertical' ? 'vertical' : 'horizontal';
-  if (remaining === 3) return isThreeLayout(current) ? current : 'three';
-  return current;
-}
-
-/** How many panes a given layout can hold. */
-export function layoutCapacity(layout: GridLayout): number {
-  switch (layout) {
-    case 'single': return 1;
-    case 'horizontal': return 2;
-    case 'vertical': return 2;
-    case 'three':
-    case 'three-right':
-    case 'three-top':
-    case 'three-bottom':
-      return 3;
-    case 'quad': return 4;
-  }
-}
-
 // ── Store interface ─────────────────────────────────────────────────────────
 
 export interface StoreState {
@@ -189,12 +143,10 @@ export interface StoreState {
   workspaces: Record<string, Workspace>;
   /** Stable iteration order for the sidebar list. */
   workspaceOrder: string[];
-  /** Session id of the pane currently in zen (fullscreen) mode, or null. */
-  zenSessionId: string | null;
   /** Session id shown in the floating picture-in-picture dialog, or null.
    *  The headless pane lives here: it has no pen, and it is something you
-   *  keep an eye on *while* reading another pane — so it floats above zen
-   *  instead of taking zen's place. */
+   *  keep an eye on *while* reading another pane, so it floats over the pen
+   *  rather than standing in it. */
   pipSessionId: string | null;
 
   /**
@@ -217,11 +169,6 @@ export interface StoreState {
    */
   browserNav: { sessionId: string; url: string; seq: number } | null;
   requestBrowserUrl: (sessionId: string, url: string) => void;
-  /** Bumped each time zen is *opened*, and never when it moves from one pane
-   *  to another. It is what tells a pane whether to play zen's entrance: the
-   *  frame stays exactly where it is across a switch, so replaying it there
-   *  made picking another pen look like the pane was torn down and put back. */
-  zenOpenSeq: number;
   /** Global terminal font size — applies to every pane in every workspace. */
   fontSize: number;
   /** Global terminal font stack — applies to every pane in every workspace.
@@ -266,25 +213,19 @@ export interface StoreState {
 
   // ── Workspace actions ─────────────────────────────────────────────────────
   /** Create a new workspace around the given session ids. Returns the new
-   *  workspace id. Picks a sensible layout from the count unless overridden. */
-  createWorkspace: (sessionIds: string[], layout?: GridLayout) => string;
+   *  workspace id. */
+  createWorkspace: (sessionIds: string[]) => string;
   /** Delete a workspace. Does NOT kill backend sessions; caller is responsible
    *  for any `close_session` broadcasts. */
   deleteWorkspace: (workspaceId: string) => void;
   /** Append a pane (session id) to an existing workspace. No-op if the
-   *  workspace doesn't exist, is full, or already contains the session. */
+   *  workspace doesn't exist or already contains the session. */
   appendPaneToWorkspace: (workspaceId: string, sessionId: string) => void;
   /** Remove the pane at `paneIndex` from a workspace. If this was the last
    *  pane, the workspace is deleted. Returns the workspace id if the workspace
    *  survived, or null if it was deleted. */
   removePaneFromWorkspace: (workspaceId: string, paneIndex: number) => string | null;
-  /** Legacy alias used by TerminalGrid — writes layout/cells/activeCell into
-   *  an existing workspace (or creates one at the given id if it's missing).
-   *  New code should prefer the focused helpers above. */
-  setGridState: (workspaceId: string, layout: GridLayout, cells: string[], activeCell: number) => void;
-  /** Legacy alias for `deleteWorkspace`. */
-  clearGridState: (workspaceId: string) => void;
-  /** Focus a specific pane within a workspace. */
+  /** Show a specific pane of a workspace — the pen's tab switch. */
   setActivePane: (workspaceId: string, paneIndex: number) => void;
   /** Move a pane from one workspace to another. Any pane can move now — no
    *  more "root cell anchored" restriction. If the source workspace ends up
@@ -336,8 +277,6 @@ export interface StoreState {
   /** Move a pen into a field, optionally at a position within it. */
   moveWorkspaceToField: (workspaceId: string, fieldId: string, beforeWorkspaceId?: string | null) => void;
 
-  toggleZen: (sessionId: string) => void;
-  exitZen: () => void;
   setPip: (sessionId: string | null) => void;
   navigateSession: (direction: 'up' | 'down') => { workspaceId: string; paneIndex?: number } | null;
 
@@ -469,7 +408,7 @@ function migrateLegacyWorkspaces(): {
   zooms: Record<string, number>;
   lastWorkspaceId: string | null;
 } | null {
-  let oldGrid: Record<string, { layout?: GridLayout; cells?: string[]; activeCell?: number }> = {};
+  let oldGrid: Record<string, { cells?: string[]; activeCell?: number }> = {};
   try {
     const raw = preferences.getItem(LEGACY_GRID_KEY);
     if (!raw) return null;
@@ -488,7 +427,6 @@ function migrateLegacyWorkspaces(): {
     const wsId = generateWorkspaceId();
     workspaces[wsId] = {
       id: wsId,
-      layout: state?.layout ?? 'single',
       cells,
       activeCell: Math.min(Math.max(0, state?.activeCell ?? 0), cells.length - 1),
     };
@@ -612,7 +550,10 @@ export function readPersistedWorkspaces(): PersistedWorkspaces | null {
   // Take the duplicates off the profile rather than merely ignoring them: they
   // are otherwise re-read, and re-discarded, by every client for ever.
   if (deduped.changed) {
-    writeWorkspaces(result.workspaces, result.order, result.fields ?? {}, result.fieldOrder ?? []);
+    // The losers are named rather than inferred: these pens were read out of
+    // the profile a few lines ago, so their absence here really is a decision.
+    const dropped = Object.keys(workspaces).filter(id => !result.workspaces[id]);
+    writeWorkspaces(result.workspaces, result.order, result.fields ?? {}, result.fieldOrder ?? [], dropped);
   }
   return result;
 }
@@ -656,14 +597,8 @@ function dedupePens(
     for (const cell of cells) claimed.add(cell);
     kept[id] = cells.length === ws.cells.length
       ? ws
-      // A pen that keeps only some of its sheep keeps its orientation: that is
-      // what downgradeWorkspaceLayout is for. activeCell has to come back
-      // inside the pen, or it points past the end of it.
-      : {
-          ...ws, cells,
-          layout: downgradeWorkspaceLayout(ws.layout, cells.length),
-          activeCell: Math.min(ws.activeCell, cells.length - 1),
-        };
+      // activeCell has to come back inside the pen, or it points past the end.
+      : { ...ws, cells, activeCell: Math.min(ws.activeCell, cells.length - 1) };
   }
 
   // Trimming a pen counts as much as dropping one: both have to be written
@@ -723,6 +658,7 @@ export function writeWorkspaces(
   order: string[],
   fields: Record<string, Field>,
   fieldOrder: string[],
+  removed: Iterable<string> = [],
 ): void {
   for (const [id, ws] of Object.entries(workspaces)) {
     const json = JSON.stringify(ws);
@@ -730,8 +666,21 @@ export function writeWorkspaces(
     persistedPens[id] = json;
     preferences.setItem(PEN_KEY_PREFIX + id, json);
   }
-  for (const id of Object.keys(persistedPens)) {
-    if (workspaces[id]) continue;
+  // A pen leaves the profile only because somebody closed it — never because
+  // the map handed to this function happens not to mention it. The profile is
+  // shared, so absence is not evidence: a client whose copy is empty or stale
+  // (mid-reconnect, or blanked by a remote patch) knows nothing about the pens
+  // it is missing, and inferring deletion from that silence deletes them for
+  // everyone. That is the rule `resyncPreferences` already states for itself —
+  // "inferring deletion from absence turns one bad answer into throw away
+  // every pen" — and it holds just as hard on the way out.
+  //
+  // The failure direction is now a pen key that outlives its pen, which the
+  // next real close sweeps up. The old one was 32 pens deleted from a shared
+  // profile by a tab that had simply not finished loading.
+  for (const id of removed) {
+    if (workspaces[id]) continue; // re-added in the same breath; not a removal
+    if (!(id in persistedPens)) continue;
     delete persistedPens[id];
     preferences.removeItem(PEN_KEY_PREFIX + id);
   }
@@ -755,7 +704,13 @@ function saveWorkspaces(
 ): void {
   try {
     const s = useStore.getState();
-    writeWorkspaces(workspaces, order, fields ?? s.fields, fieldOrder ?? s.fieldOrder);
+    // Every caller saves before it calls `set`, so this is still the pen map
+    // the client held a moment ago — its own previous view, not the profile's.
+    // A pen that was in it and is not in `workspaces` is one this client just
+    // closed, and is the only kind that may be removed. A pen this client
+    // never held cannot be one it decided to close.
+    const removed = Object.keys(s.workspaces).filter(id => !workspaces[id]);
+    writeWorkspaces(workspaces, order, fields ?? s.fields, fieldOrder ?? s.fieldOrder, removed);
   } catch { /* quota */ }
 }
 
@@ -789,6 +744,27 @@ function saveFontSize(size: number): void {
 
 function loadLastWorkspaceId(): string | null {
   try { return preferences.getItem(LAST_WORKSPACE_KEY); } catch { return null; }
+}
+
+/**
+ * Is this pane the one on screen right now?
+ *
+ * A pen shows exactly one of its sheep, so standing in the active pen is no
+ * longer enough — the other sheep in it are as much in the background as the
+ * ones in every other pen, and they have to be able to go unread and to
+ * notify. While pens were grids this asked `cells.includes()`, which was right
+ * then and would now swallow the "finished" from every pane you are not
+ * looking at.
+ */
+function isOnScreen(
+  currentWorkspaceId: string | null,
+  workspaces: Record<string, Workspace>,
+  sessionId: string,
+): boolean {
+  if (!currentWorkspaceId) return false;
+  const ws = workspaces[currentWorkspaceId];
+  if (!ws) return currentWorkspaceId === sessionId;
+  return ws.cells[ws.activeCell] === sessionId;
 }
 
 // Debounce timers kept outside store state (no re-renders on timer changes)
@@ -843,11 +819,9 @@ const useStore = create<StoreState>((set, get) => ({
   fields: _initialWorkspaces.fields ?? {},
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
   selectedFieldId: null,
-  zenSessionId: null,
   pipSessionId: null,
   browserUrls: {},
   browserNav: null,
-  zenOpenSeq: 0,
   fontSize: loadFontSize(),
   terminalFontFamily: readTerminalFont(),
   theme: readTheme(),
@@ -884,10 +858,10 @@ const useStore = create<StoreState>((set, get) => ({
     // flock — it is the thing watching the flock — and a row for it in the
     // list would be a sheep-shaped hole in every count beside it. Both are
     // still in `sessionMap`, and both are reached from the top bar and shown
-    // in zen. See ZenOnlyTerminal in App.tsx.
+    // in the floating panel. See PipTerminal in App.tsx.
     const workspaceSessions = sessions.filter(s => !s.isHeadless && !s.isDog);
     // Which sessions may occupy a cell. Distinct from `liveSessionIds`, which
-    // is every session there is: zen still shows the dog, it just has no pen.
+    // is every session there is: the dog is real, it just has no pen.
     // Pruning against this — rather than only filtering the sessions that get
     // *given* a pen — is what evicts a pane that has just been made the dog
     // from the pen it was already sitting in. Promotion is not a restart.
@@ -919,17 +893,14 @@ const useStore = create<StoreState>((set, get) => ({
       const prunedCells = ws.cells.filter(cid => pennableSessionIds.has(cid));
       if (prunedCells.length === 0) continue; // empty workspace → drop
       const shrunk = prunedCells.length !== ws.cells.length;
-      const nextLayout = shrunk
-        ? downgradeWorkspaceLayout(ws.layout, prunedCells.length)
-        : ws.layout;
       const nextActive = Math.max(0, Math.min(ws.activeCell, prunedCells.length - 1));
       // Reuse the SAME object when nothing about this workspace changed. This
       // runs every 2 seconds against every workspace; minting fresh objects
       // regardless invalidated every selector downstream, so the whole sidebar
       // re-rendered on a timer even when the session list was identical.
-      nextWorkspaces[wsId] = (!shrunk && nextLayout === ws.layout && nextActive === ws.activeCell)
+      nextWorkspaces[wsId] = (!shrunk && nextActive === ws.activeCell)
         ? ws
-        : { ...ws, cells: prunedCells, layout: nextLayout, activeCell: nextActive };
+        : { ...ws, cells: prunedCells, activeCell: nextActive };
       nextWorkspaceOrder.push(wsId);
       for (const cid of prunedCells) claimed.add(cid);
     }
@@ -941,7 +912,7 @@ const useStore = create<StoreState>((set, get) => ({
     for (const s of sorted) {
       if (claimed.has(s.id)) continue;
       const id = generateWorkspaceId();
-      nextWorkspaces[id] = { id, layout: 'single', cells: [s.id], activeCell: 0 };
+      nextWorkspaces[id] = { id, cells: [s.id], activeCell: 0 };
       freshlyCreated.push(id);
       claimed.add(s.id);
     }
@@ -1010,8 +981,14 @@ const useStore = create<StoreState>((set, get) => ({
           && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless
           // Without this the context number renders once and then freezes: it
           // climbs with every reply, and a list that calls itself unchanged
-          // never re-renders it.
-          && p.ctxTokens === s.ctxTokens
+          // never re-renders it. The limit rides along for the same reason —
+          // it arrives one sweep after the count on a fresh Codex pane, and
+          // that sweep changes nothing else.
+          && p.ctxTokens === s.ctxTokens && p.ctxLimit === s.ctxLimit
+          // A pane's Terminals split is `sessions.filter(sideOf === id)`, so a
+          // new side terminal has to reach the list or the split never draws
+          // it — and the sweep that carries it changes nothing else.
+          && p.sideOf === s.sideOf
           && p.fresh === s.fresh;
       });
     // Seed the busy flag for panes this tab has no opinion about yet.
@@ -1047,10 +1024,6 @@ const useStore = create<StoreState>((set, get) => ({
       sessionLastEvent: nextLastEvent,
       workspaces: nextWorkspaces,
       workspaceOrder: nextWorkspaceOrder,
-      // A pane whose session has gone cannot be the one you are reading. Zen
-      // survives a change of pen now, so a dead id here would otherwise sit in
-      // the state (and in the URL) until something happened to replace it.
-      ...(prev.zenSessionId && !liveSessionIds.has(prev.zenSessionId) ? { zenSessionId: null } : {}),
       ...(prev.pipSessionId && !liveSessionIds.has(prev.pipSessionId) ? { pipSessionId: null } : {}),
     });
   },
@@ -1070,31 +1043,7 @@ const useStore = create<StoreState>((set, get) => ({
       // clearUnseen in TerminalCell's sendInput). Selecting clears every pane
       // in the pen at once, including the three you did not look at.
     }
-    // Zen is a mode, not a property of one pane. It used to be neither: the
-    // flag stayed on while the pane it named was unmounted with its workspace
-    // (hidden workspaces sit under `display: none`, which hides a fixed child
-    // too), so picking a pen dropped you out of zen without turning it off,
-    // and left `/zen:` in the URL pointing at a pane nobody was looking at.
-    // Now it moves with you — pick a pen from the sidebar and you read that
-    // pen, still in zen, which is the whole reason the sidebar stays visible.
-    //
-    // The zen pane and the workspace move in ONE set. A hidden workspace sits
-    // under `display: none`, which hides a `position: fixed` child too, so a
-    // commit that pointed zen at the incoming pen before that pen was the
-    // shown one would paint a frame with no zen pane in it — the flicker that
-    // reads as the pane being removed and put back.
-    const { zenSessionId, workspaces } = get();
-    let nextZen = zenSessionId;
-    if (id) {
-      if (zenSessionId) {
-        const ws = workspaces[id];
-        nextZen = ws ? (ws.cells[ws.activeCell] ?? ws.cells[0] ?? id) : id;
-      }
-    } else {
-      // Nothing selected — there is no pane to be zen on.
-      nextZen = null;
-    }
-    set(nextZen === zenSessionId ? { currentSessionId: id } : { currentSessionId: id, zenSessionId: nextZen });
+    set({ currentSessionId: id });
   },
 
   setOpenPaneMap(panes: (string | null)[]) {
@@ -1120,13 +1069,7 @@ const useStore = create<StoreState>((set, get) => ({
   updateActivity(sessionId: string, busy?: boolean) {
     const { currentSessionId, workspaces } = get();
 
-    // A session is "visible" if it belongs to the currently-active workspace.
-    const isVisible = (() => {
-      if (!currentSessionId) return false;
-      const ws = workspaces[currentSessionId];
-      if (!ws) return currentSessionId === sessionId;
-      return ws.cells.includes(sessionId);
-    })();
+    const isVisible = isOnScreen(currentSessionId, workspaces, sessionId);
 
     if (busy === true) {
       // New work means a previous "waiting for you" request has been acted
@@ -1181,8 +1124,7 @@ const useStore = create<StoreState>((set, get) => ({
 
   sessionAttention(sessionId: string, message: string) {
     const { currentSessionId, workspaces, sessionMap } = get();
-    const ws = currentSessionId ? workspaces[currentSessionId] : undefined;
-    const isVisible = ws?.cells.includes(sessionId) || sessionId === currentSessionId;
+    const isVisible = isOnScreen(currentSessionId, workspaces, sessionId);
 
     // The app has spoken, so this burst is over: clearing busy here also stops
     // the slower activity heuristic from firing a second "finished" for the
@@ -1202,11 +1144,8 @@ const useStore = create<StoreState>((set, get) => ({
 
   markUnseen(sessionId: string) {
     const { currentSessionId, workspaces } = get();
-    // Don't mark unseen if the session belongs to the active workspace — the
-    // user is presumably looking at it (or at least has it on screen).
-    const ws = currentSessionId ? workspaces[currentSessionId] : undefined;
-    if (ws?.cells.includes(sessionId)) return;
-    if (sessionId === currentSessionId) return; // legacy single-session fallback
+    // Don't mark unseen what is already on screen.
+    if (isOnScreen(currentSessionId, workspaces, sessionId)) return;
     set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
   },
 
@@ -1224,16 +1163,10 @@ const useStore = create<StoreState>((set, get) => ({
 
   // ── Workspace actions ─────────────────────────────────────────────────────
 
-  createWorkspace(sessionIds: string[], layout?: GridLayout): string {
+  createWorkspace(sessionIds: string[]): string {
     if (sessionIds.length === 0) return '';
     const id = generateWorkspaceId();
-    const cells = sessionIds.slice(0, MAX_WORKSPACE_PANES);
-    const ws: Workspace = {
-      id,
-      layout: layout ?? upgradeWorkspaceLayout('single', cells.length),
-      cells,
-      activeCell: 0,
-    };
+    const ws: Workspace = { id, cells: [...sessionIds], activeCell: 0 };
     set(s => {
       const nextWorkspaces = { ...s.workspaces, [id]: ws };
       const nextOrder = [...s.workspaceOrder, id];
@@ -1266,19 +1199,11 @@ const useStore = create<StoreState>((set, get) => ({
       const ws = s.workspaces[workspaceId];
       if (!ws) return {};
       if (ws.cells.includes(sessionId)) return {};
-      if (ws.cells.length >= MAX_WORKSPACE_PANES) return {};
       const nextCells = [...ws.cells, sessionId];
-      // Only auto-upgrade the layout when it can't hold the new cell count;
-      // if the caller already set an intentionally-larger layout (e.g. switched
-      // to 'quad' before splits were populated), leave it alone.
-      const nextLayout = nextCells.length > layoutCapacity(ws.layout)
-        ? upgradeWorkspaceLayout(ws.layout, nextCells.length)
-        : ws.layout;
       const nextWs: Workspace = {
         ...ws,
         cells: nextCells,
-        layout: nextLayout,
-        activeCell: nextCells.length - 1, // focus the newly-added pane
+        activeCell: nextCells.length - 1, // show the newly-added pane
       };
       const nextWorkspaces = { ...s.workspaces, [workspaceId]: nextWs };
       saveWorkspaces(nextWorkspaces, s.workspaceOrder);
@@ -1298,41 +1223,17 @@ const useStore = create<StoreState>((set, get) => ({
       get().deleteWorkspace(workspaceId);
       return null;
     }
-    const nextLayout = downgradeWorkspaceLayout(ws.layout, nextCells.length);
     const nextActive =
       ws.activeCell === paneIndex ? Math.max(0, paneIndex - 1)
       : ws.activeCell > paneIndex ? ws.activeCell - 1
       : ws.activeCell;
-    const nextWs: Workspace = {
-      ...ws,
-      cells: nextCells,
-      layout: nextLayout,
-      activeCell: nextActive,
-    };
+    const nextWs: Workspace = { ...ws, cells: nextCells, activeCell: nextActive };
     set(state => {
       const nextWorkspaces = { ...state.workspaces, [workspaceId]: nextWs };
       saveWorkspaces(nextWorkspaces, state.workspaceOrder);
       return { workspaces: nextWorkspaces };
     });
     return workspaceId;
-  },
-
-  setGridState(workspaceId: string, layout: GridLayout, cells: string[], activeCell: number) {
-    set(s => {
-      const existing = s.workspaces[workspaceId];
-      const clampedActive = Math.max(0, Math.min(activeCell, cells.length - 1));
-      const nextWs: Workspace = existing
-        ? { ...existing, layout, cells, activeCell: clampedActive }
-        : { id: workspaceId, layout, cells, activeCell: clampedActive };
-      const nextWorkspaces = { ...s.workspaces, [workspaceId]: nextWs };
-      const nextOrder = existing ? s.workspaceOrder : [...s.workspaceOrder, workspaceId];
-      saveWorkspaces(nextWorkspaces, nextOrder);
-      return { workspaces: nextWorkspaces, workspaceOrder: nextOrder };
-    });
-  },
-
-  clearGridState(workspaceId: string) {
-    get().deleteWorkspace(workspaceId);
   },
 
   setActivePane(workspaceId: string, paneIndex: number) {
@@ -1346,13 +1247,7 @@ const useStore = create<StoreState>((set, get) => ({
         [workspaceId]: { ...ws, activeCell: paneIndex },
       };
       saveWorkspaces(nextWorkspaces, s.workspaceOrder);
-      // In zen you are reading one pane, so moving the focus to another pane
-      // of the same pen means reading that one instead — ⌘↑/↓ walks panes in
-      // zen the same way it walks them in the grid.
-      const zen = s.zenSessionId && s.workspaces[workspaceId]?.cells.includes(s.zenSessionId)
-        ? (ws.cells[paneIndex] ?? s.zenSessionId)
-        : s.zenSessionId;
-      return { workspaces: nextWorkspaces, zenSessionId: zen };
+      return { workspaces: nextWorkspaces };
     });
   },
 
@@ -1369,7 +1264,6 @@ const useStore = create<StoreState>((set, get) => ({
 
     const target = s.workspaces[targetId];
     if (!target) return false;
-    if (target.cells.length >= MAX_WORKSPACE_PANES) return false;
     if (target.cells.includes(movedSid)) return false;
 
     // Build the new source. If it's left empty, drop it and jump the active
@@ -1389,28 +1283,19 @@ const useStore = create<StoreState>((set, get) => ({
       }
       sourceDeleted = true;
     } else {
-      const newSourceLayout = downgradeWorkspaceLayout(source.layout, newSourceCells.length);
       const newSourceActive =
         source.activeCell === sourceIdx ? Math.max(0, sourceIdx - 1)
         : source.activeCell > sourceIdx ? source.activeCell - 1
         : source.activeCell;
-      nextWorkspaces[sourceId] = {
-        ...source,
-        cells: newSourceCells,
-        layout: newSourceLayout,
-        activeCell: newSourceActive,
-      };
+      nextWorkspaces[sourceId] = { ...source, cells: newSourceCells, activeCell: newSourceActive };
     }
 
     // Build the new target — always a growth.
     const newTargetCells = [...target.cells, movedSid];
-    const newTargetLayout = upgradeWorkspaceLayout(target.layout, newTargetCells.length);
-    const newTargetActive = newTargetCells.length - 1;
     nextWorkspaces[targetId] = {
       ...target,
       cells: newTargetCells,
-      layout: newTargetLayout,
-      activeCell: newTargetActive,
+      activeCell: newTargetCells.length - 1,
     };
 
     saveWorkspaces(nextWorkspaces, nextOrder);
@@ -1517,16 +1402,10 @@ const useStore = create<StoreState>((set, get) => ({
     if (!movedSid) return null;
 
     const newId = generateWorkspaceId();
-    const newWs: Workspace = {
-      id: newId,
-      layout: 'single',
-      cells: [movedSid],
-      activeCell: 0,
-    };
+    const newWs: Workspace = { id: newId, cells: [movedSid], activeCell: 0 };
 
     // Shrink the source — same logic as movePaneBetweenWorkspaces.
     const newSourceCells = source.cells.filter((_, i) => i !== sourceIdx);
-    const newSourceLayout = downgradeWorkspaceLayout(source.layout, newSourceCells.length);
     const newSourceActive =
       source.activeCell === sourceIdx ? Math.max(0, sourceIdx - 1)
       : source.activeCell > sourceIdx ? source.activeCell - 1
@@ -1534,12 +1413,7 @@ const useStore = create<StoreState>((set, get) => ({
 
     const nextWorkspaces: Record<string, Workspace> = {
       ...s.workspaces,
-      [sourceId]: {
-        ...source,
-        cells: newSourceCells,
-        layout: newSourceLayout,
-        activeCell: newSourceActive,
-      },
+      [sourceId]: { ...source, cells: newSourceCells, activeCell: newSourceActive },
       [newId]: newWs,
     };
 
@@ -1719,19 +1593,6 @@ const useStore = create<StoreState>((set, get) => ({
     set({ workspaces: nextWorkspaces });
   },
 
-  toggleZen(sessionId: string) {
-    set(s => {
-      const next = s.zenSessionId === sessionId ? null : sessionId;
-      // Only an opening counts: zen moving between panes (setCurrentSessionId,
-      // setActivePane) leaves the seq alone, so nothing animates on a switch.
-      return { zenSessionId: next, zenOpenSeq: s.zenSessionId === null && next ? s.zenOpenSeq + 1 : s.zenOpenSeq };
-    });
-  },
-
-  exitZen() {
-    set({ zenSessionId: null });
-  },
-
   setPip(sessionId: string | null) {
     set({ pipSessionId: sessionId });
   },
@@ -1860,5 +1721,23 @@ subscribePreferences(keys => {
     currentSessionId,
   });
 });
+
+/**
+ * Is this pane the one on screen?
+ *
+ * Every pane in a pen stays mounted, all but one under `display: none`, so a
+ * component belonging to a hidden pane renders and runs its effects exactly
+ * like the visible one. That is fine for state and ruinous for polling: with
+ * a pen holding twenty sheep, twenty copies of a 5s `git status` poll meant
+ * the server forked git continuously for nineteen panes nobody could see.
+ *
+ * This is the same test `updateActivity` and `markUnseen` already use, so a
+ * poll pauses exactly when a pane stops being the one you are looking at —
+ * and `usePoll` re-fetches the moment it comes back, which is what keeps the
+ * pause invisible.
+ */
+export function usePaneOnScreen(sessionId: string | null | undefined): boolean {
+  return useStore(s => !!sessionId && isOnScreen(s.currentSessionId, s.workspaces, sessionId));
+}
 
 export default useStore;

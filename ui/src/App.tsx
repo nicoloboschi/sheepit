@@ -77,9 +77,13 @@ export default function App() {
   // the session list arrives, and the link's target would be lost.
   const initialHashRef = useRef(window.location.hash);
 
-  /** Build the hash fragment from workspace + zen + field + the page the
-   *  active pane's browser is showing.
-   *  Format: `#workspaceId[/zen:sessionId][/f:fieldId][/b:url]`
+  /** Build the hash fragment from workspace + shown pane + field + the page
+   *  the shown pane's browser is showing.
+   *  Format: `#workspaceId[/p:sessionId][/f:fieldId][/b:url]`
+   *
+   *  The pane rides here because a pen holds many sheep and shows one: a link
+   *  to a pen alone lands you on whichever sheep that pen last had open, which
+   *  is not the one the link was about.
    *
    *  The page rides here so the *window's* Back and Forward — and the mouse
    *  buttons that mean them — walk the pages you looked at in a pane, which is
@@ -91,15 +95,15 @@ export default function App() {
    *  tabs standing in two different fields is the point, and one shared key
    *  would have the second tab drag the first. A refresh keeps each where it
    *  was, and a link carries the field with it. */
-  const buildHash = useCallback((wsId: string, zenId?: string | null, fieldId?: string | null, browserUrl?: string | null) => {
+  const buildHash = useCallback((wsId: string, paneId?: string | null, fieldId?: string | null, browserUrl?: string | null) => {
     return `#${wsId}`
-      + (zenId ? `/zen:${zenId}` : '')
+      + (paneId ? `/p:${paneId}` : '')
       + (fieldId ? `/f:${encodeURIComponent(fieldId)}` : '')
       + (browserUrl ? `/b:${encodeURIComponent(browserUrl)}` : '');
   }, []);
 
-  /** Parse hash → { workspaceId, zenSessionId, fieldId, browserUrl } */
-  const parseHash = useCallback((hash: string): { workspaceId: string; zenSessionId: string | null; fieldId: string | null; browserUrl: string | null } | null => {
+  /** Parse hash → { workspaceId, paneSessionId, fieldId, browserUrl } */
+  const parseHash = useCallback((hash: string): { workspaceId: string; paneSessionId: string | null; fieldId: string | null; browserUrl: string | null } | null => {
     const raw = hash.replace(/^#/, '');
     if (!raw) return null;
     // Field ids contain ':' (`fld:default`) but never '/', so the segments are
@@ -107,54 +111,53 @@ export default function App() {
     const [head, ...segments] = raw.split('/');
     const fieldSegment = segments.find(x => x.startsWith('f:'));
     const fieldId = fieldSegment ? decodeURIComponent(fieldSegment.slice(2)) : null;
-    const zenSegment = segments.find(x => x.startsWith('zen:'));
+    const paneSegment = segments.find(x => x.startsWith('p:'));
     const wsId = head;
-    const zenPart = zenSegment?.slice(4);
+    const panePart = paneSegment?.slice(2);
     // The page's own '/' survived the split above, so it is put back together
     // from everything after `b:` rather than taken as one segment.
     const browserAt = segments.findIndex(x => x.startsWith('b:'));
     const browserUrl = browserAt === -1
       ? null
       : decodeURIComponent(segments.slice(browserAt).join('/').slice(2));
-    return { workspaceId: wsId!, zenSessionId: zenPart ?? null, fieldId, browserUrl };
+    return { workspaceId: wsId!, paneSessionId: panePart ?? null, fieldId, browserUrl };
   }, []);
 
   /** Resolve a hash into a workspace that actually exists right now, plus the
-   *  pane to open in zen. Workspace ids are per-browser (randomly minted), so
+   *  pane to show in it. Workspace ids are per-browser (randomly minted), so
    *  a link opened elsewhere may not know our id — in that case fall back to
-   *  whichever workspace owns the zen pane. Returns null when neither
-   *  resolves, and drops a zen id that isn't a pane of the target workspace
-   *  (a stale one would leave zen state on with nothing rendered). */
+   *  whichever workspace owns the named pane. Returns null when neither
+   *  resolves, and drops a pane id that is not in the target workspace. */
   const resolveHashTarget = useCallback((hash: string) => {
     const parsed = parseHash(hash);
     if (!parsed) return null;
     const { workspaces, workspaceOrder } = useStore.getState();
     let workspaceId: string | null = workspaces[parsed.workspaceId] ? parsed.workspaceId : null;
-    if (!workspaceId && parsed.zenSessionId) {
-      workspaceId = workspaceOrder.find(id => workspaces[id]?.cells.includes(parsed.zenSessionId!)) ?? null;
+    if (!workspaceId && parsed.paneSessionId) {
+      workspaceId = workspaceOrder.find(id => workspaces[id]?.cells.includes(parsed.paneSessionId!)) ?? null;
     }
     if (!workspaceId) return null;
     const cells = workspaces[workspaceId]!.cells;
-    const zenSessionId = parsed.zenSessionId && cells.includes(parsed.zenSessionId) ? parsed.zenSessionId : null;
+    const paneIndex = parsed.paneSessionId ? cells.indexOf(parsed.paneSessionId) : -1;
     // A field from another browser's URL may not exist here; dropping it
     // leaves the sidebar on whatever it was showing rather than empty.
     const fieldId = parsed.fieldId && useStore.getState().fields[parsed.fieldId] ? parsed.fieldId : null;
-    return { workspaceId, zenSessionId, fieldId, browserUrl: parsed.browserUrl };
+    return { workspaceId, paneIndex: paneIndex < 0 ? null : paneIndex, fieldId, browserUrl: parsed.browserUrl };
   }, [parseHash]);
 
-  /** Push current workspace + zen state into the URL hash. */
+  /** Push the current workspace, shown pane and field into the URL hash. */
   const syncHash = useCallback(() => {
     if (fromPopstateRef.current) return;
     // Don't overwrite the opened link before we've had a chance to honour it.
     if (!initialHashAppliedRef.current && initialHashRef.current) return;
-    const { currentSessionId: wsId, zenSessionId, selectedFieldId, workspaces, browserUrls } = useStore.getState();
+    const { currentSessionId: wsId, selectedFieldId, workspaces, browserUrls } = useStore.getState();
     if (!wsId) return;
-    // The active pane's page, and only that one: several panes can hold a
+    // The shown pane's page, and only that one: several panes can hold a
     // browser, and a URL that carried all of them would be a URL nobody could
     // read or share. `browserUrls` only holds panes that are showing one.
     const ws = workspaces[wsId];
     const activePane = ws?.cells[ws.activeCell] ?? wsId;
-    const next = buildHash(wsId, zenSessionId, selectedFieldId, browserUrls[activePane] ?? null);
+    const next = buildHash(wsId, ws ? activePane : null, selectedFieldId, browserUrls[activePane] ?? null);
     if (window.location.hash !== next) {
       history.pushState(null, '', next);
     }
@@ -181,13 +184,16 @@ export default function App() {
     if (useStore.getState().currentSessionId === NOTES_SESSION_ID) useStore.getState().setCurrentSessionId(null);
   }, []);
 
-  // Sync the hash whenever zen mode or the shown field changes.
-  const zenSessionId = useStore(s => s.zenSessionId);
+  // Sync the hash whenever the shown pane, the field or a page changes.
+  const shownPane = useStore(s => {
+    const ws = s.currentSessionId ? s.workspaces[s.currentSessionId] : undefined;
+    return ws?.cells[ws.activeCell] ?? null;
+  });
   const selectedFieldId = useStore(s => s.selectedFieldId);
   const browserUrls = useStore(s => s.browserUrls);
-  useEffect(() => { syncHash(); }, [zenSessionId, selectedFieldId, browserUrls, syncHash]);
+  useEffect(() => { syncHash(); }, [shownPane, selectedFieldId, browserUrls, syncHash]);
 
-  // Browser back/forward: read workspace + zen state from hash.
+  // Browser back/forward: read workspace + pane from the hash.
   useEffect(() => {
     const onPopState = () => {
       const target = resolveHashTarget(window.location.hash);
@@ -202,12 +208,7 @@ export default function App() {
       // worth restoring rather than one to correct.
       if (target.fieldId) store.setSelectedField(target.fieldId);
       preferences.setItem('sheepit-last-session', target.workspaceId);
-      // Restore or clear zen mode
-      if (target.zenSessionId && store.zenSessionId !== target.zenSessionId) {
-        store.toggleZen(target.zenSessionId);
-      } else if (!target.zenSessionId && store.zenSessionId) {
-        store.exitZen();
-      }
+      if (target.paneIndex != null) store.setActivePane(target.workspaceId, target.paneIndex);
       // The page the pane was showing at that point in history. Asked for by
       // sequence rather than by value, so stepping back to a page you are
       // already on still navigates — you got here by following a link out of
@@ -253,8 +254,8 @@ export default function App() {
             // the sidebar to the active pen's field and lose the one the URL
             // asked for.
             if (hashTarget.fieldId) useStore.getState().setSelectedField(hashTarget.fieldId);
-            if (hashTarget.zenSessionId && useStore.getState().zenSessionId !== hashTarget.zenSessionId) {
-              useStore.getState().toggleZen(hashTarget.zenSessionId);
+            if (hashTarget.paneIndex != null) {
+              useStore.getState().setActivePane(hashTarget.workspaceId, hashTarget.paneIndex);
             }
             // A link someone sent carries the page as well as the pen. The
             // request waits in the store until that pane's browser mounts,
@@ -282,17 +283,12 @@ export default function App() {
       case 'session_created': {
         const newId = msg.session_id as string;
         const path = msg.path as string | null;
-        // Headless sessions are intentionally not given a workspace or selected.
-        // They remain backend-live and can only exist once (enforced server-side).
-        if (msg.headless === true) {
-          // It has no workspace row by design, so its presentation is the
-          // floating PiP dialog — which sits *above* zen rather than
-          // replacing it, because it is a shell you glance at while reading
-          // another pane. Asking for it again while it is up puts it away.
-          const open = useStore.getState().pipSessionId === newId;
-          store.setPip(open ? null : newId);
-          break;
-        }
+        // A headless shell gets no pen and no selection, by design. Nothing
+        // to do here: it is shown in the Terminals panel, which draws whatever
+        // `sessions.filter(isHeadless)` holds — and that arrives on the very
+        // next sweep. Raising the panel is not this message's job either,
+        // since the only way to ask for one is from inside it.
+        if (msg.headless === true) break;
         // Optimistically add session to the store so it appears in sidebar immediately
         if (!store.sessionMap[newId]) {
           const optimistic = {
@@ -681,7 +677,6 @@ export default function App() {
             sessionId={currentSessionId}
             send={send}
           />
-          <ZenOnlyTerminal send={send} />
           <PipTerminal send={send} />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
@@ -716,47 +711,19 @@ export default function App() {
   );
 }
 
-/** The panes that have no pen: the headless singleton and the sheepdog.
+/** The sheepdog's panel.
  *
- *  Neither belongs in the sidebar — one is a hidden worker, the other is the
- *  animal watching the flock rather than part of it — so zen is their only
- *  presentation, entered from the top bar. */
-function ZenOnlyTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
-  const sessionId = useStore(s => s.zenSessionId);
-  const penless = useStore(s => {
-    const sess = s.zenSessionId ? s.sessionMap[s.zenSessionId] : undefined;
-    return !!(sess?.isHeadless || sess?.isDog);
-  });
-
-  if (!sessionId || !penless) return null;
-  return (
-    <TerminalCell
-      sessionId={sessionId}
-      gridId={`__headless__:${sessionId}`}
-      paneIndex={0}
-      isActive
-      onActivate={() => {}}
-      onClose={() => {
-        useStore.getState().exitZen();
-        send({ type: 'close_session', session_id: sessionId });
-      }}
-    />
-  );
-}
-
-/** The panes that float: the headless shell and the sheepdog.
+ *  It belongs to no pen and is not what you are working *in* — it is the
+ *  animal watching the flock, something you keep beside the work, so it floats
+ *  over the pen rather than standing in it.
  *
- *  Neither belongs to a pen, and neither is what you are working *in* — they
- *  are things you keep beside the work, so they get their own layer over zen
- *  rather than zen's one slot. Pressing zen in the pane's bar still blows it
- *  up full size; that is the same session, so the panel stands down while it
- *  is there. */
+ *  It used to share this one slot with the headless shell, so raising one put
+ *  the other away. The scratch terminals have their own panel now (see
+ *  `TerminalsDialog`) and this is the dog's alone. */
 function PipTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
   const sessionId = useStore(s => s.pipSessionId);
   const live      = useStore(s => !!(sessionId && s.sessionMap[sessionId]));
-  const inZen     = useStore(s => !!sessionId && s.zenSessionId === sessionId);
-
-  if (!sessionId || !live || inZen) return null;
+  if (!sessionId || !live) return null;
   return (
     <FloatingPanel
       // Dragged by the pane's own bar — the one strip that is chrome rather
@@ -771,7 +738,6 @@ function PipTerminal({ send }: { send: (msg: Record<string, unknown>) => void })
         gridId={`__headless__:${sessionId}`}
         paneIndex={0}
         isActive
-        isQuad={false}
         onActivate={() => {}}
         onClose={() => {
           useStore.getState().setPip(null);

@@ -48,12 +48,41 @@ export interface Session {
   prRefs?: { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[];
   /** How many tokens the agent's context holds right now, read from its own
    *  transcript. Absent for a pane with no agent, or one that has not replied
-   *  yet. It is what is *used*: nothing in either agent's transcript says how
-   *  big the window is, which is why this is shown as a count. */
+   *  yet. It is what is *used*, not what fits. */
   ctxTokens?: number;
-  /** A background-only session. It stays running but is not presented as a workspace. */
+  /** The model's context window, when the agent records it — Codex writes
+   *  `model_context_window`, Claude Code writes no window size anywhere. Its
+   *  presence is what lets a pane show a percentage instead of a count; its
+   *  absence means we do not know, never that there is no limit. */
+  ctxLimit?: number;
+  /** A background-only session: a scratch terminal that stays running but
+   *  never gets a pen. Shown in the Terminals panel, or — when `sideOf` names
+   *  a pane — in that pane's own Terminals split. */
   isHeadless?: boolean;
+  /** Set on a **side terminal**: the id of the pane it was opened beside. Such
+   *  a shell is headless (it gets no pen) but belongs to one pane, runs in that
+   *  pane's directory, and is closed with it. Absent on the global scratch
+   *  shells, which is what tells the two apart. */
+  sideOf?: string;
 }
+
+/** How many **side terminals** one pane may hold — the shells in its own
+ *  Terminals split. Four for the same reason as the panel below, and capped
+ *  per pane rather than globally: twenty panes with four apiece would be
+ *  eighty shells, so the cost has to be bounded where it is incurred. */
+export const MAX_SIDE_TERMINALS = 4;
+
+/** How many *global* scratch terminals may exist at once (the ones with no
+ *  `sideOf`, shown in the Terminals panel).
+ *
+ *  Four, because that is what the Terminals panel can tile and still leave
+ *  each one readable — a scratch shell is something you glance at, and eight
+ *  postage stamps is not a glance. There was exactly one before it was a
+ *  panel, which was not enough to run a build in and tail a log beside it.
+ *
+ *  Enforced on the server (see `create_session`), which is the only place that
+ *  can count them without racing. */
+export const MAX_HEADLESS = 4;
 
 export type BridgeMessage =
   | { type: 'sessions'; sessions: Session[] }

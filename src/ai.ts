@@ -253,9 +253,18 @@ export function readAgentTitle(transcriptPath: string): string | null {
   }
 }
 
+/** What a transcript says about its own context: how much is in it, and — only
+ *  when the agent actually writes it down — how much fits. */
+export interface ContextUsage {
+  /** Tokens in the prompt as of the last turn. */
+  used: number;
+  /** The model's context window, when the transcript records it. Codex does;
+   *  Claude Code does not. Absent means "we do not know", never "unlimited". */
+  limit?: number;
+}
+
 /**
- * How full the agent's context is, in tokens — or null when the transcript
- * does not say yet.
+ * How full the agent's context is — or null when the transcript does not say.
  *
  * Both agents record it, in different places, and both are read here:
  *
@@ -263,20 +272,43 @@ export function readAgentTitle(transcriptPath: string): string | null {
  *    `input + cache_read + cache_creation`. The cached part is nearly all of
  *    it — a real 451k-token session reports `input_tokens: 32` — so leaving it
  *    out would report every long session as empty.
- *  - **Codex** writes `token_usage_record` rows whose `usage.input_tokens` is
- *    that same total, already summed.
+ *  - **Codex** writes an `event_msg` row whose payload type is `token_count`.
+ *    `info.last_token_usage.input_tokens` is the last prompt, already summed
+ *    (its `cached_input_tokens` is a subset of it, not an addition).
  *
  * Read from the tail, for the reason `readAgentTitle` is: these files run to
  * tens of megabytes, and only the last row is current. One 47MB transcript
  * carried 88 assistant rows in its final 256KB, so the tail is never the
  * binding constraint.
  *
- * **This is what is used, not what fits.** Neither file records the size of the
- * model's window, so callers show a count and not a percentage — a percentage
- * would need a number maintained by hand that goes stale when models change.
- * The count also drops after a compaction, which is correct: it really did.
+ * ### Only Codex says how much fits
+ *
+ * Codex writes `info.model_context_window` (258400 on a real gpt-5.4 rollout)
+ * beside the count, so its panes can be shown as a **percentage**, exactly and
+ * with nothing maintained by hand.
+ *
+ * **Claude Code records no window size anywhere.** Not on the usage block, not
+ * on a system row, not in a hook payload — Claude Code's own status line gets
+ * `context_window.context_window_size` from the status-line interface, which is
+ * a different channel from the transcript and one nothing here is on. The
+ * `cost-state` row's `modelUsage` map does key a 1M session as
+ * `claude-opus-5[1m]`, and that is the *only* trace of the window in the file:
+ * it is undocumented, it is absent from roughly half of the live transcripts on
+ * this machine, it sometimes sits thousands of lines from the tail, and its
+ * keys include whatever model a subagent happened to use. Guessing 200k from
+ * its absence would report a 1M session at 536k tokens as **268% full**, which
+ * is not merely wrong but wrong in the alarming direction. So Claude panes show
+ * the count, and that is a limitation of the transcript rather than a choice.
+ *
+ * `used` is what is *used*, not what fits, and it drops after a compaction —
+ * which is correct: it really did.
+ *
+ * Codex's older `token_usage_record` row is still read as a fallback. Current
+ * Codex does not write it at all, which is why Codex panes had stopped
+ * reporting any context: the row type was right when it was written and the
+ * agent moved on.
  */
-export function readContextTokens(transcriptPath: string): number | null {
+export function readContextTokens(transcriptPath: string): ContextUsage | null {
   const TAIL = 256 * 1024;
   let fd: number | null = null;
   try {
@@ -294,7 +326,10 @@ export function readContextTokens(transcriptPath: string): number | null {
     const first = size > length ? 1 : 0;
     for (let i = lines.length - 1; i >= first; i--) {
       const line = lines[i]!;
-      if (!line.includes('"usage"')) continue;
+      // Cheap gate before the JSON parse. `token_count` carries
+      // `last_token_usage`, which contains "usage" too — but `model_context_window`
+      // is the only string unique to the row that matters, so both are checked.
+      if (!line.includes('"usage"') && !line.includes('"token_count"')) continue;
       let row: any;
       try { row = JSON.parse(line); } catch { continue; }
 
@@ -303,12 +338,22 @@ export function readContextTokens(transcriptPath: string): number | null {
         const n = (Number(claude.input_tokens) || 0)
           + (Number(claude.cache_read_input_tokens) || 0)
           + (Number(claude.cache_creation_input_tokens) || 0);
-        if (n > 0) return n;
+        // No limit: Claude Code does not write one down. See above.
+        if (n > 0) return { used: n };
       }
 
+      // Codex, current shape.
+      if (row?.payload?.type === 'token_count') {
+        const info = row.payload.info ?? {};
+        const n = Number(info?.last_token_usage?.input_tokens) || 0;
+        const limit = Number(info?.model_context_window) || 0;
+        if (n > 0) return limit > 0 ? { used: n, limit } : { used: n };
+      }
+
+      // Codex, older shape. Carries no window size.
       if (row?.type === 'token_usage_record') {
         const n = Number(row?.payload?.usage?.input_tokens) || 0;
-        if (n > 0) return n;
+        if (n > 0) return { used: n };
       }
     }
     return null;

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { usePoll } from '../hooks/usePoll';
+import { usePaneOnScreen } from '../store';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
@@ -783,7 +784,11 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     try { preferences.setItem(`sheepit:files-tabs:${sessionId}`, JSON.stringify(openTabs)); } catch {}
   }, [openTabs, sessionId]);
 
-  // Fetch git status and refresh every 5s
+  // Fetch git status and refresh every 5s — but only for the pane on screen.
+  // The default pane view mounts this pane, and every sheep in a pen stays
+  // mounted, so without the gate a pen of twenty forks twenty `git status`
+  // every five seconds for the nineteen you cannot see.
+  const filesOnScreen = usePaneOnScreen(sessionId);
   usePoll(useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -791,7 +796,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       const data = await res.json();
       setGitStatus(data.files ?? null);
     } catch { /* decorative — leave the last known status up */ }
-  }, [sessionId]), 5000, sessionId);
+  }, [sessionId]), 5000, sessionId, filesOnScreen);
 
   // Expose openFile(path) to parent via ref
   useEffect(() => {

@@ -31,7 +31,7 @@ const STATE_LABEL: Record<SheepState, string> = {
  *  grazing leans forward onto its face, bleating and unread rear back onto
  *  their hind feet, and idle lies down with its legs tucked away — the only
  *  one of the four with no legs showing, which is what makes it readable at
- *  a glance in a quad.
+ *  a glance in a folded pen.
  *
  *  Bleating and unread share one animation on purpose; what separates them
  *  is that an unread pane tints its whole card amber (.pane-card-unseen).

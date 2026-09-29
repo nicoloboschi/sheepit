@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, Maximize2, Minimize2, Globe, GitCompare, RotateCcw } from 'lucide-react';
+import { SquareTerminal, X, PanelRight, RotateCcw } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
 import DogStatus from './DogStatus';
 import { useDog } from '../flock';
-import { type PaneView } from './TerminalCell';
 import StatChips from './StatChips';
 import VoiceInputButton from './VoiceInputButton';
 import * as sharedWs from '../sharedWs';
@@ -22,25 +21,19 @@ const forceTextPresentation = (s: string) =>
 
 interface PaneHeaderProps {
   sessionId: string;
-  /** Workspace this pane belongs to. Used as the drag source id. */
+  /** The pen this pane stands in. Read to tell whether it is the last sheep
+   *  in it, which is what makes closing it close the pen too. */
   workspaceId: string;
-  /** Position of this pane within its workspace's `cells` array. Used as
-   *  the drag source index so the drop target knows which pane is moving. */
-  paneIndex: number;
   isActive: boolean;
-  /** True when this pane owns the grid's bookkeeping (cell 0). Closing it
-   *  tears down the whole grid because every other cell depends on it, but
-   *  the UI no longer calls it out as a "primary" — all panes read as equals. */
-  isGridRoot: boolean;
   onClose: () => void;
-  /** Per-pane view switch. When provided, the header shows a terminal/git/files
-   *  toggle that controls what this pane renders below its status bar. */
-  view?: PaneView;
-  onViewChange?: (view: PaneView) => void;
+  /** Whether the tools (files, browser, git) are open beside the terminal.
+   *  When a toggle is given, the header shows one button to show/hide them. */
+  toolsOpen?: boolean;
+  onToggleTools?: () => void;
 }
 
 
-export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive, isGridRoot, onClose, view, onViewChange }: PaneHeaderProps) {
+export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, toolsOpen, onToggleTools }: PaneHeaderProps) {
   const session     = useStore(s => s.sessionMap[sessionId]);
   // The pane's own sheep, in the same four states and the same precedence as
   // the sidebar's — bleating over grazing, live over idle. There is room for
@@ -60,8 +53,18 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
   // Moved up from the old footer bar along with the path itself.
   const [showFullPath, setShowFullPath] = useState(false);
   const showConfirm = useStore(s => s.showConfirm);
-  const isZen       = useStore(s => s.zenSessionId === sessionId);
-  const toggleZen   = useStore(s => s.toggleZen);
+  // Closing the last sheep dissolves the pen, so the confirmation has to say
+  // so. This was `sessionId === gridId` at the call site, which dated from
+  // when a pen was keyed by its root pane's session id — pen ids are
+  // synthetic now, so that test was simply always false.
+  // False when there is no pen at all — a scratch terminal in the Terminals
+  // panel has a synthetic `__headless__:` id that matches no workspace, and
+  // `?? 1` would have called every one of them the last sheep in a pen it is
+  // not standing in.
+  const isLastSheep = useStore(s => {
+    const ws = s.workspaces[workspaceId];
+    return !!ws && ws.cells.length <= 1;
+  });
   const [editing, setEditing]     = useState(false);
   const [draftName, setDraftName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -81,13 +84,11 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
 
   async function handleClose(e: React.MouseEvent) {
     e.stopPropagation();
-    // In zen (fullscreen) mode the X exits zen rather than closing the
-    // session — matches the "fullscreen → close = leave fullscreen" expectation.
-    if (isZen) { toggleZen(sessionId); return; }
     const name = session?.name ?? 'pane';
-    const msg = isGridRoot
-      ? `Close "${name}" and all its panes?`
-      : `Close pane "${name}"?`;
+    // The last sheep in a pen takes the pen with it, so say so.
+    const msg = isLastSheep
+      ? `Close "${name}"? It is the last sheep in this pen.`
+      : `Close "${name}"?`;
     const confirmed = await showConfirm(msg);
     if (!confirmed) return;
     onClose();
@@ -206,75 +207,23 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
         <StatChips sessionId={sessionId} send={sharedWs.send} />
 
         {/* Three groups, ruled apart: what this pane is connected to (agent
-            mark, git, links), what it is showing (the view switch), and what
-            you can do to it (mic, zen, close). */}
+            mark, git, links), whether its tools are open, and what
+            you can do to it (mic, close). */}
         <div className="pane-bar-actions">
-        {/* Per-pane view switch — terminal / git / files, scoped to this pane.
-            Shed on a very narrow pane; see the container queries in style.css.
-            Its leading divider goes with it, or a pane without a view switch
-            would show two rules in a row. */}
-        {onViewChange && <div className="pane-bar-divider" />}
-        {onViewChange && (
-          // Top-level switch: Terminal vs. the unified Git view. The Git view's
-          // own Working / Files / Git Log sub-switcher lives inside it.
-          // A tinted pill rather than a filled one: the pane header sits right
-          // on top of the terminal, and a solid brand fill up here shouts over
-          // the content it is framing.
-          <div
-            className="pane-bar-views"
-            style={{
-              display: 'flex', alignItems: 'center', flexShrink: 0, height: 22,
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid var(--border)', borderRadius: 7, overflow: 'hidden',
-            }}
-            onClick={(e) => e.stopPropagation()}
+        {/* Show/hide the tools beside the terminal. Which tool is showing is
+            picked on the tools' own rail, not up here. */}
+        {onToggleTools && <div className="pane-bar-divider" />}
+        {onToggleTools && (
+          <button
+            className="pane-bar-btn pane-bar-views"
+            title={toolsOpen ? 'Hide tools' : 'Show tools — files, browser, git'}
+            onClick={(e) => { e.stopPropagation(); onToggleTools(); }}
+            style={{ color: toolsOpen ? 'var(--primary)' : undefined }}
           >
-            {/* Three states now that files joined the git group: the terminal,
-                the browser beside it, and the git view — which carries GitHub,
-                the working tree, the log and the file browser on its own rail.
-                Nothing here hides the terminal: reading a file, a diff or a dev
-                server is something you do WHILE working, and a pane that gave
-                its whole width to one of them had hidden the thing the pane is
-                for. Files left this switch because moving between a diff and
-                the file it changed should not be a different half-pane
-                arriving — on the rail it is one click at the same shape. */}
-            {([
-              { id: 'terminal', icon: <SquareTerminal size={12} />, title: 'Terminal', active: view === 'terminal' },
-              { id: 'browser',  icon: <Globe size={12} />,          title: 'Terminal + browser', active: view === 'split-preview' },
-              { id: 'git',      icon: <GitCompare size={12} />,     title: 'Git — GitHub, working tree, log and files', active: view === 'split-github' || view === 'working' || view === 'log' || view === 'split' },
-            ] as const).map(({ id, icon, title, active }) => (
-              <button
-                key={id}
-                title={title}
-                // Terminal and browser map straight through; Git keeps whichever
-                // of its four views is already showing.
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onViewChange(
-                    id === 'terminal' ? 'terminal'
-                      : id === 'browser' ? 'split-preview'
-                      // Git keeps whichever of its views is already showing —
-                      // the files included; from anywhere else it opens on
-                      // GitHub, which is the one you come to the group to read.
-                      : (view === 'working' || view === 'log' || view === 'split' ? view : 'split-github'),
-                  );
-                }}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 24, height: 22,
-                  background: active ? 'color-mix(in srgb, var(--primary) 22%, transparent)' : 'none',
-                  border: 'none',
-                  borderRight: id !== 'git' ? '1px solid var(--border)' : 'none',
-                  cursor: 'pointer',
-                  color: active ? 'var(--primary)' : 'var(--muted-foreground)',
-                }}
-              >
-                {icon}
-              </button>
-            ))}
-          </div>
+            <PanelRight size={13} />
+          </button>
         )}
-        {/* Divider separating the view-switch pill from the button cluster. */}
+        {/* Divider separating the tools toggle from the button cluster. */}
         <div className="pane-bar-divider" />
 
         {isActive && (
@@ -293,7 +242,20 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           <button
             onClick={(e) => {
               e.stopPropagation();
-              sharedWs.send({ type: 'create_session', path: null, headless: true, restart: true });
+              // `session_id` names the target: there are up to four scratch
+              // shells now, so "the" headless session is no longer a thing the
+              // server could work out for itself.
+              //
+              // `side_of` has to ride along for a SIDE terminal, or the
+              // replacement comes back belonging to nobody: the old shell is
+              // closed by id (it is headless, so it matches), and the new one
+              // is made without an owner — so restarting a pane's terminal
+              // silently moved it into the global Terminals panel.
+              sharedWs.send({
+                type: 'create_session', path: null, headless: true,
+                restart: true, session_id: sessionId,
+                ...(session.sideOf ? { side_of: session.sideOf } : {}),
+              });
             }}
             title="Kill this headless shell and start a fresh one"
             className="pane-bar-btn pane-bar-btn-danger"
@@ -302,20 +264,11 @@ export default function PaneHeader({ sessionId, workspaceId, paneIndex, isActive
           </button>
         )}
 
-        {/* Zen toggle — enters/exits distraction-free fullscreen */}
-        <button
-          onClick={(e) => { e.stopPropagation(); toggleZen(sessionId); }}
-          title={isZen ? 'Exit zen mode' : 'Zen mode (fullscreen)'}
-          className="pane-bar-btn"
-        >
-          {isZen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-        </button>
-
-        {/* Close — on the grid's root cell, confirms and tears down the
-            whole grid; on other cells, removes just that pane. */}
+        {/* Close — kills this pane's session. The last one in a pen takes
+            the pen with it, which the confirmation says. */}
         <button
           onClick={handleClose}
-          title={isZen ? 'Exit zen mode' : 'Close pane'}
+          title="Close pane"
           className="pane-bar-btn pane-bar-btn-danger"
         >
           <X size={12} />

@@ -38,7 +38,7 @@ let nextId = 1;
 
 const GRID = 4;
 
-/** Whether anything is drawn over this box — zen's backdrop, ⌘K, a menu, a
+/** Whether anything is drawn over this box — ⌘K, a menu, a floating panel, a
  *  dialog. A native view sits above the whole page and cannot be layered under
  *  any of them, so it hides instead, and no overlay has to know it exists.
  *  ponytail: a 4×4 grid of hit tests, so a popover smaller than the gap between
@@ -88,11 +88,12 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
   useEffect(() => { b.zoom(id, zoom); }, [b, id, zoom]);
 
   // Follow the box every frame. A pane moves without resizing — the sidebar
-  // drags, a split shifts, zen opens — and a ResizeObserver sees none of that.
+  // drags, a split shifts, a panel opens — and a ResizeObserver sees none of that.
   // ponytail: rAF poll of one getBoundingClientRect; event-driven if it ever shows up in a profile.
   useEffect(() => {
     let last = '';
     let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = () => {
       const el = boxRef.current;
       const r = el?.getBoundingClientRect();
@@ -103,10 +104,19 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
         last = key;
         b.bounds(id, visible ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
       }
-      raf = requestAnimationFrame(tick);
+      // Per frame while it is on screen — that is the case this loop exists
+      // for, where a pane slides under a dragging sidebar and a frame of lag
+      // shows. A surface with no box is a different thing: every pane in a pen
+      // stays mounted, so most of these belong to panes you cannot see, and
+      // each one was still forcing a layout sixty times a second to re-learn
+      // that it is still hidden. Nothing can *become* visible without a
+      // React render or a resize, both of which re-enter here soon enough,
+      // so four checks a second is enough to notice.
+      if (visible) raf = requestAnimationFrame(tick);
+      else timer = setTimeout(tick, 250);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (timer) clearTimeout(timer); };
   }, [b, id]);
 
   const findRef = useRef({ open: onFindOpen, result: onFindResult });

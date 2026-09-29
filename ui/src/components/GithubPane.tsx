@@ -8,6 +8,8 @@ import remarkGfm from 'remark-gfm';
 import { parseDiff, type DiffFile } from '../diff';
 import { externalClick } from '../openExternal';
 import { copyText } from '../utils';
+import { usePoll } from '../hooks/usePoll';
+import { usePaneOnScreen } from '../store';
 // The one diff viewer — the tree and the diffs, laid out the same way the
 // working tree is read in. It defers FileView (CodeMirror and sixteen language
 // packs) behind a lazy import, so a PR you have not opened loads none of it.
@@ -522,6 +524,18 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
 
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { loadItem(); }, [loadItem]);
+  // Re-ask every FRESH_MS while this is on screen. The server keeps every
+  // list somebody is looking at refreshed on the same clock, so this is a
+  // cache read on its side, not a GitHub call — it is how a view left open
+  // picks up what changed.
+  // Through `usePoll` rather than a bare interval, for two things the bare one
+  // did not have: it stops while the tab is hidden, and it stops for a pane
+  // that is not the one on screen. Every sheep in a pen stays mounted, so this
+  // panel was re-asking once per pen-member every 30s for panes nobody could
+  // see — and re-asks at once when you come back, so the pause is invisible.
+  const ghOnScreen = usePaneOnScreen(sessionId);
+  usePoll(useCallback(() => { loadList(); loadItem(); }, [loadList, loadItem]),
+    FRESH_MS, sessionId, ghOnScreen);
   // The "loaded …" label has to keep counting. Frozen at whatever it said when
   // the answer landed it becomes the opposite of the thing it is for — a panel
   // that has been open for an hour insisting it loaded a moment ago.

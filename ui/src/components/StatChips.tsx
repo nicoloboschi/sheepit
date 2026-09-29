@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { GitBranch, GitCommitHorizontal, GitPullRequest, CircleDot, Github, GitFork, Loader2, CircleCheck, CircleX, Clock, ListTree } from 'lucide-react';
+import { GitBranch, GitCommitHorizontal, GitPullRequest, CircleDot, Github, GitFork, Loader2, ListTree } from 'lucide-react';
 import { useStats } from '../hooks/useStats';
 import { useGit, useGithubPR, type GitStatus, type GithubPR } from '../hooks/useGit';
-import useStore from '../store';
+import useStore, { usePaneOnScreen } from '../store';
 import { externalClick, openExternal } from '../openExternal';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
@@ -227,15 +227,9 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
     }
   }
 
-  // What the agent touched, then the PR of the branch it is on. The first is
-  // reported by the hooks and is right even when the branch has no PR of its
-  // own; the second is what `gh pr view` resolves, and is the only one that
-  // carries state and check results.
+  // What the agent touched, as reported by its hooks.
   const repo = github?.owner && github?.repo ? `${github.owner}/${github.repo}` : null;
-  const allRefs: PrRef[] = [...refs];
-  if (github?.prNum && !allRefs.some(r => r.num === github.prNum)) {
-    allRefs.push({ kind: 'pr', num: github.prNum, url: github.prUrl ?? undefined, repo: repo ?? undefined });
-  }
+  const allRefs: PrRef[] = refs;
 
   return (
     <div style={{ minWidth: 240, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -272,12 +266,7 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
             // — `gh pr view 3730 --repo other/repo` would read as ours.
             const m = pr.url?.match(GH_REF_RE);
             const refRepo = pr.repo ?? (m ? `${m[1]}/${m[2]}` : '');
-            // Show state/checks for the PR that matches the github hook
-            const isHookPr = github?.prNum === pr.num;
-            const prState = isHookPr ? github?.prState : null;
-            const prStateColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
-            const checks = isHookPr ? github?.prChecks : null;
-            const review = isHookPr ? github?.prReviewDecision : null;
+            const prStateColor = '#9CBC7F';
             return (
               <a
                 key={`${pr.kind}${pr.num}`}
@@ -319,21 +308,6 @@ function GitDetails({ git, github, sessionId, send, refs = [] }: GitDetailsProps
                 <span style={{ fontSize: 12, fontWeight: 700, color: prStateColor, fontFamily: 'var(--font-mono)' }}>
                   #{pr.num}
                 </span>
-                {prState && (
-                  <span style={{ fontSize: 9, color: prStateColor, textTransform: 'lowercase' }}>
-                    {prState}
-                  </span>
-                )}
-                {checks && (() => {
-                  const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : Clock;
-                  const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
-                  return <CheckIcon size={10} strokeWidth={2.5} style={{ color: checkColor, flexShrink: 0 }} />;
-                })()}
-                {review && (
-                  <span style={{ fontSize: 9, color: review === 'APPROVED' ? '#9CBC7F' : review === 'CHANGES_REQUESTED' ? '#E0907B' : '#D9B84A' }}>
-                    {review === 'APPROVED' ? 'approved' : review === 'CHANGES_REQUESTED' ? 'changes requested' : 'review needed'}
-                  </span>
-                )}
                 {refRepo && (
                   <span style={{ fontSize: 10, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
                     {refRepo}
@@ -422,8 +396,11 @@ interface GitChipProps {
 const NO_REFS: PrRef[] = [];
 
 function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
-  const git = useGit(sessionId);
-  const github = useGithubPR(sessionId);
+  // Nineteen of the twenty panes in a pen are under `display: none` and were
+  // polling exactly like the one you can see. See usePaneOnScreen.
+  const onScreen = usePaneOnScreen(sessionId);
+  const git = useGit(sessionId, 5000, onScreen);
+  const github = useGithubPR(sessionId, 5 * 60_000, onScreen);
   // Reported by the agent's hooks and carried on the session itself — see
   // src/pr-refs.ts. This used to be scraped out of the pane's own output in
   // the browser, which meant a PR the agent had opened vanished on reload and
@@ -432,12 +409,10 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
   if (!git) return null;
 
   const branchColor: string = git.dirty ? '#D9B84A' : '#9CBC7F';
-  // The most recent thing the agent touched wins the bar; the branch's own PR
-  // stands in when it has touched nothing. Most-recent rather than
+  // The most recent thing the agent touched wins the bar. Most-recent rather than
   // highest-numbered: a session that has just checked out #3672 is about
   // #3672, whatever else it read along the way.
-  const topPr: PrRef | null = refs[0]
-    ?? (github?.prNum ? { kind: 'pr', num: github.prNum, url: github.prUrl ?? undefined } : null);
+  const topPr: PrRef | null = refs[0] ?? null;
   const extraCount = Math.max(0, refs.length - 1);
   // Where that reference lives, for the chip below: the same two questions the
   // popover's rows answer — a URL to leave for on a modifier click, and the
@@ -484,15 +459,7 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
           </button>
         </PopoverTrigger>
         {topPr && topPr.num > 0 && (() => {
-          // State and checks come from `gh pr view`, which answers for the
-          // branch. They belong to this number only when the two agree —
-          // otherwise the bar would paint one PR's checks onto another's.
-          const isBranchPr = github?.prNum === topPr.num;
-          const prState = isBranchPr ? github?.prState : null;
-          const prColor = prState === 'MERGED' ? '#B79CCA' : prState === 'CLOSED' ? '#E0907B' : '#9CBC7F';
-          const checks = isBranchPr ? github?.prChecks : null;
-          const CheckIcon = checks === 'PASS' ? CircleCheck : checks === 'FAIL' ? CircleX : checks === 'PENDING' ? Clock : null;
-          const checkColor = checks === 'PASS' ? '#9CBC7F' : checks === 'FAIL' ? '#E0907B' : '#D9B84A';
+          const prColor = '#9CBC7F';
           const RefIcon = topPr.kind === 'issue' ? CircleDot : GitPullRequest;
           return (
             <button
@@ -520,7 +487,6 @@ function GitChip({ sessionId, send }: GitChipProps): React.ReactElement | null {
               className="hover:bg-white/5"
             >
               <RefIcon size={8} strokeWidth={2} />#{topPr.num}
-              {CheckIcon && <CheckIcon size={7} strokeWidth={2.5} style={{ color: checkColor }} />}
               {extraCount > 0 && (
                 <span style={{ fontSize: 8, opacity: 0.7 }}>+{extraCount}</span>
               )}
@@ -548,7 +514,7 @@ export default function StatChips({ sessionId, send }: StatChipsProps): React.Re
   // a command, not several times a second. The live figures are in the
   // popover, so that is the only time worth paying for a fast poll.
   const [open, setOpen] = useState(false);
-  const stats = useStats(sessionId, open ? 2000 : 20000) as Stats | null;
+  const stats = useStats(sessionId, open ? 2000 : 20000, usePaneOnScreen(sessionId)) as Stats | null;
 
   // The pane's own child processes (not system-wide). Still polled, because
   // the popover lists them and lets you kill one; the totals are no longer

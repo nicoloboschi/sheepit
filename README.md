@@ -59,14 +59,17 @@ process" — it is "which one needs me right now".
 | Word | Means |
 |---|---|
 | **Sheep** | One terminal. Backed by one shell process. |
-| **Pen** | A row in the sidebar: one to four sheep sharing a layout and a name. |
+| **Pen** | A row in the sidebar: any number of sheep sharing a name, one of them on screen. |
 | **The flock** | Every pen you have open. |
 | **Grazing** | A sheep working away on its own — a command is still running. |
 | **Bleating** | A sheep that wants you. It asked a question and is waiting on an answer. |
 
-A pen is the enclosure rather than the animals in it: it keeps its name, layout
-and place in the sidebar whether or not anything is running, which is why
-closing a pen closes what it holds. And the plural of sheep is sheep — three
+A pen is the enclosure rather than the animals in it: it keeps its name and
+place in the sidebar whether or not anything is running, which is why closing a
+pen closes what it holds. It shows one sheep at a time — the others are a tab
+away — because everything worth putting beside a terminal (the browser, a pull
+request, the diff, the files) already goes *inside* a pane, beside its own
+terminal. And the plural of sheep is sheep — three
 sheep, one sheep, never sheeps.
 
 The sidebar counts both at a glance, and the pasture along its bottom edge puts
@@ -83,9 +86,9 @@ the wire needs to know about livestock.
 - **Terminal in the browser** — full xterm.js terminal with mouse, scroll, and color support
 - **Persistent sessions** — PTY daemon keeps your shells alive across server restarts, no tmux needed
 - **Pre-warmed shell pool** — new panes open instantly, no shell-startup lag
-- **Pens + split panes** — single, horizontal, vertical, three-pane (4 variants), and 2×2 grid layouts
-- **Drag & drop everywhere** — reorder pens, swap panes within a pen, move panes between pens, or extract a pane into a new pen
-- **Zen mode + shareable links** — focus a single pane, and the URL always points at the pen (and pane) you're looking at, so you can bookmark it or reopen it later
+- **Pens** — group as many sheep as you like under one name, and switch between them with a tab
+- **Drag & drop everywhere** — reorder pens, reorder panes within a pen, move panes between pens, or extract a pane into a new pen
+- **Shareable links** — the URL always points at the pen and the pane you're looking at, so you can bookmark it or send it
 - **Bleating / grazing at a glance** — every pane says whether it is running, waiting on you, or idle, from the sidebar and from your phone
 - **Git integration** — branch status, PR links, diff viewer, worktree management
 - **File browser** — navigate, edit, and preview files with syntax highlighting; open files refresh live when something else rewrites them on disk

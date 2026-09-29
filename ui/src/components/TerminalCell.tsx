@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree, Globe, TerminalSquare } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
+import { useShallow } from 'zustand/react/shallow';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
 import { openExternal } from '../openExternal';
 import GitDiffPane from './GitDiffPane';
 import GithubPane, { type GhRef } from './GithubPane';
+import TerminalTiles from './TerminalTiles';
 import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
 import { TERMINAL_THEMES, TERMINAL_LINE_HEIGHT } from '../theme';
@@ -111,12 +113,13 @@ interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
  * a pane that gave the whole width to one of them had hidden the thing the
  * pane is for.
  *
- * The last four are **one group behind one rail** (`GIT_TABS`): GitHub, the
- * working tree, the log, and the files. `split` keeps its name — it is the
- * oldest of them and the persisted value — but it is reached from the rail
- * now, not from the pane bar's switch.
+ * Everything but `terminal` is **one group behind one rail** (`TOOL_TABS`):
+ * GitHub, the working tree, the log, the files and the browser. `terminal`
+ * means the tools are hidden; the pane bar's one button toggles them, and
+ * reopens the tool that was showing last. `split` keeps its name — it is the
+ * oldest of them and the persisted value.
  */
-export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log';
+export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 // `showsTerminal()` used to live here, answering "does xterm have a size right
 // now". Every view keeps the terminal since the git group became a split, so
@@ -133,7 +136,7 @@ function readPaneView(sid: string): PaneView | undefined {
     // GitHub took the whole pane for one release, and now sits beside the
     // terminal like the other two things you read while typing.
     if (raw === 'github') return 'split-github';
-    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log'] as const).includes(raw) ? raw : undefined;
+    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 /** The git family's tabs, as a rail rather than a strip. Vertical because the
@@ -148,41 +151,95 @@ function readPaneView(sid: string): PaneView | undefined {
  *  changed constantly. On the rail that is one click that does not change the
  *  pane's shape; as a separate top-level view it was a different half-pane
  *  arriving in place of the one you were reading. It is last because it is the
- *  only one that is not about a change. */
-const GIT_TABS = [
+ *  only one that is not about a change.
+ *
+ *  **The browser is a tab here too.** There is no view switch on the pane bar
+ *  any more, only a button that shows or hides this whole group — so every
+ *  thing a pane can show beside its terminal is one rail. */
+const TOOL_TABS = [
   { id: 'split-github' as const, Icon: Github,     label: 'GitHub — pull requests and issues' },
   { id: 'working' as const,      Icon: Diff,       label: 'Working tree' },
   { id: 'log' as const,          Icon: ScrollText, label: 'Git log' },
   { id: 'split' as const,        Icon: FolderTree, label: 'Files' },
+  { id: 'split-preview' as const, Icon: Globe,     label: 'Browser' },
+  // Last, after the browser. A shell beside the agent is the thing you reach
+  // for *while* it works — `npm test`, a log tail, a git command you want to
+  // run yourself — and it is the only tool here that is not a way of looking
+  // at something. See SideTerminals.
+  { id: 'split-terminals' as const, Icon: TerminalSquare, label: 'Terminals — shells in this pane\u2019s directory' },
 ];
 
-function GitTabRail({ view, onPick }: { view: PaneView; onPick: (v: PaneView) => void }) {
+function ToolRail({ view, onPick }: { view: PaneView; onPick: (v: PaneView) => void }) {
   return (
     <div
       onClick={(e) => e.stopPropagation()}
       style={{
-        display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 3px',
+        display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 4px',
         borderRight: '1px solid var(--border)', background: 'var(--secondary)', flexShrink: 0,
       }}
     >
-      {GIT_TABS.map(({ id, Icon, label }) => (
+      {TOOL_TABS.map(({ id, Icon, label }) => (
         <button
           key={id}
           title={label}
           onClick={() => onPick(id)}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 22, height: 22, borderRadius: 4, border: 'none', cursor: 'pointer',
+            width: 30, height: 30, borderRadius: 6, border: 'none', cursor: 'pointer',
             background: view === id ? 'var(--primary)' : 'none',
             color: view === id ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
           }}
         >
-          <Icon size={12} />
+          <Icon size={16} />
         </button>
       ))}
     </div>
   );
 }
+
+/**
+ * The shells that stand beside one pane, in that pane's Terminals split.
+ *
+ * They are the pane's own: opened in its directory (the server takes the cwd
+ * from the owning session, which OSC 7 keeps current), headless so they never
+ * get a pen of their own, and closed along with the pane. That is the whole
+ * difference from the global scratch shells in the Terminals panel, which
+ * belong to nobody and outlive every pane — `sideOf` is what separates them,
+ * and both lists filter on it so neither offers to close the other's.
+ *
+ * This is the *side terminal* that was deliberately given up when pens lost
+ * their grid. The thing that was actually wanted there was never two panes
+ * side by side; it was a shell next to the agent, in the same repository, and
+ * that belongs inside the pane beside the browser and the git views rather
+ * than as a second pane in the sidebar.
+ */
+function SideTerminals({ sessionId }: { sessionId: string }) {
+  const ids = useStore(useShallow(
+    (s: { sessions: { id: string; sideOf?: string }[] }) =>
+      s.sessions.filter(x => x.sideOf === sessionId).map(x => x.id),
+  ));
+  const add = useCallback(() => {
+    // No path: the server uses the owning pane's cwd, which is the point. A
+    // path from here would be this tab's idea of it, and OSC 7 has moved it
+    // since more often than not.
+    sharedWs.send({ type: 'create_session', side_of: sessionId });
+  }, [sessionId]);
+
+  return (
+    <TerminalTiles
+      ids={ids}
+      max={MAX_SIDE_TERMINALS}
+      onAdd={add}
+      emptyLabel="Open a terminal here"
+      addLabel="Another terminal in this pane"
+    />
+  );
+}
+
+/** Mirrors `MAX_SIDE_TERMINALS` in `src/protocol.ts`, where it is enforced —
+ *  the server is the only side that can count without racing. Per pane, not
+ *  global: twenty panes with four apiece would be eighty shells. */
+const MAX_SIDE_TERMINALS = 4;
 
 function savePaneView(sid: string, view: PaneView): void {
   try {
@@ -290,55 +347,45 @@ function fileUriToPath(uri: string): string | null {
 interface TerminalCellProps {
   sessionId: string;
   /** Synthetic workspace id this cell belongs to. All panes in the same
-   *  workspace share zoom, layout, and lifecycle through this key. It is
-   *  NOT equal to any session id — there's no "root pane" concept anymore. */
+   *  workspace share zoom and lifecycle through this key. It is NOT equal to
+   *  any session id — there's no "root pane" concept anymore. */
   gridId: string;
-  /** This pane's position within the workspace's `cells` array. Needed so
-   *  the drag handle and drop target can identify the pane for swap/move. */
+  /** This pane's position within the pen's `cells` array. Needed so the drag
+   *  handle and drop target can identify the pane for move/reorder. */
   paneIndex: number;
-  /** Quad cells keep terminal + browser side-by-side even though each cell is
-   *  narrow enough to normally trigger the responsive stacked layout. */
-  isQuad: boolean;
+  /** Drawn as the selected pane. Every tile passes this, since a tile is
+   *  always the only thing in its box — which is why the things that are
+   *  genuinely global (the ⌘←/→ view cycle, the mobile key bar's target) are
+   *  gated on `isActive && !tile` rather than on `isActive` alone. Four tiles
+   *  each claiming to be the active pane is four writers to one slot. */
   isActive: boolean;
+  /** This is one tile of a `TerminalTiles` grid — a scratch shell or a side
+   *  terminal — rather than a pane standing in a pen.
+   *
+   *  **A tile has no tools at all.** No rail, no toggle in its bar, no view but
+   *  the terminal. The tools are for the work: you read a diff against the
+   *  agent that wrote it, you open the files of the repository it is changing.
+   *  A scratch shell is not that — it is somewhere to type a command while the
+   *  work happens elsewhere, it is a few hundred pixels wide, and it already
+   *  sits inside a pane that has all six tools of its own. Git in a tile would
+   *  be a second opinion about the same repository in a quarter of the space.
+   *
+   *  It also persists no view (these come and go, and `sheepit:pane-views`
+   *  would fill with the ids of shells that no longer exist), and it never
+   *  claims the global active-pane registries — see `isActive` below. */
+  tile?: boolean;
   onActivate: () => void;
   /** Remove this pane from its workspace. If it was the last pane, the
    *  workspace dissolves (Android-folder style). */
   onClose: () => void;
 }
 
-/** The zen opening whose entrance has already been played.
- *
- *  Module-level because it is one animation for the whole app rather than one
- *  per pane: when zen moves from one pen to another the frame does not move,
- *  so the pane taking over must not replay what the pane handing over already
- *  ran. Replaying it is what made switching pens in zen look like the pane was
- *  removed and added back. */
-let playedZenOpen = -1;
-
-export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isActive, onActivate, onClose }: TerminalCellProps) {
+export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, tile = false, onActivate, onClose }: TerminalCellProps) {
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
   const fontFamily = useStore(s => s.terminalFontFamily);
   const theme = useStore(s => s.theme);
-  const isMultiPane = useStore(s => {
-    const ws = s.workspaces[gridId];
-    return !!ws && ws.layout !== 'single' && ws.cells.length > 1;
-  });
-  const isZen = useStore(s => s.zenSessionId === sessionId);
-  const toggleZen = useStore(s => s.toggleZen);
-  const zenOpenSeq = useStore(s => s.zenOpenSeq);
-  // Zen's entrance belongs to the *opening*, not to the pane. Read at render
-  // rather than in an effect so the animation is on the first painted frame —
-  // an effect would show the pane at its final size for one frame and then
-  // fade it in from nothing, which is the pop it exists to avoid. Sticky
-  // while this pane is zen, because an inline `animation` that vanished on
-  // the next render (and this component renders on every burst of output)
-  // would cut the fade off part-way.
-  const zenEnterRef = useRef(false);
-  if (!isZen) zenEnterRef.current = false;
-  else if (playedZenOpen !== zenOpenSeq) { playedZenOpen = zenOpenSeq; zenEnterRef.current = true; }
-  const zenEntering = zenEnterRef.current;
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -352,7 +399,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   // the git view (and terminal file links) can open a file in this same pane.
   // New panes default to the split view (terminal + file browser); panes with a
   // saved preference reopen on whatever view they were left on.
-  const [view, setView] = useState<PaneView>(() => readPaneView(sessionId) ?? 'split');
+  const [view, setView] = useState<PaneView>(() => (tile ? 'terminal' : readPaneView(sessionId) ?? 'split'));
   const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
@@ -391,7 +438,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
    * give up height, which a terminal minds far less than columns: 80 columns
    * is a hard floor for wrapped output, while ten rows is merely short.
    *
-   * Keyed off the PANE, not the window: a quad on a large display is as narrow
+   * Keyed off the PANE, not the window: a narrow window is as narrow
    * as a single pane on a phone, which is the same rule the pane bar's
    * container queries follow.
    */
@@ -407,8 +454,14 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   /** Below this a split stops being two columns. 560px is where a 60/40 split
    *  still leaves the narrow half ~220px — about the least a file tree or an
    *  address bar can use — and the terminal its 80 columns at a small font. */
-  const stacked = !isQuad && paneW > 0 && paneW < 560;
-  useEffect(() => { savePaneView(sessionId, view); }, [view, sessionId]);
+  const stacked = paneW > 0 && paneW < 560;
+  useEffect(() => { if (!tile) savePaneView(sessionId, view); }, [view, sessionId, tile]);
+  /** The tool to bring back when the tools are shown again. */
+  const lastToolRef = useRef<PaneView>(view === 'terminal' ? 'split' : view);
+  if (view !== 'terminal') lastToolRef.current = view;
+  const toggleTools = useCallback(() => {
+    setView(v => v === 'terminal' ? lastToolRef.current : 'terminal');
+  }, []);
   // Mirrored into a ref so the create-once terminal effect can read the live
   // theme when answering OSC colour queries.
   const themeRef = useRef(theme);
@@ -421,19 +474,19 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   }, [theme]);
 
   // While this pane is active, the global Cmd+Arrow shortcut cycles ITS view.
+  // Never a tile: it has no views to cycle, and claiming the slot would point
+  // the shortcut at a scratch shell instead of the pane you are working in.
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || tile) return;
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
-        // Switch order, then rail order — so cycling walks the pane's own
-        // buttons top to bottom rather than around them. Files is last for the
-        // same reason it is last on the rail.
-        const order: PaneView[] = ['terminal', 'split-preview', 'split-github', 'working', 'log', 'split'];
+        // Hidden, then rail order — so cycling walks the rail top to bottom.
+        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
     };
-  }, [isActive]);
+  }, [isActive, tile]);
 
   // Resolve a path clicked in the terminal (cmd/ctrl+click) against this pane's
   // cwd, then open it in this pane's own Files view.
@@ -529,9 +582,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
    *
    *  Every resize is a SIGWINCH, and a full-screen app answers one by
    *  repainting its whole frame. Several fits converge on one visible pane
-   *  (the zen effect, the ResizeObserver's 50ms and 200ms passes, the
+   *  (the become-shown effect, the ResizeObserver's 50ms and 200ms passes, the
    *  tab-active handler), and they mostly agree on the answer, so sending each
-   *  one made a pen switch in zen cost three or four repaints of an agent's
+   *  one made switching sheep cost three or four repaints of an agent's
    *  UI — which is most of what reads as the pane being rebuilt. */
   const sendResize = () => {
     const t = termRef.current;
@@ -1141,16 +1194,20 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     };
   }, []);
 
-  // Focus + scroll to bottom when active + register as target for mobile key bar
+  // Focus + scroll to bottom when active + register as target for mobile key
+  // bar. A tile does neither: it would steal focus from the pane it is sitting
+  // inside the moment it mounted, and four of them would fight over the one
+  // `activeTerminalSend` slot the key bar types into. Clicking a tile still
+  // focuses it — xterm does that itself.
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !tile) {
       const t = termRef.current;
       t?.focus();
       t?.scrollToBottom();
       activeTerminalSend.current = (msg) => sendRef.current(msg);
       activeTerminalRefresh.current = () => sendRef.current({ type: 'connect', session_id: sessionId });
     }
-  }, [isActive]);
+  }, [isActive, tile]);
 
   // Refit + refocus when terminal tab becomes visible again
   useEffect(() => {
@@ -1187,6 +1244,21 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     return () => clearTimeout(id);
   }, [view, isActive, stacked]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Blink only where a cursor means something — the pane on screen.
+  //
+  // A blinking cursor is a timer plus a repaint twice a second, per terminal,
+  // and every sheep in a pen stays mounted under `display: none`. So a pen
+  // holding twenty ran twenty blink loops, nineteen of them drawing a caret
+  // nobody could see. xterm keeps blinking a hidden terminal quite happily —
+  // it has no idea its element is not displayed.
+  //
+  // It is an option rather than a constructor argument because `isActive`
+  // changes over the terminal's life and the constructor runs once.
+  useEffect(() => {
+    const t = termRef.current;
+    if (t) t.options.cursorBlink = isActive && !window.matchMedia('(max-width: 767px)').matches;
+  }, [isActive]);
+
   // Drag the divider between the terminal and the other half of a split.
   const startSplitDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
@@ -1217,8 +1289,9 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
     window.addEventListener('mouseup', onUp);
   }, [sessionId]);
 
-  // Refit when entering/exiting zen mode — the container dimensions change
-  // dramatically so we need to recalculate cols/rows and tell the PTY.
+  // Refit when this pane becomes the one its pen is showing — it goes from
+  // `display: none` to the full pen, so cols/rows change and the PTY has to
+  // be told.
   //
   // Do NOT re-subscribe / replay the ring-buffer snapshot here. Resizing the
   // PTY makes the running app redraw its live frame at the new width, so the
@@ -1229,16 +1302,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
   // Instead, let xterm reflow its existing buffer on resize and let the app's
   // natural SIGWINCH repaint stream in — cursor math lines up at the new width.
   //
-  // The two frames are held in a ref, not on `window`. They were global, and a
-  // pen switch in zen runs this effect on two panes at once — the one handing
-  // zen over and the one taking it. The second overwrote the first's id, and
-  // the first's cleanup then cancelled the second's fit, so the pane you had
-  // just opened was left at the size it happened to have and only got straight
-  // by the ResizeObserver's later passes.
-  const zenFitRafRef = useRef<{ a: number; b: number }>({ a: 0, b: 0 });
+  // The two frames are held in a ref, not on `window`. Switching sheep runs
+  // this effect on two panes at once — the one handing over and the one taking
+  // over. Global ids meant the second overwrote the first's, and the first's
+  // cleanup then cancelled the second's fit, so the pane you had just opened
+  // was left at whatever size it happened to have until the ResizeObserver's
+  // later passes caught it.
+  const showFitRafRef = useRef<{ a: number; b: number }>({ a: 0, b: 0 });
   useEffect(() => {
     // Two frames: one for layout, one for fit after xterm's renderer catches up
-    const frames = zenFitRafRef.current;
+    const frames = showFitRafRef.current;
     frames.a = requestAnimationFrame(() => {
       frames.b = requestAnimationFrame(() => {
         safeFit();
@@ -1251,7 +1324,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
       cancelAnimationFrame(frames.b);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isZen]);
+  }, [isActive]);
 
   // Touch scroll with momentum (iOS-style inertial scrolling)
   useEffect(() => {
@@ -1531,82 +1604,20 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
 
   return (
     <>
-      {/* Zen backdrop — dims the grid behind the pane, but stops at the
-          sidebar: the flock list stays lit and clickable, because picking the
-          next pen is what you do next and zen does not end to let you do it. */}
-      {isZen && (
-        <div
-          style={{
-            position: 'fixed', top: 'var(--topbar-bottom, 0px)', right: 0, bottom: 0, left: 'var(--flock-width, 0px)', zIndex: 999,
-            background: 'radial-gradient(ellipse at center, rgba(6,10,6,0.92) 0%, rgba(0,0,0,0.98) 100%)',
-            backdropFilter: 'blur(8px)',
-            // Only on the way in. The backdrop is rendered by whichever pane
-            // is zen, so a switch tears one down and puts an identical one up
-            // in the same commit — invisible, unless it fades itself back in.
-            animation: zenEntering ? 'zen-enter 0.2s ease-out' : undefined,
-          }}
-          onClick={() => toggleZen(sessionId)}
-        />
-      )}
       <div
         ref={setPaneDropRef}
-        className={isZen ? 'pane-zen' : 'flex-1 min-h-0 min-w-0'}
+        className="flex-1 min-h-0 min-w-0"
         style={{
-          position: isZen ? 'fixed' : 'relative',
-          ...(isZen ? {
-            // Zen is for reading one pane, so most of the window should be
-            // pane — but it still has to read as an overlay floating over the
-            // grid, not as a mode that replaced it. 40px was too much
-            // backdrop (~11% of a 1440px screen's width); 12px was too little
-            // to see it was an overlay at all. This is the middle.
-            //
-            // It starts where the sidebar ends rather than at the window edge.
-            // Zen used to cover the flock, so switching pens meant leaving it,
-            // and reading one pane is exactly when you are working through the
-            // list. On mobile --flock-width is 0 and this is the full screen.
-            // Likewise it starts below the workspace bar (--topbar-bottom),
-            // so New session and the rest stay in reach.
-            top: 'calc(var(--topbar-bottom, 0px) + 24px)', right: 24, bottom: 24,
-            left: 'calc(var(--flock-width, 0px) + 24px)',
-            zIndex: 1000,
-            borderRadius: 4,
-            padding: 1,
-            // Entrance only — see zenEntering. Switching pens in zen leaves
-            // the frame exactly where it is and changes what is inside it.
-            animation: zenEntering ? 'zen-enter 0.25s ease-out' : undefined,
-            // `background` and `boxShadow` are NOT set here. A key after a
-            // spread wins even when its value is `undefined`, so the three
-            // below would silently erase whatever this block set — which is
-            // exactly what happened to zen's frame. They branch on isZen
-            // themselves instead, where the ordering cannot bite.
-          } : {}),
+          position: 'relative',
           display: 'flex', flexDirection: 'column',
-          // In zen this 1px of padding is the frame, so the colour behind it
-          // is the hairline.
-          background: isZen ? 'var(--border)' : 'var(--background)',
+          background: 'var(--background)',
           overflow: 'hidden',
-          outline: (fileDragOver || isPaneDragOver)
-            ? '2px solid var(--primary)'
-            // A file drop still outlines a zen pane — that is feedback about
-            // what is under the cursor. Selection does not: zen shows one pane
-            // and there is no grid to pick it out of, so the brand ring would
-            // be a lit green frame around the text you are reading for
-            // minutes, which is the one thing zen's frame exists to avoid.
-            // The shadow and the dimming below always had this guard; the
-            // outline was simply missed, so a pen holding one sheep read as a
-            // plain card and a pen holding several came up ringed in green.
-            : !isZen && isMultiPane && isActive
-              ? '1.5px solid var(--primary)'
-              : 'none',
-          boxShadow: isZen
-            // A hairline and a shadow, not a lit green frame. Being the only
-            // lit thing over a dimmed grid is all the emphasis it needs.
-            ? '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)'
-            : isMultiPane && isActive && !fileDragOver && !isPaneDragOver
-              ? '0 0 20px rgba(156, 188, 127,0.25), inset 0 0 20px rgba(156, 188, 127,0.05)'
-              : 'none',
-          opacity: !isZen && isMultiPane && !isActive ? 0.45 : 1,
-          transition: 'outline 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease',
+          // The only outline left is the one that says what is under the
+          // cursor. Selection needs none: a pen shows one sheep, so the pane
+          // on screen is the selected pane by construction, and a brand ring
+          // around the text you read all day was the loudest thing in it.
+          outline: (fileDragOver || isPaneDragOver) ? '2px solid var(--primary)' : 'none',
+          transition: 'outline 0.15s ease',
         }}
         onClick={onActivate}
         // mousedown with capture — runs before xterm's own handler so we
@@ -1631,26 +1642,22 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
         }}
         onDrop={handleDrop}
       >
-      {/* Inner wrapper — in zen mode, gives the rounded dark card look */}
       <div style={{
         position: 'relative',
         flex: 1, minHeight: 0,
         display: 'flex', flexDirection: 'column',
         background: 'var(--card)',
-        borderRadius: isZen ? 4 : 0,
         overflow: 'hidden',
       }}>
-      {/* Per-pane header — identity, stats, zen toggle, close. Rendered in
-          zen too, since the zen exit button lives in this header. */}
+      {/* Per-pane header — identity, the tools toggle, close. */}
       <PaneHeader
         sessionId={sessionId}
         workspaceId={gridId}
-        paneIndex={paneIndex}
         isActive={isActive}
-        isGridRoot={sessionId === gridId}
         onClose={onClose}
-        view={view}
-        onViewChange={setView}
+        toolsOpen={isSplit}
+        // No tools in a tile — so no button offering them either.
+        onToggleTools={tile ? undefined : toggleTools}
       />
       {/* Terminal surface — own relative container so absolute-positioned
           .terminal-pane fills only this area (below the header), and the
@@ -1771,56 +1778,45 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isQuad, isA
               : { width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
           />
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
-            {view === 'split-preview' ? (
-              <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
-            ) : (
-              // The git group — all four of it, the file browser included. They
-              // share the rail, so moving between a pull request, what you have
-              // changed, what you have committed and the files themselves is one
-              // click and never changes the pane's shape. That is what makes
-              // "open this file" below a move along the rail rather than a
-              // different half-pane replacing the one you were reading.
-              <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-                <GitTabRail view={view} onPick={setView} />
-                {view === 'split-github' ? (
-                  <GithubPane sessionId={sessionId} selected={githubRef} onSelect={setGithubRef} />
-                ) : view === 'split' ? (
-                  <FilesPane
-                    sessionId={sessionId}
-                    openFileRef={openFileRef}
-                    onFileSelect={() => setFilesHighlightLine(null)}
-                    highlightLine={filesHighlightLine}
-                    onPreviewFile={(path: string) => {
-                      setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
-                      setView('split-preview');
-                    }}
-                  />
-                ) : (
-                  <GitDiffPane
-                    sessionId={sessionId}
-                    mode={view === 'log' ? 'log' : 'head'}
-                    onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
-                  />
-                )}
+            {/* Every tool shares the rail, so moving between a pull request,
+                what you have changed, what you have committed, the files and
+                the browser is one click and never changes the pane's shape. */}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+              <ToolRail view={view} onPick={setView} />
+              {/* minWidth 0, or a tool as wide as its content (a diff with a
+                  long line) pushes the pane past the screen edge. */}
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              {view === 'split-preview' ? (
+                <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
+              ) : view === 'split-github' ? (
+                <GithubPane sessionId={sessionId} selected={githubRef} onSelect={setGithubRef} />
+              ) : view === 'split-terminals' ? (
+                <SideTerminals sessionId={sessionId} />
+              ) : view === 'split' ? (
+                <FilesPane
+                  sessionId={sessionId}
+                  openFileRef={openFileRef}
+                  onFileSelect={() => setFilesHighlightLine(null)}
+                  highlightLine={filesHighlightLine}
+                  onPreviewFile={(path: string) => {
+                    setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                    setView('split-preview');
+                  }}
+                />
+              ) : (
+                <GitDiffPane
+                  sessionId={sessionId}
+                  mode={view === 'log' ? 'log' : 'head'}
+                  onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
+                />
+              )}
               </div>
-            )}
+            </div>
           </div>
         </>
       )}
       </div>{/* /terminal+split row */}
 
-      {/* Active pane border overlay — at the pane-body level so it outlines the
-          WHOLE pane (terminal + files in split view, or the git/files panel),
-          making it clear a split is still a single pane. */}
-      {isMultiPane && isActive && !isPaneDragOver && !fileDragOver && (
-        <div style={{
-          position: 'absolute', inset: 0, zIndex: 15,
-          borderRadius: 2,
-          boxShadow: '0 0 0 1.5px var(--primary), 0 0 14px rgba(156, 188, 127,0.35)',
-          pointerEvents: 'none',
-          transition: 'box-shadow 0.15s ease',
-        }} />
-      )}
       </div>{/* /pane body */}
       {/* The pane's footer bar is gone: its identity — git chip, process /
           link handle, voice button, cwd — moved into PaneHeader. Two chrome

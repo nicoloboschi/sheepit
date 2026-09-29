@@ -49,7 +49,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   }, []);
 
   // Publish the sidebar's width so a full-area surface can start where the
-  // sidebar ends. Zen is the one that needs it: it is read *while* picking the
+  // sidebar ends. A floating panel is what needs it: it is read *while* picking the
   // next pen out of the list, so it must not cover the list. Kept as a CSS
   // variable rather than a store field because the only consumers are styles,
   // and the drag would otherwise re-render every pane 60 times a second.

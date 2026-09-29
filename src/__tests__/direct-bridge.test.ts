@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { isSafeSessionId } from '../session-store.js'
 import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
@@ -375,5 +376,19 @@ describe('appendAgentTurn (the history a session is named from)', () => {
     const before = appendAgentTurn([], { prompt: 'first' }, 1)
     appendAgentTurn(before, { response: 'one' }, 2)
     expect(before[0]!.response).toBeUndefined()
+  })
+})
+
+describe('isSafeSessionId', () => {
+  it('accepts a minted id', () => {
+    expect(isSafeSessionId('direct-42')).toBe(true)
+    expect(isSafeSessionId('pool-3')).toBe(true)
+  })
+
+  // The scrollback route hands this one straight off a URL, and the result
+  // names a file under ring-buffers/.
+  it('refuses anything that could climb out of the directory', () => {
+    for (const id of ['../../etc/passwd', '..%2fsecret', 'a/b', 'a\\b', '', 'a b'])
+      expect(isSafeSessionId(id)).toBe(false)
   })
 })

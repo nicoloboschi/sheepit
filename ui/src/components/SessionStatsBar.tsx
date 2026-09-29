@@ -1,33 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
-import { SplitSquareHorizontal, SplitSquareVertical, Grid2x2, Columns3, Minus, Plus, RotateCw, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen, Github } from 'lucide-react';
+import { Minus, Plus, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen, Github, ListPlus } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import { useSheepdog } from '../useSheepdog';
-import type { Layout } from './TerminalGrid';
 import SettingsDialog from './SettingsDialog';
 import FilesDialog from './FilesDialog';
 import GithubDialog from './GithubDialog';
+import TerminalsDialog from './TerminalsDialog';
 
-// Workspace-level toolbar: workspace name (click to rename) + actions (Knowledge)
-// on the left; layout picker + zoom on the right. The terminal/git/files switch
-// lives per-pane (see PaneHeader).
+// Pen-level toolbar: the pen's name (click to rename) and its actions on the
+// left; add-a-sheep and zoom on the right. The terminal/git/files switch lives
+// per-pane (see PaneHeader).
 interface SessionStatsBarProps {
   sessionId: string | null;
-  layout?: Layout;
-  onLayoutChange?: (layout: Layout) => void;
+  /** Put another sheep in this pen. Replaces the layout picker that used to
+   *  sit here: with one pane on screen, "split" and "add" were always the same
+   *  action wearing eight icons. */
+  onAddSheep?: () => void;
   onCreateSession?: (headless: boolean) => void;
 }
 
-export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onCreateSession }: SessionStatsBarProps) {
+export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession }: SessionStatsBarProps) {
   // Terminal font size is a single global value shared by every pane.
   const fontSize          = useStore(s => s.fontSize);
   const adjustFontSize    = useStore(s => s.adjustFontSize);
   const resetFontSize     = useStore(s => s.resetFontSize);
   const renameWorkspace   = useStore(s => s.renameWorkspace);
   const sheepdog          = useSheepdog();
-  // Publish where the bar ends, so zen starts below it rather than covering
-  // it — New session, search and the rest stay usable while reading one pane.
-  // 0 below `md`, where the bar is hidden and zen is the whole screen.
+  // Publish where the bar ends, for anything that floats under it.
   const barRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = barRef.current;
@@ -41,9 +41,8 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   }, [sessionId == null]); // the bar is not rendered without a session
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
-  const hasHeadlessSession = useStore(s => s.sessions.some(session => session.isHeadless));
+  const headlessCount = useStore(s => s.sessions.filter(session => session.isHeadless).length);
   const pipSessionId = useStore(s => s.pipSessionId);
-  const headlessPanelOpen = useStore(s => !!s.pipSessionId && !!s.sessionMap[s.pipSessionId]?.isHeadless);
   // Display name for the active workspace: its title, else its root pane's name.
   const workspaceName = useStore(s => {
     const ws = sessionId ? s.workspaces[sessionId] : undefined;
@@ -56,6 +55,7 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen,    setFilesOpen]    = useState(false);
   const [githubOpen,   setGithubOpen]   = useState(false);
+  const [terminalsOpen, setTerminalsOpen] = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
   const { sheep, bleating, grazing } = useFlockCounts(sessionId);
 
@@ -66,94 +66,18 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
     setRenaming(false);
   };
 
-  // All four three-variants are considered the same "button" in the picker —
-  // the cycle order lets the user click the same Columns3 icon repeatedly to
-  // rotate: left → right → top → bottom → left. The icon rotates too so
-  // the current orientation is visible at a glance.
-  const THREE_CYCLE: Layout[] = ['three', 'three-right', 'three-bottom', 'three-top'];
-  const isThree = layout === 'three' || layout === 'three-right' || layout === 'three-top' || layout === 'three-bottom';
-  const threeButtonIcon = (() => {
-    // Columns3 is sideways by default (three vertical columns). Rotate it
-    // so it visually matches the current orientation.
-    const rot =
-      layout === 'three'         ? 0   // tall on left — matches icon's natural orientation closest
-      : layout === 'three-right' ? 180
-      : layout === 'three-top'   ? -90
-      : layout === 'three-bottom'?  90
-      : 0;
-    return <Columns3 size={13} style={{ transform: `rotate(${rot}deg)`, transition: 'transform 0.15s' }} />;
-  })();
-  const threeButtonTitle = isThree
-    ? `3 panes — ${
-        layout === 'three'         ? 'tall left'
-      : layout === 'three-right'   ? 'tall right'
-      : layout === 'three-top'     ? 'wide top'
-      : /* three-bottom */            'wide bottom'
-      } (click to rotate)`
-    : '3 panes (1 + 2)';
-  const handleThreeClick = () => {
-    if (!onLayoutChange) return;
-    if (!isThree) { onLayoutChange('three'); return; }
-    const idx = THREE_CYCLE.indexOf(layout as Layout);
-    const next = THREE_CYCLE[(idx + 1) % THREE_CYCLE.length] ?? 'three';
-    onLayoutChange(next);
-  };
-
-  const layoutButtons = onLayoutChange && layout && (
-    <div
+  const addSheepButton = onAddSheep && (
+    <button
       className="flex items-center shrink-0"
-      style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}
+      title="Another sheep in this pen"
+      onClick={onAddSheep}
+      style={{
+        padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 6,
+        background: 'none', cursor: 'pointer', color: 'var(--muted-foreground)',
+      }}
     >
-      {([
-        { l: 'single' as Layout, icon: <Minus size={13} />, title: 'Single' },
-        { l: 'horizontal' as Layout, icon: <SplitSquareHorizontal size={13} />, title: 'Split horizontal' },
-        { l: 'vertical' as Layout, icon: <SplitSquareVertical size={13} />, title: 'Split vertical' },
-      ] as const).map(({ l, icon, title }) => (
-        <button
-          key={l}
-          title={title}
-          onClick={() => onLayoutChange(l)}
-          style={{
-            display: 'flex', alignItems: 'center', padding: '2px 5px',
-            background: layout === l ? 'var(--accent)' : 'none',
-            border: 'none', borderRight: '1px solid var(--border)',
-            cursor: 'pointer',
-            color: layout === l ? 'var(--foreground)' : 'var(--muted-foreground)',
-          }}
-        >
-          {icon}
-        </button>
-      ))}
-      {/* Three-pane button: click to set 'three'; when already in a three
-          variant, click rotates to the next orientation. */}
-      <button
-        title={threeButtonTitle}
-        onClick={handleThreeClick}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 3, padding: '2px 5px',
-          background: isThree ? 'var(--accent)' : 'none',
-          border: 'none', borderRight: '1px solid var(--border)',
-          cursor: 'pointer',
-          color: isThree ? 'var(--foreground)' : 'var(--muted-foreground)',
-        }}
-      >
-        {threeButtonIcon}
-        {isThree && <RotateCw size={9} style={{ opacity: 0.5 }} />}
-      </button>
-      <button
-        title="2\u00d72 grid"
-        onClick={() => onLayoutChange('quad')}
-        style={{
-          display: 'flex', alignItems: 'center', padding: '2px 5px',
-          background: layout === 'quad' ? 'var(--accent)' : 'none',
-          border: 'none',
-          cursor: 'pointer',
-          color: layout === 'quad' ? 'var(--foreground)' : 'var(--muted-foreground)',
-        }}
-      >
-        <Grid2x2 size={13} />
-      </button>
-    </div>
+      <ListPlus size={13} />
+    </button>
   );
 
   const currentZoom = fontSize;
@@ -327,14 +251,19 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
   const newSessionButtons = onCreateSession && <>
     {sheepdogButton}
     {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
+    {/* The scratch terminals, in their own panel — up to four of them. It
+        opens the panel rather than making a shell: with more than one, "open"
+        and "make another" are different things, and the second belongs inside
+        the panel where you can see how many you already have. The first one
+        is made there too, by the empty state's own button. */}
     {action('headless', <TerminalSquare size={14} />,
-      hasHeadlessSession ? 'Open headless session' : 'New headless session',
-      () => onCreateSession(true), headlessPanelOpen)}
+      headlessCount ? `Terminals (${headlessCount})` : 'Terminals',
+      () => setTerminalsOpen(v => !v), terminalsOpen)}
     {action('settings', <Settings size={14} />, 'Settings', () => setSettingsOpen(true))}
   </>;
 
   // Desktop only (hidden on mobile, where splits/zoom aren't shown).
-  // Left: workspace name + actions (Notes). Right: layout picker + zoom.
+  // Left: the pen's name + actions. Right: add a sheep + zoom.
   // The bar wears the same neutral graphite as the sidebar: the two are one
   // frame around the panes, and the frame is what is in view all day — see the
   // chrome tokens in style.css.
@@ -353,11 +282,12 @@ export default function SessionStatsBar({ sessionId, layout, onLayoutChange, onC
       {knowledgeButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />
-      {layoutButtons && <div>{layoutButtons}</div>}
+      {addSheepButton && <div>{addSheepButton}</div>}
       {zoomButtons && <div>{zoomButtons}</div>}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} />}
       {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
+      {terminalsOpen && <TerminalsDialog onClose={() => setTerminalsOpen(false)} />}
     </div>
   );
 }

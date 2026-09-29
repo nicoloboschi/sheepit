@@ -5,18 +5,9 @@ import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDo
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
-import useStore, { upgradeWorkspaceLayout, type Session, type Workspace, type GridLayout } from '../store';
+import useStore, { type Session, type Workspace } from '../store';
 import { useDndEnabled } from '../dndEnabled';
 
-/** Last path component — the cwd "leaf" we show on each pane card so it's
- *  clear what the pane is working on without spelling out the full path. */
-function cwdBasename(path: string | undefined): string | null {
-  if (!path) return null;
-  const trimmed = path.replace(/\/+$/, '');
-  if (!trimmed) return '/';
-  const parts = trimmed.split('/');
-  return parts[parts.length - 1] || '/';
-}
 
 /** Compact relative time for the cramped left column — "5m", "2h", "3d", "now". */
 function compactRelativeTime(ts: number | null | undefined): string {
@@ -47,10 +38,6 @@ import {
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from './ui/dropdown-menu';
 
-
-const PR_STATE_COLORS: Record<string, string> = {
-  OPEN: 'var(--primary)', MERGED: '#B79CCA', CLOSED: 'var(--destructive)',
-};
 
 interface SessionItemProps {
   /** The workspace this sidebar row represents. */
@@ -101,6 +88,22 @@ function PaneIcon({ kind, size }: { kind: PaneKind; size: number }): React.React
  *  while a foreign pane is hovering and the workspace has room for one more
  *  pane. No hooks, no event handlers — purely visual. Lives outside PaneCard
  *  so we can keep PaneCard's hook order stable. */
+/** `33%` when the agent reports its window, `451k` when it does not, and a dim
+ *  en-dash for an empty context — see the card's info row for why. */
+function formatCtx(used: number, limit?: number): string {
+  if (used === 0) return '\u2013';
+  if (limit && limit > 0) return `${Math.min(100, Math.round((used / limit) * 100))}%`;
+  return used >= 1000 ? `${Math.round(used / 1000)}k` : String(used);
+}
+
+function ctxTitle(used: number, limit?: number): string {
+  if (used === 0) return 'Nothing in this context yet';
+  const n = used.toLocaleString();
+  return limit && limit > 0
+    ? `Context in use: ${n} of ${limit.toLocaleString()} tokens`
+    : `Context in use: ${n} tokens`;
+}
+
 function PanePlaceholder({ tight, gridArea }: { tight?: boolean; gridArea?: string }): React.ReactElement {
   return (
     <div
@@ -122,7 +125,7 @@ function PaneCard({
   cellIdx: number;
   active: boolean;
   unseen: boolean;
-  /** Tight mode: narrow cells in horizontal/three/quad layouts — uses shorter
+  /** Tight mode: a pen holding more than a couple of sheep — uses shorter
    *  branch truncation and smaller icons, but still shows git info. */
   tight?: boolean;
   /** Clicking this card should focus its pane inside the workspace. The
@@ -140,13 +143,10 @@ function PaneCard({
   const kind = getPaneKind(session);
   const name = session?.name ?? '\u2026';
   const time = compactRelativeTime(lastEvent);
-  const cwd = cwdBasename(session?.path);
-  // Always show the cwd on its own row — it's the ground-truth "what is this
-  // pane working on" signal, and the name can drift when the user renames or
-  // cd's around. Even if they briefly match, keeping them both is consistent.
-  const hasCwd = !!cwd;
-  const hasPr  = !!session?.prNum;
-  const prColor = session?.prNum ? (PR_STATE_COLORS[session.prState ?? ''] ?? 'var(--muted-foreground)') : '';
+  // The last segment only. A trailing slash would otherwise pop an empty
+  // string, and `/` has no segment at all \u2014 both fall out as falsy and draw
+  // nothing, which is right: there is no directory name to show.
+  const dir = session?.path?.replace(/\/+$/, '').split('/').pop();
   // Precedence, per CLAUDE.md: the two live states win over the two idle
   // ones, and bleating wins over grazing, so a pane is never counted twice.
   const dog = useDog();
@@ -218,55 +218,62 @@ function PaneCard({
           .join(' · ')
       }
     >
-      {/* Three rows, at every width, in every layout:
-            1. the name  — up to three lines, then ellipsis
-            2. the path  — one line, losing characters off the FRONT
-            3. the info row — agent mark, PR, dirty dot, time, and the sheep
-          The sheep is the last item IN the info row rather than floating
-          over the card's corner: floating it meant every row above had to
-          reserve a gutter for it, and at quad width that gutter ate the path
-          down to "…ell". In the row it costs nothing above it, and the name
-          and path each get the card's full width.
+      {/* Two rows: the name, then everything else — agent mark, PR, dirty
+          dot, context, time, and the sheep.
 
-          The info row is pushed to the bottom by margin-top:auto, so every
-          card in a pen lines its info up on the same baseline however long
-          the names above happen to be. */}
+          The **cwd row is gone**. It was here when a pen was a grid and a card
+          was the only place a pane's identity was written down; the pane's own
+          bar has carried the path as the title's subtitle since the two chrome
+          bars merged, so this said the same thing a second time and cost a row
+          per sheep — in a single-column sidebar, a row per sheep is the whole
+          budget. The full path is still on the card's `title`.
+
+          The sheep is the last item IN the info row rather than floating over
+          the card's corner: floating it meant every row above had to reserve a
+          gutter for it, which in a tight card ate the name down to "…ell". */}
       <span className="pane-card-name" title={name}>{name}</span>
-      {hasCwd && (
-        <div className="pane-card-cwd" title={session?.path}>
-          {/* <bdi> keeps the path itself left-to-right while the box stays
-              RTL, which is what puts the ellipsis at the START: you get
-              "…/sheepit/ui", never "~/dev/sh". The tail of a path is the
-              half that tells you which worktree you are looking at. */}
-          <bdi>{cwd}</bdi>
-        </div>
-      )}
+      {/* Where this pane is — the last path segment alone, on its own line
+          under the name. Not the old cwd row coming back: that was the whole
+          path, at the card's own size, and it read as a second name. This is
+          one word, drawn small and quiet enough to be a subtitle rather than
+          a field, which is what a directory is to the name above it.
+          It earns its line because a flock is mostly worktrees of one project,
+          where the name says what the pane is doing and only the directory
+          says which checkout it is doing it in. Full path stays on the
+          card's title. */}
+      {dir && <span className="pane-card-dir" title={session?.path}>{dir}</span>}
       <div className="pane-card-info">
         <span className="pane-card-badge" aria-hidden>
           <PaneIcon kind={kind} size={tight ? 12 : 13} />
         </span>
-        {hasPr && (
-          <span
-            className="pane-card-pr"
-            style={{ color: prColor }}
-            title={`PR #${session!.prNum} ${session!.prState?.toLowerCase() ?? ''}`}
-          >
-            #{session!.prNum}
-          </span>
-        )}
-        {session?.gitDirty && <span className="pane-card-dirty-dot" title="Uncommitted changes" />}
         {/* How full the agent's context is, from its own transcript. A count
             and not a percentage: nothing the agents write down says how big
             the window is, and a limit kept by hand here would go stale the
-            next time a model changes. */}
-        {/* `!== undefined`, not a truthiness test: zero is a real answer and
-            has to draw a 0. Absent still means no agent to ask. */}
+            next time a model changes.
+
+            **A percentage when the agent says how big its window is, a count
+            when it does not.** Codex records `model_context_window`, so its
+            panes read `33%` — the thing you actually want to know. Claude Code
+            records no window size anywhere its transcript can be read from, so
+            those panes keep the count. Guessing a limit for them would report a
+            1M session at 536k tokens as 268% full. See readContextTokens.
+
+            **Zero is drawn differently from any other number**, because the
+            question you ask a list of twenty panes first is not "how full is
+            this one" but "is there anything in it at all". A `0` among `451k`
+            and `88k` is a number you have to read before you know it means
+            nothing; a dim dash is the absence itself. The exact count is in
+            the title either way.
+
+            `!== undefined`, not a truthiness test: zero is a real answer that
+            has to draw something. Absent means there is no agent to ask, and
+            draws nothing. */}
         {session?.ctxTokens !== undefined ? (
           <span
-            className="pane-card-ctx"
-            title={`Context in use: ${session.ctxTokens.toLocaleString()} tokens`}
+            className={`pane-card-ctx${session.ctxTokens === 0 ? ' pane-card-ctx-empty' : ''}`}
+            title={ctxTitle(session.ctxTokens, session.ctxLimit)}
           >
-            {session.ctxTokens >= 1000 ? `${Math.round(session.ctxTokens / 1000)}k` : String(session.ctxTokens)}
+            {formatCtx(session.ctxTokens, session.ctxLimit)}
           </span>
         ) : null}
         {time && <span className="pane-card-time">{time}</span>}
@@ -278,17 +285,21 @@ function PaneCard({
   );
 }
 
-/** Lays out PaneCards in the shape of the session's split layout.
+/** The sheep standing in a pen, as a list of cards.
  *
- *  All PaneCards inside this grid are wrapped in a SortableContext so that
- *  dnd-kit can animate the layout shift as the user drags a pane over its
- *  siblings. `rectSortingStrategy` works for any 2D arrangement (horizontal,
- *  vertical, three-variants, quad), so we use it uniformly. */
+ *  This used to draw them in the shape of the pen's split layout — eight
+ *  variants, grid-template-areas, a "big" cell. A pen has no shape any more:
+ *  it holds as many sheep as you like and shows one of them, so the card for
+ *  each is a row, and the one with the ring is the one on screen.
+ *
+ *  Still a SortableContext, so dnd-kit can slide the cards as a pane is
+ *  dragged over its siblings. `rectSortingStrategy` handles a wrapping list
+ *  as happily as it handled the grid.
+ */
 function PaneGrid({
-  gridId, layout, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot,
+  gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot,
 }: {
   gridId: string;
-  layout: GridLayout;
   cellIds: string[];
   activeCell: number;
   isRowActive: boolean;
@@ -296,114 +307,36 @@ function PaneGrid({
   /** Called when a specific pane card is clicked. Caller decides what happens
    *  (typically: switch active workspace + focus that pane). */
   onActivate: (cellIdx: number) => void;
-  /** When true and the workspace has < 4 panes, render the next-larger
-   *  layout with one extra empty placeholder slot at the end so the user
-   *  sees where a foreign pane drag will land if they drop here. */
+  /** A foreign pane is hovering this row: show where it would land. */
   previewExtraSlot?: boolean;
 }): React.ReactElement {
   const unseenSet = new Set(unseenCells);
-
-  // If a foreign pane is hovering this row, virtually add a placeholder
-  // cell and bump the layout up to the next size. The placeholder is the
-  // last cell in the temporarily-upgraded layout.
-  const showPreview = !!previewExtraSlot && cellIds.length < 4;
-  const effectiveCellCount = showPreview ? cellIds.length + 1 : cellIds.length;
-  const effectiveLayout: GridLayout = showPreview
-    ? upgradeWorkspaceLayout(layout, effectiveCellCount)
-    : layout;
-  const placeholderIdx = showPreview ? cellIds.length : -1;
-
-  const cell = (idx: number, tight = false, gridArea?: string) => {
-    if (idx === placeholderIdx) {
-      return (
-        <PanePlaceholder
-          key={`__preview__${idx}`}
-          tight={tight}
-          gridArea={gridArea}
-        />
-      );
-    }
-    return (
-      <PaneCard
-        key={cellIds[idx] ?? `empty-${idx}`}
-        sessionId={cellIds[idx] ?? ''}
-        gridId={gridId}
-        cellIdx={idx}
-        active={isRowActive && activeCell === idx}
-        unseen={unseenSet.has(idx)}
-        tight={tight}
-        onActivate={onActivate}
-        gridArea={gridArea}
-      />
-    );
-  };
+  // The cards run two abreast, so every card in a pen holding more than one
+  // sheep is half a sidebar wide and wants tight mode. A lone sheep spans both
+  // columns (`:only-child` in the CSS) and stays full size.
+  const tight = cellIds.length > 1;
 
   // Filter out empties so the sortable id list never contains '' (which would
   // collide across workspaces and break dnd-kit's id uniqueness assumption).
   const sortableIds = cellIds.filter(Boolean);
 
-  // Use the upgraded layout when previewing the extra slot.
-  const layoutForRender: GridLayout = effectiveLayout;
-
-  // All layouts render their PaneCards as DIRECT siblings of a single grid
-  // container (no nested wrappers) so dnd-kit's rectSortingStrategy can
-  // smoothly slide cards across the layout without being trapped in a
-  // parent. The three-* variants use grid-template-areas to position the
-  // "big" pane (cells[0]) and the two stacked smaller ones (cells[1], [2]).
-  let body: React.ReactElement;
-  if (layoutForRender === 'single') {
-    body = <div className="pane-grid pane-grid-single">{cell(0)}</div>;
-  } else if (layoutForRender === 'horizontal') {
-    body = <div className="pane-grid pane-grid-horizontal">{cell(0, true)}{cell(1, true)}</div>;
-  } else if (layoutForRender === 'vertical') {
-    body = <div className="pane-grid pane-grid-vertical">{cell(0)}{cell(1)}</div>;
-  } else if (layoutForRender === 'three') {
-    // Big-left + 2 stacked right: areas "big b / big c"
-    body = (
-      <div className="pane-grid pane-grid-three-flat pane-grid-three-flat-left">
-        {cell(0, true, 'big')}
-        {cell(1, true, 'b')}
-        {cell(2, true, 'c')}
-      </div>
-    );
-  } else if (layoutForRender === 'three-right') {
-    // Big-right + 2 stacked left: areas "b big / c big"
-    body = (
-      <div className="pane-grid pane-grid-three-flat pane-grid-three-flat-right">
-        {cell(0, true, 'big')}
-        {cell(1, true, 'b')}
-        {cell(2, true, 'c')}
-      </div>
-    );
-  } else if (layoutForRender === 'three-top') {
-    // Wide-top + 2 side-by-side bottom: areas "big big / b c"
-    body = (
-      <div className="pane-grid pane-grid-three-flat pane-grid-three-flat-top">
-        {cell(0, true, 'big')}
-        {cell(1, true, 'b')}
-        {cell(2, true, 'c')}
-      </div>
-    );
-  } else if (layoutForRender === 'three-bottom') {
-    // 2 side-by-side top + wide-bottom: areas "b c / big big"
-    body = (
-      <div className="pane-grid pane-grid-three-flat pane-grid-three-flat-bottom">
-        {cell(0, true, 'big')}
-        {cell(1, true, 'b')}
-        {cell(2, true, 'c')}
-      </div>
-    );
-  } else {
-    body = (
-      <div className="pane-grid pane-grid-quad">
-        {cell(0, true)}{cell(1, true)}{cell(2, true)}{cell(3, true)}
-      </div>
-    );
-  }
-
   return (
     <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-      {body}
+      <div className="pane-grid pane-grid-list">
+        {cellIds.map((sid, idx) => (
+          <PaneCard
+            key={sid || `empty-${idx}`}
+            sessionId={sid ?? ''}
+            gridId={gridId}
+            cellIdx={idx}
+            active={isRowActive && activeCell === idx}
+            unseen={unseenSet.has(idx)}
+            tight={tight}
+            onActivate={onActivate}
+          />
+        ))}
+        {previewExtraSlot && <PanePlaceholder tight={tight} />}
+      </div>
     </SortableContext>
   );
 }
@@ -423,7 +356,6 @@ export function WorkspaceCardPreview({ workspace }: { workspace: Workspace }): R
       </div>
       <PaneGrid
         gridId={workspace.id}
-        layout={workspace.layout}
         cellIds={cellIds}
         activeCell={workspace.activeCell}
         isRowActive={false}
@@ -439,17 +371,13 @@ export function WorkspaceCardPreview({ workspace }: { workspace: Workspace }): R
  *  the look of a sidebar PaneCard in tight mode but stands alone. */
 export function PaneCardPreview({ session }: { session: Session }): React.ReactElement {
   const kind = getPaneKind(session);
-  const cwd = cwdBasename(session?.path);
   return (
     <div className="pane-card pane-card-overlay" title={session.name}>
       <span className="pane-card-name">{session.name}</span>
-      {cwd && <div className="pane-card-cwd"><bdi>{cwd}</bdi></div>}
       <div className="pane-card-info">
         <span className="pane-card-badge" aria-hidden>
           <PaneIcon kind={kind} size={13} />
         </span>
-        {session.prNum && <span className="pane-card-pr">#{session.prNum}</span>}
-        {session.gitDirty && <span className="pane-card-dirty-dot" />}
         <SheepStatus state="idle" />
       </div>
     </div>
@@ -572,8 +500,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
   })();
 
   const cellIds = workspace.cells;
-  const cellCount = cellIds.length;
-  const isFull = cellCount >= 4;
   const collapsed = !!workspace.collapsed;
   const fields = useStore(s => s.fields);
   const fieldOrder = useStore(s => s.fieldOrder);
@@ -604,7 +530,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
         isActive ? 'active' : '',
         unseen ? 'unseen' : '',
         dragOver ? 'pane-drop-target' : '',
-        dragOver && isFull ? 'pane-drop-target-full' : '',
         !dndEnabled ? 'session-item-no-grip' : '',
       ].filter(Boolean).join(' ')}
       data-session-id={workspace.id}
@@ -663,12 +588,11 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
           <PenFence seed={fenceSeed} active={isActive} />
           <PaneGrid
           gridId={workspace.id}
-          layout={workspace.layout}
-          cellIds={cellIds}
+            cellIds={cellIds}
           activeCell={workspace.activeCell}
           isRowActive={isActive}
           unseenCells={unseenCells}
-          previewExtraSlot={dragOver && !isFull}
+          previewExtraSlot={dragOver}
           onActivate={(cellIdx) => {
             onConnect(workspace.id);
             useStore.getState().setActivePane(workspace.id, cellIdx);

@@ -21,11 +21,11 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { configDir, ringBuffersDir } from './paths.js';
-import { SessionStore, type StoredSession } from './session-store.js';
+import { SessionStore, isSafeSessionId, type StoredSession } from './session-store.js';
 import { mergePrRefs, type PrRef } from './pr-refs.js';
 import { isSearchableTranscript } from './search.js';
 import { logger } from './server.js';
-import { readAiConfig, readContextTokens } from './ai.js';
+import { readAiConfig, readContextTokens, type ContextUsage } from './ai.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -693,6 +693,9 @@ interface DirectSession {
   sessionType?: string | null;
   /** Background-only sessions are deliberately omitted from the workspace UI. */
   isHeadless?: boolean;
+  /** The pane this is a *side terminal* of — a shell in that pane's Terminals
+   *  split, running in its directory and closed along with it. */
+  sideOf?: string;
   /** Active sticky DEC private modes, tracked from output (see above). */
   modes?: Set<number>;
   /** Whether the PTY currently has a child process — i.e. something is running
@@ -901,7 +904,7 @@ export class DirectBridge {
   private sessionRefs = new Map<string, PrRef[]>();
   /** Each pane's context size, and the transcript mtime it was read at — see
    *  contextTokens. */
-  private ctxCache = new Map<string, { mtimeMs: number; tokens: number | null }>();
+  private ctxCache = new Map<string, { mtimeMs: number; usage: ContextUsage | null }>();
   /** Where each pane's agent keeps its own transcript, as the agent reported
    *  it (see setAgentSession). Search reads these; nothing else does. */
   private agentSessions = new Map<string, AgentSessionRef>();
@@ -1478,7 +1481,7 @@ export class DirectBridge {
 
   // ── Session lifecycle ────────────────────────────────────────────────────
 
-  async createSession(path?: string, initialCols?: number, initialRows?: number, isHeadless = false): Promise<string> {
+  async createSession(path?: string, initialCols?: number, initialRows?: number, isHeadless = false, sideOf?: string): Promise<string> {
     const sessionPath = path ?? os.homedir();
     const baseName = sessionPath.split('/').filter(Boolean).pop() ?? 'shell';
 
@@ -1524,6 +1527,7 @@ export class DirectBridge {
       id, name, path: sessionPath, pid, ring,
       cols, rows, createdAt: Date.now(),
       isHeadless,
+      ...(sideOf ? { sideOf } : {}),
     };
     this.sessions.set(id, sess);
     // Registered above and subscribed here before the cd is written, so the
@@ -1554,6 +1558,13 @@ export class DirectBridge {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    // A pane takes its side terminals with it. They are headless, so they have
+    // no pen; their only way of being reached is the pane's Terminals split,
+    // and closing the pane without them would leave shells running that
+    // nothing in the UI can show, name or close. Collected before the kill
+    // below, and closed after, so the recursion cannot see a half-removed map.
+    const sideKids = [...this.sessions.values()].filter(x => x.sideOf === sessionId).map(x => x.id);
+
     this.daemon.sendFire({ type: 'kill', id: sessionId });
     this.sessions.delete(sessionId);
     this.inputBuffers.delete(sessionId);
@@ -1566,6 +1577,8 @@ export class DirectBridge {
     this.agentTurns.delete(sessionId);
     this.store.delete(sessionId);
     this.onSessionClosed?.(sessionId);
+
+    for (const kid of sideKids) await this.closeSession(kid);
   }
 
   // ── Atomic subscribe ─────────────────────────────────────────────────────
@@ -1864,7 +1877,7 @@ export class DirectBridge {
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isHermes: procs?.isHermes ?? false,
         isDog: isDog(sess.id), isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
-        isHeadless: sess.isHeadless, ...git,
+        isHeadless: sess.isHeadless, sideOf: sess.sideOf, ...git,
         // Hook-reported, newest first. `git` above carries the PR of the
         // session's *branch*; this carries the ones its agent actually
         // touched, which is the only answer for a branch with no PR of its
@@ -1872,7 +1885,12 @@ export class DirectBridge {
         prRefs: this.sessionRefs.get(sess.id),
         // How full the agent's context is, from its own transcript — re-read
         // only when that file has actually changed. See contextTokens.
-        ctxTokens: this.contextTokens(sess.id),
+        ...(() => {
+          const ctx = this.contextTokens(sess.id);
+          // `ctxLimit` only rides along when the agent wrote one down — Codex
+          // does, Claude Code does not. See readContextTokens.
+          return ctx ? { ctxTokens: ctx.used, ...(ctx.limit ? { ctxLimit: ctx.limit } : {}) } : {};
+        })(),
       };
     });
   }
@@ -1888,7 +1906,7 @@ export class DirectBridge {
    * number that had not changed: this runs in the session list, which is built
    * every couple of seconds for every pane.
    */
-  private contextTokens(sessionId: string): number | undefined {
+  private contextTokens(sessionId: string): ContextUsage | undefined {
     const path = this.resolveAgentTranscript(sessionId);
     if (!path) return undefined;
     try {
@@ -1897,10 +1915,10 @@ export class DirectBridge {
       // There IS an agent here, so a transcript with no usage in it yet means
       // zero, not unknown. Reporting nothing would read as "this pane cannot
       // tell you", when the true answer is that it has not spent anything.
-      if (hit && hit.mtimeMs === mtimeMs) return hit.tokens ?? 0;
-      const tokens = readContextTokens(path);
-      this.ctxCache.set(sessionId, { mtimeMs, tokens });
-      return tokens ?? 0;
+      if (hit && hit.mtimeMs === mtimeMs) return hit.usage ?? { used: 0 };
+      const usage = readContextTokens(path);
+      this.ctxCache.set(sessionId, { mtimeMs, usage });
+      return usage ?? { used: 0 };
     } catch {
       // The transcript was moved or removed under us. Nothing to report, and
       // the next reply makes a new one.
@@ -1999,7 +2017,10 @@ export class DirectBridge {
     return null;
   }
 
-  getScrollbackPath(sessionId: string): string { return join(RING_DIR, `${sessionId}.buf`); }
+  /** null for an id that cannot name a file — this one comes in off a URL. */
+  getScrollbackPath(sessionId: string): string | null {
+    return isSafeSessionId(sessionId) ? join(RING_DIR, `${sessionId}.buf`) : null;
+  }
 
   diagnostics(): object {
     // Per-session PTY details (PTYs live in the daemon; these are the bridge's view).
@@ -2047,6 +2068,7 @@ export class DirectBridge {
     return {
       name: sess.name, path: sess.path, sessionType: sess.sessionType,
       isHeadless: sess.isHeadless,
+      sideOf: sess.sideOf,
       modes: sess.modes && sess.modes.size ? [...sess.modes] : undefined,
       agent,
       turns: turns?.length ? turns : undefined,
@@ -2125,7 +2147,7 @@ export class DirectBridge {
         const sess: DirectSession = {
           id, name: info.name, path: info.path, pid: ds.pid,
           ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
-          isHeadless: info.isHeadless,
+          isHeadless: info.isHeadless, ...(info.sideOf ? { sideOf: info.sideOf } : {}),
         };
         // Seed sticky modes from the LAST PERSISTED SET, then replay the ring
         // over it. The persisted set is what survives a long-running app whose
@@ -2148,7 +2170,7 @@ export class DirectBridge {
           const sess: DirectSession = {
             id, name: info.name, path: info.path, pid: resp.pid ?? 0,
             ring, cols: 120, rows: 40, createdAt: Date.now(), sessionType: info.sessionType,
-            isHeadless: info.isHeadless,
+            isHeadless: info.isHeadless, ...(info.sideOf ? { sideOf: info.sideOf } : {}),
           };
           this.sessions.set(id, sess);
           await this.daemon.request({ type: 'subscribe', id });

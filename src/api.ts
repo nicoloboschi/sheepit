@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { exec, spawn } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { rgPath } from '@vscode/ripgrep';
-import { existsSync, createReadStream, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
+import { existsSync, createReadStream, openSync, readSync, closeSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync, renameSync, copyFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
 import { configDir, notesDir, screenshotsDir } from './paths.js';
@@ -26,6 +26,38 @@ import type { LogBuffer } from './server.js';
 import type { AIService } from './ai.js';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/** Every `gh` command, timed. GitHub is the slowest thing sheepit waits on, so
+ *  each call says what it was and what it cost — `[gh]` in the log. */
+let ghLog: (msg: string) => void = () => {};
+function ghExec(cmd: string, opts: { cwd: string; maxBuffer?: number }) {
+  const t0 = Date.now();
+  // The command up to its first flag value: enough to tell calls apart
+  // without logging a whole GraphQL query.
+  const what = cmd.replace(/ -f query=.*/, ' (graphql)').replace(/ --json .*/, '').slice(0, 80);
+  const p = execAsync(cmd, opts);
+  p.then(
+    () => ghLog(`[gh] run ${what} — ${Date.now() - t0}ms`),
+    () => ghLog(`[gh] run ${what} — FAILED after ${Date.now() - t0}ms`),
+  );
+  return p;
+}
+
+// git with no shell in front of it. Output even on a non-zero exit: `git diff
+// --no-index` exits 1 whenever the files differ, which is every time.
+const git = (cwd: string, args: string[], maxBuffer = 10 * 1024 * 1024) =>
+  execFileAsync('git', args, { cwd, maxBuffer }).then(r => r.stdout).catch((e: any) => e.stdout ?? '');
+
+// The test git itself uses: a NUL in the first 8 KB means binary.
+function looksBinary(path: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    const buf = Buffer.alloc(8192);
+    return buf.subarray(0, readSync(fd, buf, 0, buf.length, 0)).includes(0);
+  } catch { return true; } finally { if (fd !== undefined) closeSync(fd); }
+}
 
 // ── Per-working-directory coalescing ────────────────────────────────────────
 // Every pane polls these endpoints for itself, and the panes of a pen nearly
@@ -120,6 +152,25 @@ function isGoodGh(value: unknown): boolean {
  *  served — instantly — and refreshed behind the reader. */
 const GH_FRESH_MS = 30_000;
 
+/** `coalescedSWR` over `githubItem`, logged: what was asked, whether the cache
+ *  answered it (`hit` fresh, `stale` served old and refreshing behind, `join`
+ *  waited on a fetch already running, `miss` waited for GitHub), and how long
+ *  the reader actually waited. */
+async function ghCached<T>(what: string, key: string, keep: (v: T) => boolean, work: () => Promise<T>): Promise<T> {
+  const c = githubItem as Coalescer<T>;
+  const hit = c.cache.get(key);
+  const outcome = !hit ? (c.inFlight.has(key) ? 'join' : 'miss')
+    : Date.now() - hit.at < GH_FRESH_MS ? 'hit' : 'stale';
+  const t0 = Date.now();
+  const timed = async () => {
+    const s = Date.now();
+    try { return await work(); } finally { ghLog(`[gh] fetched ${what} — ${Date.now() - s}ms`); }
+  };
+  const value = await coalescedSWR(c, key, GH_FRESH_MS, keep, timed);
+  ghLog(`[gh] ${outcome.padEnd(5)} ${what} — answered in ${Date.now() - t0}ms`);
+  return value;
+}
+
 interface GitStatusValue {
   branch: string; detached: boolean; dirty: boolean; ahead: number; behind: number;
 }
@@ -161,14 +212,9 @@ async function speaksHttp(port: number): Promise<boolean> {
   });
 }
 
-// `gh pr view` is a live GitHub API round-trip (~900ms) and burns rate limit.
-// Just under the client's 30s poll, so each cycle still refreshes once.
-const githubPr = makeCoalescer<unknown>(25_000);
-
 /** The PR/issue browser's own fetches — the list, and one item with its diff.
- *  Same round-trip cost and the same rate limit as `githubPr`, but keyed on
- *  `cwd#kind#num` rather than the directory alone, because this one answers
- *  for a reference you picked rather than for the branch you are on.
+ *  Live API round-trips against a rate limit, keyed on the repository so every
+ *  worktree of it shares one copy.
  *
  *  30s: a pull request does not change meaningfully faster than that, and the
  *  pane has a refresh button for when you know it did. The client keeps its own
@@ -238,11 +284,6 @@ function firstLine(s: unknown): string {
  *  Nothing the PR/issue routes ask for is branch-scoped: `gh pr list`,
  *  `gh pr view N` and `gh pr diff N` all answer for the repository.
  *
- *  The branch's own PR (`githubPr`, `/git/:id/github`) is the exception and
- *  stays keyed on the directory — `gh pr view` with no number resolves the PR
- *  of whatever branch that worktree has checked out, which is the one thing
- *  here that genuinely differs between two clones of one repo.
- *
  *  Long TTL: this reads a git config value that changes approximately never,
  *  and the cost of being wrong for five minutes is one stale cache scope. */
 const repoSlugs = makeCoalescer<string | null>(5 * 60_000);
@@ -279,7 +320,7 @@ async function ghSearch(
     + '... on Issue{number title state stateReason updatedAt url author{login}}'
     + '}}}';
   const sh = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const out = await execAsync(
+  const out = await ghExec(
     `gh api graphql -f query=${sh(query)} -f q=${sh(q)} -F n=${Math.min(100, limit)} 2>/dev/null`,
     { cwd, maxBuffer: 8 * 1024 * 1024 },
   ).then(r => r.stdout).catch(() => '');
@@ -373,7 +414,7 @@ async function ghTotals(
     + (wantIssues ? `issues${issueStates}{totalCount}` : '')
     + '}}';
   const sh = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const out = await execAsync(
+  const out = await ghExec(
     `gh api graphql -f query=${sh(query)} -F owner=${sh(owner)} -F name=${sh(name)} 2>/dev/null`,
     { cwd },
   ).then(r => r.stdout).catch(() => '');
@@ -588,6 +629,7 @@ export function expandHomePath(p: string): string {
 }
 
 export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: AIService): Router {
+  ghLog = (msg) => logBuffer.log('INFO', msg);
   const router = Router();
 
   router.get('/preferences', (_req, res) => {
@@ -1066,54 +1108,14 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json(null);
 
-      const value = await coalesced(githubPr, cwd, async () => {
-      const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
-
-      const remoteUrl = await run('git remote get-url origin 2>/dev/null');
-      if (!remoteUrl) return null;
-
-      const m = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
-      if (!m) return null;
-      const owner = m[1]!;
-      const repo  = m[2]!.replace(/\.git$/, '');
-      const repoUrl = `https://github.com/${owner}/${repo}`;
-
-      const branch = await run('git rev-parse --abbrev-ref HEAD');
-
-      let prUrl: string | null = null;
-      let prNum: number | null = null;
-      let prState: string | null = null;  // OPEN, MERGED, CLOSED
-      let prChecks: string | null = null; // PASS, FAIL, PENDING, null
-      let prReviewDecision: string | null = null; // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, null
-      try {
-        const { stdout } = await execAsync(
-          `gh pr view --json url,number,state,statusCheckRollup,reviewDecision 2>/dev/null`,
-          { cwd }
-        );
-        const pr = JSON.parse(stdout.trim());
-        if (pr.url) prUrl = pr.url;
-        if (pr.number) prNum = pr.number;
-        if (pr.state) prState = pr.state;
-        if (pr.reviewDecision) prReviewDecision = pr.reviewDecision;
-        prChecks = rollupState(pr.statusCheckRollup);
-      } catch {
-        // gh not available — try GitHub API as fallback
-        try {
-          const { stdout } = await execAsync(
-            `curl -sf -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open&per_page=1" 2>/dev/null`,
-            { cwd, timeout: 5000 }
-          );
-          const prs = JSON.parse(stdout.trim());
-          if (Array.isArray(prs) && prs.length > 0) {
-            prUrl = prs[0].html_url;
-            prNum = prs[0].number;
-            prState = 'OPEN';
-          }
-        } catch { /* no gh, no API access */ }
-      }
-
-      return { repoUrl, prUrl, prNum, prState, prChecks, prReviewDecision, branch, owner, repo };
-      });
+      // The branch's own pull request used to be looked up here with
+      // `gh pr view` on every pane every 30s — ~45 calls a minute, a third of
+      // them failing on branches with no PR. It is gone: the PR a pane is about
+      // comes from its agent's hooks (`prRefs`). What is left is the
+      // repository, which the chips need to build links.
+      const slug = await repoSlug(cwd);
+      const [owner, repo] = slug ? slug.split('/') : [];
+      const value = slug ? { repoUrl: `https://github.com/${slug}`, owner, repo } : null;
       res.json(value);
     } catch {
       res.json(null);
@@ -1126,9 +1128,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   // and no API of our own to keep in step with GitHub's. Every route here is
   // one `gh` call whose JSON is passed through.
   //
-  // Both go through `githubItem` for the reason `githubPr` exists — these are
-  // live API round-trips against a rate limit, and every pane of a pen polls
-  // for itself.
+  // Both go through `githubItem` — these are live API round-trips against a
+  // rate limit, and every pane of a pen polls for itself.
 
   router.get('/git/:sessionId/gh/list', async (req, res) => {
     try {
@@ -1180,8 +1181,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       if (q) {
         const scoped = slug && !/\b(repo|org|owner|user):/i.test(q) ? `repo:${slug} ${q}` : q;
         const searchKey = `${scope}#search#${scoped}#${limit}`;
-        const found = await coalescedSWR(
-          githubItem, searchKey, GH_FRESH_MS,
+        const found = await ghCached(
+          `search "${scoped}"`, searchKey,
           (v: any) => !!v && (v.prs?.length > 0 || v.issues?.length > 0 || v.searchTotal === 0),
           async () => ({ ...(await ghSearch(scoped, limit, cwd)), state, kind, repo: slug, limit, q: scoped }),
         );
@@ -1190,7 +1191,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       }
 
       const key = `${scope}#list#${kind}#${state}#${limit}`;
-      const value = await coalescedSWR(githubItem, key, GH_FRESH_MS, isGoodGh, async () => {
+      const listWork = async () => {
         // **`null` means the call failed; `[]` means there is nothing.**
         //
         // These were the same empty array, and the cost was a confident lie: a
@@ -1202,7 +1203,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // A failure is logged with gh's own first line of stderr. It used to go
         // to /dev/null, so "it can't load issues" left nothing to read: the
         // pane said "could not reach GitHub" and the log said nothing at all.
-        const run = (cmd: string) => execAsync(cmd, { cwd, maxBuffer: 8 * 1024 * 1024 })
+        const run = (cmd: string) => ghExec(cmd, { cwd, maxBuffer: 8 * 1024 * 1024 })
           .then(r => r.stdout.trim())
           .catch((e: any) => {
             logBuffer.log('WARNING', `gh failed in ${cwd}: ${cmd.split(' --json')[0]} — ${firstLine(e?.stderr) || e?.message || 'no output'}`);
@@ -1224,6 +1225,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         const wantIssues = kind !== 'pr' && state !== 'merged';
         // '[]' rather than '' for the half nobody asked for: that is a real
         // empty answer, and must not read as a failure.
+        // The totals start with the lists, not after them: they do not depend
+        // on the rows, and waiting cost a whole extra round trip (~0.5s).
+        const totalsPromise = slug ? ghTotals(slug, state, cwd) : Promise.resolve({ prTotal: null, issueTotal: null });
         const [prRaw, issueRaw] = await Promise.all([
           wantPrs
             ? run(`gh pr list${repoArg} --state ${state} --limit ${limit} --json number,title,author,state,isDraft,updatedAt,url`)
@@ -1251,15 +1255,20 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // returns rows, so counting them counts the limit. One GraphQL call
         // asks for the two `totalCount`s and nothing else — cheap, and the
         // only way a list of 30 can honestly say "30 of 214".
-        const totals = slug ? await ghTotals(slug, state, cwd) : { prTotal: null, issueTotal: null };
+        const totals = await totalsPromise;
 
         // The repository this answer belongs to. The client keys its own cache
         // on it, and cannot know it before asking — so every answer says.
-        return {
+        const result = {
           prs: parse(prRaw, 'pr'), issues: parse(issueRaw, 'issue'),
           state, kind, repo: slug, limit, ...totals,
         };
-      });
+        // Every row's detail, loaded behind the list — see warmItems.
+        if (slug) void warmItems(slug, cwd, result);
+        return result;
+      };
+      watchedLists.set(key, { seen: Date.now(), refresh: () => refreshInBackground(`list ${scope} ${kind}/${state}/${limit}`, key, listWork) });
+      const value = await ghCached(`list ${scope} ${kind}/${state}/${limit}`, key, isGoodGh, listWork);
       // A failure is never cached. Holding one for 30s means the refresh button
       // returns the same failure it was pressed to clear, which reads as the
       // button being broken.
@@ -1269,6 +1278,200 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       res.json(null);
     }
   });
+
+  /** Everything the GitHub view shows for one pull request or issue: the
+   *  item, its diff, and what it links to. One definition, used by the item
+   *  route and by the prefetcher that warms every row of a list — so a row
+   *  clicked after the list loaded is a cache hit, whichever worktree asks. */
+  // `known` is set when the kind is a fact rather than a hint — a row of a
+  // list says what it is — and skips probing an issue as a pull request first,
+  // which cost two failed `gh` calls per issue.
+  const fetchItem = (num: number, slug: string | null, repo: string | null, cwd: string, known?: 'pr' | 'issue') => async () => {
+    const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+    const repoArg = repo ? ` --repo ${sh(repo)}` : '';
+
+    // **The kind in the URL is a hint, not an answer.** Pull requests and
+    // issues share one numbering sequence, so a bare `#448` typed into the
+    // search says nothing about which it is — and neither does a
+    // `/issues/N` link, which GitHub happily redirects to a PR.
+    //
+    // `gh pr view N` is the probe, because it succeeds ONLY for a pull
+    // request: on an issue it fails with "Could not resolve to a
+    // PullRequest with the number of N". `gh issue view N` answers for
+    // BOTH, which makes it the right fallback and the wrong probe —
+    // asking it first would label every pull request an issue and
+    // silently drop its diff.
+    // Started alongside the view, not after it. These are two independent
+    // round trips — measured here at 1.40s for the view and 0.85s for the
+    // diff — and waiting to learn it is a pull request before asking for
+    // the diff simply added them together on every cold open.
+    //
+    // If the number turns out to be an issue this is thrown away, which
+    // costs one cheap failed call; that is less than the second every pull
+    // request was paying. It carries its own `catch`, so nothing is left
+    // rejecting when nobody awaits it.
+    const diffPromise = known === 'issue' ? Promise.resolve('') : ghExec(`gh pr diff ${num}${repoArg}`, { cwd, maxBuffer: 64 * 1024 * 1024 })
+      .then(r => r.stdout)
+      .catch(() => '');
+
+    // Linked references, in parallel with both of the above — see
+    // LINKED_QUERY for why this one call is GraphQL and the two beside it
+    // are not. It carries its own `catch`: a repository with no GitHub
+    // remote, or a token without the scope, loses the links and keeps the
+    // pull request.
+    const linkedPromise = (async (): Promise<LinkedRef[]> => {
+      const [owner, name] = (slug ?? '').split('/');
+      if (!owner || !name) return [];
+      try {
+        const { stdout } = await ghExec(
+          `gh api graphql -f o=${sh(owner)} -f n=${sh(name)} -F num=${num} -f query=${sh(LINKED_QUERY)}`,
+          { cwd, maxBuffer: 4 * 1024 * 1024 },
+        );
+        const node = JSON.parse(stdout)?.data?.repository?.issueOrPullRequest;
+        if (!node) return [];
+        // Which side answered decides what the nodes ARE: the issues a pull
+        // request closes, or the pull requests that close an issue.
+        const isPr = node.__typename === 'PullRequest';
+        const nodes = isPr
+          ? node.closingIssuesReferences?.nodes
+          : node.closedByPullRequestsReferences?.nodes;
+        return (Array.isArray(nodes) ? nodes : [])
+          .filter((n: any) => Number.isSafeInteger(n?.number))
+          .map((n: any) => ({
+            kind: (isPr ? 'issue' : 'pr') as 'pr' | 'issue',
+            number: n.number,
+            title: n.title ?? '',
+            state: String(n.state ?? '').toUpperCase(),
+            // Null for a linked pull request, which has no such field.
+            stateReason: n.stateReason ?? null,
+            url: n.url ?? '',
+          }));
+      } catch { return []; }
+    })();
+
+    let it: any = null;
+    let actual: 'pr' | 'issue' = 'pr';
+    let reason = '';
+    for (const k of known ? [known] : ['pr', 'issue'] as const) {
+      try {
+        const { stdout } = await ghExec(
+          `gh ${k} view ${num}${repoArg} --json ${k === 'pr' ? PR_FIELDS : ISSUE_FIELDS}`,
+          { cwd, maxBuffer: 8 * 1024 * 1024 },
+        );
+        it = JSON.parse(stdout);
+        actual = k;
+        break;
+      } catch (e: any) {
+        reason = firstLine(e?.stderr || e?.message);
+      }
+    }
+    // The reason, not a bare null. "Could not resolve to a PullRequest",
+    // "gh: command not found" and an expired token are three different
+    // problems with three different fixes, and a pane that says only
+    // "could not load" sends you off to guess which one you have.
+    if (!it) {
+      logBuffer.log('WARNING', `gh #${num} in ${repo ?? slug ?? cwd} failed: ${reason || 'GitHub did not answer'}`);
+      return { error: reason || 'GitHub did not answer' };
+    }
+
+    // Only a PR has a diff, and it is the one output here with no natural
+    // bound — so it is the only one that is capped.
+    let diff = actual === 'pr' ? await diffPromise : '';
+    let diffTruncated = false;
+    if (diff.length > MAX_PR_DIFF) { diff = diff.slice(0, MAX_PR_DIFF); diffTruncated = true; }
+
+    return {
+      // What actually answered, so the pane draws the right mark and does
+      // not sit waiting for a diff an issue will never have.
+      kind: actual,
+      // The repository it belongs to — the client keys its cache on it.
+      repo: slug,
+      number: it.number, title: it.title, body: it.body ?? '',
+      state: it.state, stateReason: it.stateReason ?? null, isDraft: !!it.isDraft,
+      author: it.author?.login ?? '', url: it.url,
+      createdAt: it.createdAt, updatedAt: it.updatedAt, mergedAt: it.mergedAt ?? null,
+      baseRefName: it.baseRefName ?? null, headRefName: it.headRefName ?? null,
+      additions: it.additions ?? 0, deletions: it.deletions ?? 0, changedFiles: it.changedFiles ?? 0,
+      reviewDecision: it.reviewDecision ?? null,
+      checks: rollupState(it.statusCheckRollup),
+      // The individual runs, so a red PR can say WHICH job is red and link
+      // straight to it. The link leaves for the real browser — a CI log is
+      // a live, JavaScript-driven page, and this pane renders none of that.
+      // Two shapes arrive here: CheckRun (a GitHub Action) and
+      // StatusContext (an external reporter), which name the same three
+      // things differently.
+      checkRuns: (Array.isArray(it.statusCheckRollup) ? it.statusCheckRollup : [])
+        .slice(0, 40)
+        .map((c: any) => ({
+          name: c.name ?? c.context ?? '',
+          workflow: c.workflowName ?? '',
+          conclusion: (c.conclusion ?? c.state ?? c.status ?? '').toUpperCase(),
+          url: c.detailsUrl ?? c.targetUrl ?? '',
+        })),
+      labels: (it.labels ?? []).map((l: any) => ({ name: l.name, color: l.color })),
+      comments: (it.comments ?? []).map((c: any) => ({
+        author: c.author?.login ?? '', body: c.body ?? '', createdAt: c.createdAt,
+      })),
+      // The issues this pull request closes, or the pull requests that
+      // close this issue. The pane makes each one a button that opens it
+      // here, so following a link never leaves for the browser.
+      linked: await linkedPromise,
+      diff, diffTruncated,
+    };
+  };
+
+  /** Run a GitHub fetch behind the reader and store the answer if it is good.
+   *  Joins a fetch already running for the same key rather than starting a
+   *  second one. */
+  const refreshInBackground = (what: string, key: string, work: () => Promise<unknown>): Promise<unknown> => {
+    const running = githubItem.inFlight.get(key);
+    if (running) return running;
+    const t0 = Date.now();
+    const p = work()
+      .then(value => {
+        const good = isGoodGh(value);
+        if (good) githubItem.cache.set(key, { at: Date.now(), value });
+        ghLog(`[gh] bg    ${what} — ${good ? '' : 'FAILED, '}${Date.now() - t0}ms`);
+        return value;
+      })
+      .finally(() => { githubItem.inFlight.delete(key); });
+    githubItem.inFlight.set(key, p);
+    return p.catch(() => null);
+  };
+
+  /** Load the full detail of every row in a list, so opening one is a cache
+   *  hit. Only rows worth it: never loaded, changed since (`updatedAt` moved),
+   *  or a pull request whose checks are still running — CI finishing does not
+   *  move `updatedAt`. Four at a time: each is three `gh` calls. */
+  const warmItems = async (slug: string, cwd: string, list: { prs?: unknown; issues?: unknown }) => {
+    const rows = [...(Array.isArray(list.prs) ? list.prs : []), ...(Array.isArray(list.issues) ? list.issues : [])] as { number: number; kind: 'pr' | 'issue'; updatedAt?: string }[];
+    const todo = rows.filter(r => {
+      const cached = githubItem.cache.get(`${slug}#ref#${r.number}`)?.value as { updatedAt?: string; checks?: string } | undefined;
+      return !cached || cached.updatedAt !== r.updatedAt || cached.checks === 'PENDING';
+    });
+    if (todo.length === 0) return;
+    ghLog(`[gh] warming ${todo.length} of ${rows.length} rows in ${slug}`);
+    for (let i = 0; i < todo.length; i += 4) {
+      await Promise.all(todo.slice(i, i + 4).map(r =>
+        refreshInBackground(`${r.kind} #${r.number} ${slug}`, `${slug}#ref#${r.number}`, fetchItem(r.number, slug, slug, cwd, r.kind))));
+    }
+  };
+
+  /** Lists somebody looked at recently, each with how to refresh it. Every
+   *  GH_FRESH_MS the server refreshes them (and, through warmItems, whatever
+   *  in them changed), so an open GitHub view is never more than that old and
+   *  nobody waits for GitHub. Keyed on the repository, like everything here,
+   *  so eight worktrees of one repo are one list refreshing, not eight. */
+  const watchedLists = new Map<string, { seen: number; refresh: () => Promise<unknown> }>();
+  // Short: an open GitHub view re-asks every 30s, which keeps its list watched.
+  const WATCH_MS = 5 * 60_000;
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, w] of watchedLists) {
+      if (now - w.seen > WATCH_MS) { watchedLists.delete(key); continue; }
+      void w.refresh();
+    }
+  }, GH_FRESH_MS).unref();
 
   router.get('/git/:sessionId/gh/:kind/:num', async (req, res) => {
     try {
@@ -1295,139 +1498,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const slug = repo ?? (await repoSlug(cwd));
       const scope = slug ?? cwd;
       const key = `${scope}#ref#${num}`;
-      const value = await coalescedSWR(githubItem, key, GH_FRESH_MS, isGoodGh, async () => {
-        const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-        const repoArg = repo ? ` --repo ${sh(repo)}` : '';
-
-        // **The kind in the URL is a hint, not an answer.** Pull requests and
-        // issues share one numbering sequence, so a bare `#448` typed into the
-        // search says nothing about which it is — and neither does a
-        // `/issues/N` link, which GitHub happily redirects to a PR.
-        //
-        // `gh pr view N` is the probe, because it succeeds ONLY for a pull
-        // request: on an issue it fails with "Could not resolve to a
-        // PullRequest with the number of N". `gh issue view N` answers for
-        // BOTH, which makes it the right fallback and the wrong probe —
-        // asking it first would label every pull request an issue and
-        // silently drop its diff.
-        // Started alongside the view, not after it. These are two independent
-        // round trips — measured here at 1.40s for the view and 0.85s for the
-        // diff — and waiting to learn it is a pull request before asking for
-        // the diff simply added them together on every cold open.
-        //
-        // If the number turns out to be an issue this is thrown away, which
-        // costs one cheap failed call; that is less than the second every pull
-        // request was paying. It carries its own `catch`, so nothing is left
-        // rejecting when nobody awaits it.
-        const diffPromise = execAsync(`gh pr diff ${num}${repoArg}`, { cwd, maxBuffer: 64 * 1024 * 1024 })
-          .then(r => r.stdout)
-          .catch(() => '');
-
-        // Linked references, in parallel with both of the above — see
-        // LINKED_QUERY for why this one call is GraphQL and the two beside it
-        // are not. It carries its own `catch`: a repository with no GitHub
-        // remote, or a token without the scope, loses the links and keeps the
-        // pull request.
-        const linkedPromise = (async (): Promise<LinkedRef[]> => {
-          const [owner, name] = (slug ?? '').split('/');
-          if (!owner || !name) return [];
-          try {
-            const { stdout } = await execAsync(
-              `gh api graphql -f o=${sh(owner)} -f n=${sh(name)} -F num=${num} -f query=${sh(LINKED_QUERY)}`,
-              { cwd, maxBuffer: 4 * 1024 * 1024 },
-            );
-            const node = JSON.parse(stdout)?.data?.repository?.issueOrPullRequest;
-            if (!node) return [];
-            // Which side answered decides what the nodes ARE: the issues a pull
-            // request closes, or the pull requests that close an issue.
-            const isPr = node.__typename === 'PullRequest';
-            const nodes = isPr
-              ? node.closingIssuesReferences?.nodes
-              : node.closedByPullRequestsReferences?.nodes;
-            return (Array.isArray(nodes) ? nodes : [])
-              .filter((n: any) => Number.isSafeInteger(n?.number))
-              .map((n: any) => ({
-                kind: (isPr ? 'issue' : 'pr') as 'pr' | 'issue',
-                number: n.number,
-                title: n.title ?? '',
-                state: String(n.state ?? '').toUpperCase(),
-                // Null for a linked pull request, which has no such field.
-                stateReason: n.stateReason ?? null,
-                url: n.url ?? '',
-              }));
-          } catch { return []; }
-        })();
-
-        let it: any = null;
-        let actual: 'pr' | 'issue' = 'pr';
-        let reason = '';
-        for (const k of ['pr', 'issue'] as const) {
-          try {
-            const { stdout } = await execAsync(
-              `gh ${k} view ${num}${repoArg} --json ${k === 'pr' ? PR_FIELDS : ISSUE_FIELDS}`,
-              { cwd, maxBuffer: 8 * 1024 * 1024 },
-            );
-            it = JSON.parse(stdout);
-            actual = k;
-            break;
-          } catch (e: any) {
-            reason = firstLine(e?.stderr || e?.message);
-          }
-        }
-        // The reason, not a bare null. "Could not resolve to a PullRequest",
-        // "gh: command not found" and an expired token are three different
-        // problems with three different fixes, and a pane that says only
-        // "could not load" sends you off to guess which one you have.
-        if (!it) {
-          logBuffer.log('WARNING', `gh ${kind} #${num}${repo ? ` in ${repo}` : ''} failed: ${reason || 'GitHub did not answer'}`);
-          return { error: reason || 'GitHub did not answer' };
-        }
-
-        // Only a PR has a diff, and it is the one output here with no natural
-        // bound — so it is the only one that is capped.
-        let diff = actual === 'pr' ? await diffPromise : '';
-        let diffTruncated = false;
-        if (diff.length > MAX_PR_DIFF) { diff = diff.slice(0, MAX_PR_DIFF); diffTruncated = true; }
-
-        return {
-          // What actually answered, so the pane draws the right mark and does
-          // not sit waiting for a diff an issue will never have.
-          kind: actual,
-          // The repository it belongs to — the client keys its cache on it.
-          repo: slug,
-          number: it.number, title: it.title, body: it.body ?? '',
-          state: it.state, stateReason: it.stateReason ?? null, isDraft: !!it.isDraft,
-          author: it.author?.login ?? '', url: it.url,
-          createdAt: it.createdAt, updatedAt: it.updatedAt, mergedAt: it.mergedAt ?? null,
-          baseRefName: it.baseRefName ?? null, headRefName: it.headRefName ?? null,
-          additions: it.additions ?? 0, deletions: it.deletions ?? 0, changedFiles: it.changedFiles ?? 0,
-          reviewDecision: it.reviewDecision ?? null,
-          checks: rollupState(it.statusCheckRollup),
-          // The individual runs, so a red PR can say WHICH job is red and link
-          // straight to it. The link leaves for the real browser — a CI log is
-          // a live, JavaScript-driven page, and this pane renders none of that.
-          // Two shapes arrive here: CheckRun (a GitHub Action) and
-          // StatusContext (an external reporter), which name the same three
-          // things differently.
-          checkRuns: (Array.isArray(it.statusCheckRollup) ? it.statusCheckRollup : [])
-            .slice(0, 40)
-            .map((c: any) => ({
-              name: c.name ?? c.context ?? '',
-              workflow: c.workflowName ?? '',
-              conclusion: (c.conclusion ?? c.state ?? c.status ?? '').toUpperCase(),
-              url: c.detailsUrl ?? c.targetUrl ?? '',
-            })),
-          labels: (it.labels ?? []).map((l: any) => ({ name: l.name, color: l.color })),
-          comments: (it.comments ?? []).map((c: any) => ({
-            author: c.author?.login ?? '', body: c.body ?? '', createdAt: c.createdAt,
-          })),
-          // The issues this pull request closes, or the pull requests that
-          // close this issue. The pane makes each one a button that opens it
-          // here, so following a link never leaves for the browser.
-          linked: await linkedPromise,
-          diff, diffTruncated,
-        };
-      });
+      const value = await ghCached(`${kind} #${num} ${scope}`, key, isGoodGh, fetchItem(num, slug, repo, cwd));
       // A failure is never cached — the refresh button must be able to clear it.
       if (!isGoodGh(value)) githubItem.cache.delete(key);
       res.json(value);
@@ -1513,7 +1584,10 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.get('/git/:sessionId/repo', async (req, res) => {
     try {
       const cwd = getSessionCwd(req.params.sessionId);
-      res.json({ repo: cwd ? await repoSlug(cwd) : null });
+      const t0 = Date.now();
+      const repo = cwd ? await repoSlug(cwd) : null;
+      logBuffer.log('INFO', `[gh] repo ${repo ?? cwd} — ${Date.now() - t0}ms`);
+      res.json({ repo });
     } catch {
       res.json({ repo: null });
     }
@@ -1574,10 +1648,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // a new/untracked file so it still shows as all-additions.
       const { path: filePath } = req.query as Record<string, string>;
       if (filePath) {
-        let d = await run(`git diff HEAD -- ${sh(filePath)}`);
-        if (!d) {
-          const mimeEnc = await run(`file --mime-encoding ${sh(filePath)}`);
-          if (!mimeEnc.includes('binary')) d = await run(`git diff --no-index /dev/null ${sh(filePath)}`);
+        let d = await git(cwd, ['diff', 'HEAD', '--', filePath]);
+        if (!d && !looksBinary(nodePath.resolve(cwd, filePath))) {
+          d = await git(cwd, ['diff', '--no-index', '--', '/dev/null', filePath]);
         }
         return res.type('text/plain; charset=utf-8').send(d);
       }
@@ -1617,7 +1690,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         for (let i = 0; i < untrackedFiles.length; i += CONCURRENCY) {
           const batch = untrackedFiles.slice(i, i + CONCURRENCY);
           const parts = await Promise.all(
-            batch.map((file: string) => run(`git diff --no-index /dev/null ${sh(file)}`)),
+            batch.map((file: string) => git(cwd, ['diff', '--no-index', '--', '/dev/null', file])),
           );
           for (const content of parts) {
             // git prints "Binary files …" instead of a textual diff for binaries.
@@ -1658,7 +1731,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   router.get('/sessions/:id/scrollback', (req, res) => {
     const sessionId = req.params.id;
     const scrollbackPath = bridge.getScrollbackPath(sessionId);
-    if (!existsSync(scrollbackPath)) {
+    if (!scrollbackPath || !existsSync(scrollbackPath)) {
       return res.status(404).type('text/plain').send('No scrollback log found for this session.');
     }
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -1683,20 +1756,23 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const cwd = getSessionCwd(sessionId);
       if (!cwd) return res.json({ files: {} });
 
-      const run = (cmd: string) => execAsync(cmd, { cwd }).then(r => r.stdout.trim()).catch(() => '');
-      const root = await run('git rev-parse --show-toplevel 2>/dev/null');
+      // Both at once: neither needs the other's answer, and outside a repo
+      // the status call just comes back empty.
+      const [top, out] = await Promise.all([
+        git(cwd, ['rev-parse', '--show-toplevel']),
+        git(cwd, ['status', '--porcelain']),
+      ]);
+      const root = top.trim();
       if (!root) return res.json({ files: {} });
 
-      // NOT the trimming `run` above. Porcelain's first two columns are the
+      // NOT trimmed at the front. Porcelain's first two columns are the
       // index and the working tree, and an unstaged change leaves the first
       // one blank — so ` M path` trimmed to `M path`, and `slice(3)` then ate
       // the first letter of the path. The file whose name came back as
       // `indsight-system-evals/uv.lock` is a real one from this machine: only
       // ever the FIRST line, and only when its change was unstaged, which is
       // why it looked random.
-      const statusOut = await execAsync('git status --short --porcelain 2>/dev/null', { cwd })
-        .then(r => r.stdout.replace(/\n$/, ''))
-        .catch(() => '');
+      const statusOut = out.replace(/\n$/, '');
       res.json({ files: parsePorcelain(statusOut, root), root });
     } catch {
       res.json({ files: {} });
@@ -2365,6 +2441,27 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
+  /**
+   * One file's dates, for the header of whatever is showing it.
+   *
+   * `birthtime` is 0 on filesystems that keep none, and some report a
+   * creation later than the last write, which is not a creation — either way
+   * the client shows nothing rather than a date it would have to apologise
+   * for. `readAt` is this call: when sheepit last went to the disk for it,
+   * which is the only one of the three that is about us rather than the file.
+   */
+  router.get('/fs/stat', (req, res) => {
+    try {
+      const filePath = expandHome(req.query.path as string | undefined ?? '');
+      if (!filePath) return res.status(400).json({ error: 'Missing path' });
+      const st = statSync(filePath);
+      const birthtime = st.birthtimeMs > 0 && st.birthtimeMs <= st.mtimeMs ? st.birthtimeMs : 0;
+      res.json({ size: st.size, mtime: st.mtimeMs, birthtime, readAt: Date.now() });
+    } catch (e) {
+      res.status(404).json({ error: String(e) });
+    }
+  });
+
   router.get('/fs/raw', (req, res) => {
     const filePath = expandHome(req.query.path as string | undefined ?? '');
     if (!filePath) return res.status(400).send('Missing path');
@@ -2372,10 +2469,18 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     try {
       const stat = statSync(filePath);
       if (stat.isDirectory()) return res.status(400).send('Path is a directory');
-      if (stat.size > 2 * 1024 * 1024) return res.status(413).send('File too large (> 2 MB)');
       const ext = nodePath.extname(filePath).toLowerCase();
       const imageExts  = new Set(['.png','.jpg','.jpeg','.gif','.webp','.svg','.ico','.bmp']);
       const pdfExts    = new Set(['.pdf']);
+      const videoExts  = new Set(['.mp4','.webm','.ogv','.mov','.m4v']);
+      // Video goes out before the size cap, and is the one thing here exempt
+      // from it: the cap protects the `readFileSync` below, which pulls a whole
+      // file into memory, and a recording that is worth watching is megabytes
+      // by definition. `sendFile` streams instead, and honours Range requests,
+      // which is also what lets the player seek rather than only play from the
+      // start. The browser's own <video> is the player — see FileView.
+      if (videoExts.has(ext)) return res.sendFile(filePath);
+      if (stat.size > 2 * 1024 * 1024) return res.status(413).send('File too large (> 2 MB)');
       if (imageExts.has(ext)) return res.sendFile(filePath);
       if (pdfExts.has(ext))   return res.sendFile(filePath);
       // Rendered rather than read, for the preview tab. Opt-in and narrow:

@@ -34,8 +34,6 @@ describe('useStore', () => {
       selectedFieldId: null,
       workspaceZooms: {},
       wsStatus: 'connecting',
-      zenSessionId: null,
-      zenOpenSeq: 0,
       sheetOpen: false,
       confirm: null,
     })
@@ -170,55 +168,6 @@ describe('useStore', () => {
     })
   })
 
-  describe('zen', () => {
-    const twoPens = () => {
-      useStore.setState({
-        workspaces: {
-          w1: { id: 'w1', cells: ['a'], activeCell: 0, layout: 'single', fieldId: 'f' } as unknown as Workspace,
-          w2: { id: 'w2', cells: ['b', 'c'], activeCell: 1, layout: 'horizontal', fieldId: 'f' } as unknown as Workspace,
-        },
-        workspaceOrder: ['w1', 'w2'],
-        currentSessionId: 'w1',
-      })
-    }
-
-    it('counts an opening, not a move between pens', () => {
-      twoPens()
-      const before = useStore.getState().zenOpenSeq
-
-      useStore.getState().toggleZen('a')
-      const opened = useStore.getState().zenOpenSeq
-      expect(opened).toBe(before + 1)
-      expect(useStore.getState().zenSessionId).toBe('a')
-
-      // Picking another pen keeps zen on and follows its active pane — and is
-      // not an opening, so nothing has an entrance to play.
-      useStore.getState().setCurrentSessionId('w2')
-      expect(useStore.getState().zenSessionId).toBe('c')
-      expect(useStore.getState().zenOpenSeq).toBe(opened)
-
-      // Walking panes within the pen is not an opening either.
-      useStore.getState().setActivePane('w2', 0)
-      expect(useStore.getState().zenSessionId).toBe('b')
-      expect(useStore.getState().zenOpenSeq).toBe(opened)
-
-      // Closing and opening again is.
-      useStore.getState().toggleZen('b')
-      expect(useStore.getState().zenSessionId).toBeNull()
-      expect(useStore.getState().zenOpenSeq).toBe(opened)
-      useStore.getState().toggleZen('b')
-      expect(useStore.getState().zenOpenSeq).toBe(opened + 1)
-    })
-
-    it('leaves zen alone when it is not on', () => {
-      twoPens()
-      const seq = useStore.getState().zenOpenSeq
-      useStore.getState().setCurrentSessionId('w2')
-      expect(useStore.getState().zenSessionId).toBeNull()
-      expect(useStore.getState().zenOpenSeq).toBe(seq)
-    })
-  })
-
   describe('updateActivity', () => {
     it('marks unseen and notifies when a background session finishes', () => {
       useStore.getState().setCurrentSessionId('$1')
@@ -274,11 +223,11 @@ describe('useStore', () => {
       expect(useStore.getState().workspaceOrder).toEqual(orderBefore)
     })
 
-    it('keeps the panes and the layout — folding closes nothing', () => {
+    it('keeps the panes — folding closes nothing', () => {
       const id = useStore.getState().workspaceOrder[0]!
-      const { cells, layout, activeCell } = useStore.getState().workspaces[id]!
+      const { cells, activeCell } = useStore.getState().workspaces[id]!
       useStore.getState().toggleWorkspaceCollapsed(id)
-      expect(useStore.getState().workspaces[id]).toMatchObject({ cells, layout, activeCell })
+      expect(useStore.getState().workspaces[id]).toMatchObject({ cells, activeCell })
     })
 
     it('does nothing for a workspace that does not exist', () => {
@@ -293,7 +242,7 @@ describe('useStore', () => {
 // and no second ordering to drift out of step with it.
 describe('fields', () => {
   const ws = (id: string, cells: string[], fieldId?: string): Workspace =>
-    ({ id, layout: 'single', cells, activeCell: 0, ...(fieldId ? { fieldId } : {}) })
+    ({ id, cells, activeCell: 0, ...(fieldId ? { fieldId } : {}) })
 
   describe('assignFields', () => {
     // One field to begin with, holding everything. An earlier cut derived a
@@ -467,37 +416,37 @@ describe('fields', () => {
       const ws = useStore.getState().workspaces[id]
       expect(ws).toBeDefined()
       expect(ws!.cells).toEqual(['$0'])
-      expect(ws!.layout).toBe('single')
       expect(ws!.activeCell).toBe(0)
       expect(useStore.getState().workspaceOrder).toContain(id)
     })
 
-    it('appendPaneToWorkspace grows cells and auto-upgrades the layout', () => {
+    it('appendPaneToWorkspace grows cells and shows the new pane', () => {
       const id = useStore.getState().createWorkspace(['$0'])
       useStore.getState().appendPaneToWorkspace(id, '$1')
       const ws = useStore.getState().workspaces[id]!
       expect(ws.cells).toEqual(['$0', '$1'])
-      expect(ws.layout).toBe('horizontal') // upgraded from 'single'
-      expect(ws.activeCell).toBe(1)        // focuses the newly-added pane
+      expect(ws.activeCell).toBe(1) // shows the newly-added pane
     })
 
-    it('appendPaneToWorkspace respects an intentionally-larger layout', () => {
+    // A pen holds as many sheep as you like: the old cap of four was the size
+    // of a 2x2 grid, and there is no grid left to be the size of.
+    it('a pen takes more sheep than the old four', () => {
       const id = useStore.getState().createWorkspace(['$0'])
-      // User switched to quad before panes populated — setGridState bumps layout.
-      useStore.getState().setGridState(id, 'quad', ['$0'], 0)
-      useStore.getState().appendPaneToWorkspace(id, '$1')
-      expect(useStore.getState().workspaces[id]!.layout).toBe('quad')
+      for (const sid of ['$1', '$2', '$3', '$4', '$5']) {
+        useStore.getState().appendPaneToWorkspace(id, sid)
+      }
+      expect(useStore.getState().workspaces[id]!.cells).toHaveLength(6)
+      expect(useStore.getState().workspaces[id]!.activeCell).toBe(5)
     })
 
-    it('removePaneFromWorkspace downgrades layout and preserves active cell', () => {
+    it('removePaneFromWorkspace preserves the shown pane', () => {
       const id = useStore.getState().createWorkspace(['$0', '$1', '$2', '$3'])
       useStore.getState().setActivePane(id, 2)
       const survivorId = useStore.getState().removePaneFromWorkspace(id, 1)
       expect(survivorId).toBe(id)
       const ws = useStore.getState().workspaces[id]!
       expect(ws.cells).toEqual(['$0', '$2', '$3'])
-      expect(ws.layout).toBe('three')
-      // Active cell was $2 (index 2). $1 was removed, so $2 is now at index 1.
+      // The shown pane was $2 (index 2). $1 went, so $2 is now at index 1.
       expect(ws.activeCell).toBe(1)
     })
 
@@ -509,7 +458,7 @@ describe('fields', () => {
       expect(useStore.getState().workspaceOrder).not.toContain(id)
     })
 
-    it('movePaneBetweenWorkspaces moves a pane and downgrades the source', () => {
+    it('movePaneBetweenWorkspaces moves a pane and shrinks the source', () => {
       const a = useStore.getState().createWorkspace(['$0', '$1'])
       const b = useStore.getState().createWorkspace(['$2'])
       const ok = useStore.getState().movePaneBetweenWorkspaces({
@@ -517,17 +466,14 @@ describe('fields', () => {
       })
       expect(ok).toBe(true)
       expect(useStore.getState().workspaces[a]!.cells).toEqual(['$0'])
-      expect(useStore.getState().workspaces[a]!.layout).toBe('single')
       expect(useStore.getState().workspaces[b]!.cells).toEqual(['$2', '$1'])
-      expect(useStore.getState().workspaces[b]!.layout).toBe('horizontal')
-      expect(useStore.getState().workspaces[b]!.activeCell).toBe(1) // moved pane gets focus
+      expect(useStore.getState().workspaces[b]!.activeCell).toBe(1) // the moved pane is shown
     })
 
-    it('extractPaneToNewWorkspace re-homes every pane past a downgraded layout', () => {
-      // The sequence TerminalGrid.changeLayout runs on quad → single. Panes
-      // beyond the new capacity must end up in their own workspaces: left in
-      // `cells` they would never render, yet their PTYs would stay alive and
-      // hidden from the sidebar with no way to close them.
+    it('extractPaneToNewWorkspace empties a pen without stranding a pane', () => {
+      // Taking every sheep but one out of a pen, one at a time. A pane that
+      // left `cells` without landing in another pen would keep its PTY alive,
+      // hidden from the sidebar, with no way to close it.
       const id = useStore.getState().createWorkspace(['$0', '$1', '$2', '$3'])
       const insertAt = useStore.getState().workspaceOrder.indexOf(id) + 1
       for (let i = 3; i >= 1; i--) {
@@ -573,14 +519,17 @@ describe('fields', () => {
       expect(useStore.getState().currentSessionId).toBe(b)
     })
 
-    it('movePaneBetweenWorkspaces rejects when the target is full', () => {
+    // There is no "full" any more: the cap of four was the size of a 2x2
+    // grid, and a pen with no grid in it has no size to be.
+    it('movePaneBetweenWorkspaces accepts a pen that already holds four', () => {
       const a = useStore.getState().createWorkspace(['$0'])
       const b = useStore.getState().createWorkspace(['$1', '$2', '$3', '$4'])
       const ok = useStore.getState().movePaneBetweenWorkspaces({
         sourceId: a, sourceIdx: 0, targetId: b,
       })
-      expect(ok).toBe(false)
-      expect(useStore.getState().workspaces[a]!.cells).toEqual(['$0'])
+      expect(ok).toBe(true)
+      expect(useStore.getState().workspaces[a]).toBeUndefined()
+      expect(useStore.getState().workspaces[b]!.cells).toEqual(['$1', '$2', '$3', '$4', '$0'])
     })
   })
 
@@ -599,10 +548,9 @@ describe('fields', () => {
     it('prunes dead sessions and deletes empty workspaces', () => {
       const id = useStore.getState().createWorkspace(['$0', '$1'])
       useStore.getState().renderSessions([makeSession('$0', 'a')])
-      // $1 is gone — workspace keeps $0 only, layout shrinks to single
+      // $1 is gone — the pen keeps $0 only
       const ws = useStore.getState().workspaces[id]!
       expect(ws.cells).toEqual(['$0'])
-      expect(ws.layout).toBe('single')
 
       // Now $0 vanishes too — workspace should be deleted entirely
       useStore.getState().renderSessions([])
@@ -693,7 +641,7 @@ describe('fields', () => {
 // a pen came to stand in one field in one browser and another field in the next.
 describe('workspace persistence', () => {
   const pen = (id: string, fieldId?: string): Workspace =>
-    ({ id, layout: 'single', cells: ['$' + id], activeCell: 0, ...(fieldId ? { fieldId } : {}) })
+    ({ id, cells: ['$' + id], activeCell: 0, ...(fieldId ? { fieldId } : {}) })
 
   const fields = { [DEFAULT_FIELD_ID]: { id: DEFAULT_FIELD_ID, name: 'All pens' } }
 
@@ -729,7 +677,23 @@ describe('workspace persistence', () => {
 
   it('removes the key of a pen that has been closed', () => {
     writeWorkspaces({ a: pen('a'), b: pen('b') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID], ['b'])
+    expect(preferences.keys('sheepit:pen:')).toEqual(['sheepit:pen:a'])
+  })
+
+  // The incident: a client mid-reconnect reconciled the session list against an
+  // empty pen map and saved it. Absence alone must never delete, or that one
+  // tab takes every other tab's pens with it.
+  it('keeps pens the caller never mentioned', () => {
+    writeWorkspaces({ a: pen('a'), b: pen('b') }, ['a', 'b'], fields, [DEFAULT_FIELD_ID])
+    writeWorkspaces({}, [], fields, [DEFAULT_FIELD_ID])
+    expect(preferences.keys('sheepit:pen:').sort()).toEqual(['sheepit:pen:a', 'sheepit:pen:b'])
+  })
+
+  // A pen named as removed but still in the map was re-added in the same tick.
+  it('does not remove a pen that is still in the map', () => {
     writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID])
+    writeWorkspaces({ a: pen('a') }, ['a'], fields, [DEFAULT_FIELD_ID], ['a'])
     expect(preferences.keys('sheepit:pen:')).toEqual(['sheepit:pen:a'])
   })
 
@@ -759,8 +723,8 @@ describe('workspace persistence', () => {
 // The whole-blob write used to hide that by erasing one client's pens wholesale;
 // per-pen keys keep both, and the same sheep would stand in the flock twice.
 describe('duplicate pens', () => {
-  const pen = (id: string, cells: string[], layout = 'single'): Workspace =>
-    ({ id, layout: layout as Workspace['layout'], cells, activeCell: 0, fieldId: DEFAULT_FIELD_ID })
+  const pen = (id: string, cells: string[]): Workspace =>
+    ({ id, cells, activeCell: 0, fieldId: DEFAULT_FIELD_ID })
   const fields = { [DEFAULT_FIELD_ID]: { id: DEFAULT_FIELD_ID, name: 'All pens' } }
 
   beforeEach(() => {
@@ -771,7 +735,7 @@ describe('duplicate pens', () => {
   // The pen somebody built beats the one the sweep made for them.
   it('keeps the bigger pen and drops the single that duplicates it', () => {
     writeWorkspaces({
-      grid: pen('grid', ['s1', 's2'], 'horizontal'),
+      grid: pen('grid', ['s1', 's2']),
       auto1: pen('auto1', ['s1']),
       auto2: pen('auto2', ['s2']),
     }, ['auto1', 'auto2', 'grid'], fields, [DEFAULT_FIELD_ID])
@@ -784,7 +748,7 @@ describe('duplicate pens', () => {
 
   it('takes the duplicates off the profile instead of re-reading them for ever', () => {
     writeWorkspaces({
-      grid: pen('grid', ['s1', 's2'], 'horizontal'),
+      grid: pen('grid', ['s1', 's2']),
       auto1: pen('auto1', ['s1']),
     }, ['auto1', 'grid'], fields, [DEFAULT_FIELD_ID])
     readPersistedWorkspaces()
@@ -801,17 +765,16 @@ describe('duplicate pens', () => {
     expect(Object.keys(readPersistedWorkspaces()!.workspaces)).toEqual(['b'])
   })
 
-  // A pen that loses one sheep to a bigger neighbour keeps the rest, its
-  // orientation, and an activeCell that still points inside it.
+  // A pen that loses one sheep to a bigger neighbour keeps the rest, and an
+  // activeCell that still points inside it.
   it('trims a pen that overlaps rather than dropping it whole', () => {
     writeWorkspaces({
-      quad: pen('quad', ['s1', 's2', 's3', 's4'], 'quad'),
-      pair: { ...pen('pair', ['s4', 's5'], 'vertical'), activeCell: 1 },
+      quad: pen('quad', ['s1', 's2', 's3', 's4']),
+      pair: { ...pen('pair', ['s4', 's5']), activeCell: 1 },
     }, ['quad', 'pair'], fields, [DEFAULT_FIELD_ID])
 
     const back = readPersistedWorkspaces()!
     expect(back.workspaces.pair!.cells).toEqual(['s5'])
-    expect(back.workspaces.pair!.layout).toBe('single')
     expect(back.workspaces.pair!.activeCell).toBe(0)
     expect(back.workspaces.quad!.cells).toHaveLength(4)
   })

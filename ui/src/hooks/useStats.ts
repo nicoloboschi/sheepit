@@ -14,7 +14,7 @@ export interface Stats {
   processes: StatsProcess[];
 }
 
-export function useStats(sessionId: string | null, intervalMs = 2000): Stats | null {
+export function useStats(sessionId: string | null, intervalMs = 2000, enabled = true): Stats | null {
   const [stats, setStats] = useState<Stats | null>(null);
 
   usePoll(useCallback(async () => {
@@ -25,7 +25,7 @@ export function useStats(sessionId: string | null, intervalMs = 2000): Stats | n
       const res = await fetch(url);
       if (res.ok) setStats(await res.json());
     } catch { /* decorative — show nothing rather than an error */ }
-  }, [sessionId]), intervalMs, sessionId);
+  }, [sessionId]), intervalMs, sessionId, enabled);
 
   return stats;
 }

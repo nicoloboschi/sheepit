@@ -53,7 +53,7 @@ async function createSheepdog(): Promise<void> {
   sharedWs.send({ type: 'input', session_id: id, data: `${command ?? 'hermes'}\r` });
   // It has no pen, so the floating panel is where it is seen — same as the
   // headless shell. The dog is something you watch *while* working, which is
-  // the one thing zen cannot be.
+  // the one thing a pane standing in the pen cannot be.
   useStore.getState().setPip(id);
 }
 

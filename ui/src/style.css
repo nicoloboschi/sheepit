@@ -981,9 +981,13 @@
      onto .pen-body with its own padding, and the row menu is now positioned
      absolutely instead of sitting in the flex row taking 24px of enclosure
      from every pen whether it is showing or not. What is left is the grip
-     strip's height on the top edge. */
-  padding: 11px 0 5px 0;
-  margin: 0 0 7px 0;
+     strip's height on the top edge.
+
+     Trimmed with the cards: a pen's chrome is paid once per pen and the
+     sidebar is one column of them, so the same argument that took a row out
+     of the card takes a few pixels out of the box around it. */
+  padding: 8px 0 4px 0;
+  margin: 0 0 5px 0;
   cursor: pointer;
   /* Subtle card look for inactive rows — flat dark background + hairline
      border + rounded corners. Each workspace reads as its own card even
@@ -1044,8 +1048,9 @@
      cards have to start ~14px from the edge or the animals would be standing
      in the fence. The bottom is deeper than the rest on purpose: that is the
      strip of clear ground the fence's front grass grows in, and with the old
-     11px the cards sat straight on top of it. */
-  padding: 10px 14px 19px 14px;
+     11px the cards sat straight on top of it. The sides are fence geometry
+     and must not be trimmed; the top and bottom can be, and have been. */
+  padding: 7px 14px 15px 14px;
   min-width: 0;
 }
 .pen-fence {
@@ -1117,84 +1122,38 @@
   gap: 10px;
   /* Top padding gives the first row's badges room to overhang upward
      without being clipped by the session-item row above. */
-  padding-top: 4px;
+  padding-top: 2px;
 }
 /* Heights below are sized for a 3-row card (name + cwd + git). The card
    grows naturally when rows are missing, so these are lower bounds. */
-.pane-grid-single { flex-direction: column; min-height: 72px; }
-.pane-grid-horizontal { flex-direction: row; min-height: 72px; }
-.pane-grid-horizontal > .pane-card { flex: 1 1 0; min-width: 0; }
-.pane-grid-vertical { flex-direction: column; min-height: 148px; }
-.pane-grid-vertical > .pane-card { flex: 1 1 0; min-height: 0; }
-.pane-grid-quad {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 10px;
-  min-height: 148px;
-}
-.pane-grid-quad > .pane-card { min-width: 0; min-height: 0; }
-.pane-grid-three { flex-direction: row; min-height: 148px; }
-.pane-grid-three-left,
-.pane-grid-three-right {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  min-height: 0;
-}
-.pane-grid-three-left { flex: 1.2 1 0; }
-.pane-grid-three-right { flex: 1 1 0; }
-.pane-grid-three-left > .pane-card,
-.pane-grid-three-right > .pane-card { flex: 1 1 0; min-height: 0; }
+/* A pen is a list of sheep, not a shape — but the list runs TWO ABREAST.
+   The eight grid variants (quad, the four three-* areas, horizontal, vertical,
+   single) went with the layouts themselves; this is not one of them coming
+   back. A layout meant "these panes are on screen together, arranged so";
+   two columns here means only that a sidebar row is wide enough to seat two
+   cards and a column of one wasted half of it.
 
-/* ── Flat three-pane layouts ───────────────────────────────────────────────
- *  All three PaneCards are direct children of a single CSS grid container.
- *  This is what makes dnd-kit's rectSortingStrategy work — sortable items
- *  must share a parent so the slide animations can compute correct rects
- *  without being trapped in nested wrappers. The "big" pane (cells[0])
- *  always occupies the wider/taller area; the other two stack opposite. */
-.pane-grid-three-flat {
+   Two is fixed rather than `auto-fill`: the sidebar runs 180–500px, so an
+   auto-fill with any honest minimum would sit at one column for most of that
+   range, which is the thing being fixed. The cards shed fields instead, on
+   their own width — see the @container ladder further down. */
+.pane-grid-list {
   display: grid;
-  gap: 10px;
-  min-height: 148px;
-}
-.pane-grid-three-flat > .pane-card {
-  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   min-height: 0;
+  /* Tighter than the 10px a grid of tiles wanted: these are rows of one list,
+     not four cards floating on the pen's floor. */
+  gap: 5px;
 }
-/* three (legacy default): tall left + 2 stacked right */
-.pane-grid-three-flat-left {
-  grid-template-columns: 1.2fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  grid-template-areas:
-    "big b"
-    "big c";
-}
-/* three-right: tall right + 2 stacked left */
-.pane-grid-three-flat-right {
-  grid-template-columns: 1fr 1.2fr;
-  grid-template-rows: 1fr 1fr;
-  grid-template-areas:
-    "b big"
-    "c big";
-}
-/* three-top: wide top + 2 side-by-side bottom */
-.pane-grid-three-flat-top {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1.2fr 1fr;
-  grid-template-areas:
-    "big big"
-    "b   c";
-}
-/* three-bottom: 2 side-by-side top + wide bottom */
-.pane-grid-three-flat-bottom {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1.2fr;
-  grid-template-areas:
-    "b   c"
-    "big big";
-}
+.pane-grid-list > .pane-card { min-width: 0; }
+/* A pen holding ONE sheep — much the commonest — takes the whole width rather
+   than sitting in half of it beside a hole. At full width it also keeps the
+   fields the @container ladder takes off a half-width card, so the ordinary
+   pen reads exactly as it did. An odd LAST card is left at half width on
+   purpose: it is one of several, and stretching it would make that row taller
+   than the ones above it for no reason. */
+.pane-grid-list > .pane-card:only-child { grid-column: 1 / -1; }
 
 .pane-card {
   /* Anchor for the sheep standing in the bottom-right corner, and a container
@@ -1207,8 +1166,11 @@
   /* Stack rows top-down. Do NOT center — the info row pins itself to the
      bottom with margin-top:auto so every card in a pen lines up. */
   justify-content: flex-start;
-  gap: 3px;
-  padding: 8px 10px 8px 11px;
+  gap: 2px;
+  /* Tight, because the sidebar is one column and a pen may hold a dozen
+     sheep: every pixel here is multiplied by the whole flock. The card was
+     8px/10px around three rows when it was a tile in a grid. */
+  padding: 5px 8px 5px 9px;
   /* OPAQUE, deliberately. The pen's fence canvas draws grass across the whole
      floor and the cards sit on top of it; a translucent card let the entire
      field through and put texture behind every line of text. A sheep stands
@@ -1353,8 +1315,8 @@
   flex: 0 0 auto;
   margin-left: 5px;
   margin-right: -2px;
-  width: var(--sheep-w, 42px);
-  height: calc(var(--sheep-w, 42px) * 38 / 44);
+  width: var(--sheep-w, 26px);
+  height: calc(var(--sheep-w, 26px) * 38 / 44);
   /* The emitted glyphs live in the top 8 units of the viewBox and must be
      free to sit over the card's own padding. */
   overflow: visible;
@@ -1373,9 +1335,8 @@
 }
 /* Quad packs four cards into ~100px each at the default sidebar width, so
    the animal comes down with them — and the text gutter comes with it. */
-.pane-grid-quad .pane-card { --sheep-w: 32px; }
-.pane-grid-horizontal .pane-card,
-.pane-grid-three-flat .pane-card { --sheep-w: 36px; }
+/* Smaller again once a pen holds enough sheep that the list is the cost. */
+.pane-grid-list .pane-card-tight { --sheep-w: 22px; }
 
 .sheep .sheep-fleece circle {
   fill: var(--wool);
@@ -1617,84 +1578,163 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
-  opacity: 0.92;
+  opacity: 1;
   min-width: 0;
   line-height: 1.28;
   letter-spacing: -0.1px;
-  /* Three lines before it gives up. Names are how you tell one pen from
-     another, and "release sheepit 0.2…" tells you less than the whole. */
+  /* Two lines before it gives up. It was three, which a card could afford
+     when it had a cwd row under it and was one tile of four; in a one-column
+     list of every sheep you own, a third line is a row per sheep. */
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.pane-card-active .pane-card-name { opacity: 1; }
 
-/* One line, and it loses characters off the FRONT, not the back: the tail of
-   a path is the half that tells you which worktree you are looking at.
-   `direction: rtl` puts the ellipsis at the start; the <bdi> inside keeps the
-   text itself left-to-right, so you get "…/sheepit/ui", never "~/dev/sh".
-   The full path is in the row's title attribute. */
-.pane-card-cwd {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--foreground);
-  opacity: 0.7;
-  line-height: 1.3;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
-}
-.pane-card-active .pane-card-cwd { opacity: 0.92; }
 
-/* The info row is the heaviest of the three, because it is doing the most
-   work. margin-top:auto pins it to the card's bottom edge, so every card in
-   a pen lines its info up on the same baseline however long the names above
-   happen to be — which is what keeps a quad looking like a grid. */
+/* The info row is the heavier of the two, because it is doing the most work.
+   margin-top:auto pins it to the card's bottom edge, so every card in a pen
+   lines its info up on the same baseline however long the names above run. */
 .pane-card-info {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: auto;
-  padding-top: 2px;
-  min-height: calc(var(--sheep-w, 42px) * 38 / 44);
+  padding-top: 1px;
+  min-height: calc(var(--sheep-w, 26px) * 38 / 44);
   font-size: 11px;
   font-family: var(--font-mono);
   min-width: 0;
 }
-.pane-card-pr { font-weight: 600; flex-shrink: 0; }
-/* Context in use. Tabular figures so the number does not jitter sideways as it
-   climbs, and muted: it is something you glance at, not a status. */
+/* Context in use — how much is in this pane's conversation.
+ *
+ * The PR used to sit here and is gone. It was the only field on the card that
+ * answered a question about somebody else's work rather than about this pane,
+ * it was the widest thing in the row, and the pane's own bar carries it
+ * (along with its state and checks) where there is room to say more than a
+ * number. In a card two abreast it was spending the row's scarcest space on
+ * the least scannable thing in it.
+ *
+ * What is left is the one field that sorts a flock at a glance: which of these
+ * panes has anything in it — so a real count is drawn bright, not muted. It
+ * was `--muted-foreground` at 0.85, which on the card's olive put it within a
+ * few percent of the timestamp beside it and of the dash that is supposed to
+ * be its opposite; a row where every field is the same grey is a row you read
+ * one field at a time.
+ *
+ * It is **brand green, where the name above it is foreground**. Both were full
+ * foreground for a moment and that was its own version of the same problem:
+ * two things of equal weight in one small card, so the eye has to pick them
+ * apart by position. A hue separates them at a glance — the name is prose you
+ * read, the count is a measure you scan, and they are never confusable now
+ * even when the name is numeric ("pr 4066"). Green is the right one of the
+ * palette's colours to spend here: amber and terracotta both mean something
+ * is wrong, and nothing is wrong about a context having tokens in it.
+ *
+ * Tabular figures so the number does not jitter sideways as it climbs. */
 .pane-card-ctx {
   font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  opacity: 1;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+/* An empty context is drawn as absence, not as the number zero.
+ *
+ * Scanning twenty panes, the first question is never "how full is this one" —
+ * it is "is there anything in it at all". A `0` sitting among `451k` and `88k`
+ * is a number you have to read before you know it means nothing, and at 10px
+ * in a half-width card it reads as an `8` as often as not. A dim dash is the
+ * absence itself: you see it without reading it, and the whole column of them
+ * separates the panes you have used from the ones you have not. The exact
+ * count is in the title either way.
+ *
+ * Deliberately NOT the fresh card's dashed border, which it often appears with
+ * and which means something narrower: `fresh` is the agent's own report that
+ * nothing has been asked of it, while this is simply a context with nothing in
+ * it — true of a pane whose agent has just been `/clear`ed, and of a plain
+ * shell that never had one.
+ *
+ * It drops the green with the number: the hue is what says "there is a measure
+ * here", and an empty context has none. */
+.pane-card-ctx-empty {
   color: var(--muted-foreground);
-  opacity: 0.85;
-  flex-shrink: 0;
+  opacity: 0.5;
+  font-weight: 400;
+  letter-spacing: 0.5px;
 }
-.pane-card-dirty-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--warning);
-  flex-shrink: 0;
+/* Which checkout this pane is in — the last path segment, on its own line
+ * under the name.
+ *
+ * Deliberately smaller and quieter than the name it sits under: it is a
+ * subtitle, not a second name, and the card is already carrying two other
+ * things you scan. One line, ellipsised — a directory that wrapped would push
+ * the info row down and break the alignment every card in a pen shares.
+ *
+ * It costs no height in the common case: the name is clamped to two lines and
+ * most names are one, so this usually fills space the card had already set
+ * aside. */
+.pane-card-dir {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+  opacity: 0.75;
 }
+.pane-card-active .pane-card-dir { opacity: 0.95; }
+.pane-card-tight .pane-card-dir { font-size: 9px; }
 .pane-card-time {
   margin-left: auto;
   font-size: 10px;
   color: var(--muted-foreground);
-  opacity: 0.75;
+  opacity: 0.8;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 .pane-card-active .pane-card-time { opacity: 0.9; }
-/* Below this the info row cannot hold five things at once, so it sheds its
-   cheapest field rather than breaking the three-row rule. The row keeps its
-   height either way, so the card is still three rows. */
+/* The info row carries six things — agent mark, PR, dirty dot, context, time,
+   sheep — and a card two abreast in a 180px sidebar is 73px wide. So the row
+   sheds, cheapest first, on the CARD's width rather than the window's: each
+   card is its own container, which is why `.pane-card` sets
+   `container-type: inline-size`. The row keeps its height throughout, so a
+   card stays two rows and the cards in a pen stay aligned.
+
+   The order is the order of what the field answers. The time goes first, and
+   is the only thing left to shed: it is when this pane last did something, and
+   the sheep beside it already says whether it is doing something now.
+
+   (The directory is not in this row — it is its own line under the name, and
+   sheds on its own rule below.)
+
+   **The context count never sheds.** It did, at 116px, back when the PR was
+   competing with it for the row — and that was the wrong survivor: the PR is
+   about somebody else's work and lives on the pane's own bar, while the count
+   is the only field here that separates a pane with something in it from an
+   empty one. It is also the narrowest thing in the row when it matters most,
+   since an empty context draws a single dash.
+
+   What never sheds: the agent mark, the context count and the sheep — which
+   pane this is, whether there is anything in it, and whether it wants you.
+
+   The **dirty dot used to sit here** and is gone. It was a 6px amber circle
+   whose only reading was "this tree has uncommitted changes" — true of nearly
+   every pane you are working in, so it was on nearly every card, which is the
+   definition of a signal that says nothing. It was also the one field on the
+   card in the palette's warning colour, and a wall of amber dots beside sheep
+   that use amber for *unread output* made that state harder to spot. The git
+   icon in the pane's own bar still carries the dirty state in its colour, and
+   opens the popover with the branch and the counts. */
 @container (max-width: 128px) {
   .pane-card-time { display: none; }
+}
+/* Below this a directory is a couple of characters and an ellipsis, which is
+   a line of card spent on something that is no longer a word. */
+@container (max-width: 104px) {
+  .pane-card-dir { display: none; }
 }
 
 /* Tight mode — cards in horizontal/three/quad layouts get less horizontal
@@ -1702,11 +1742,11 @@
    that drops a row in a quad stops matching its neighbours, and matching is
    what makes a pen scannable. */
 .pane-card-tight {
-  padding: 7px 9px 7px 10px;
-  gap: 3px;
+  padding: 4px 7px 4px 8px;
+  gap: 1px;
 }
+.pane-card-tight .pane-card-name { -webkit-line-clamp: 2; }
 .pane-card-tight .pane-card-name { font-size: 11px; }
-.pane-card-tight .pane-card-cwd { font-size: 10px; }
 .pane-card-tight .pane-card-info { font-size: 10px; gap: 5px; min-height: 15px; }
 .pane-card-tight .pane-card-time { font-size: 10px; }
 
@@ -1728,11 +1768,6 @@
   border-radius: 4px;
   transition: box-shadow 0.12s;
 }
-.session-item.pane-drop-target-full {
-  outline-color: var(--destructive);
-  background: rgba(224, 144, 123, 0.10);
-}
-.session-item.pane-drop-target-full .pane-grid { box-shadow: none; }
 
 /* Per-card drop highlight — shown when hovering a pane card with another
  * pane in flight (intra-workspace swap or cross-workspace insert). */
@@ -1954,11 +1989,8 @@
    Keyed off the pane, not the viewport: a quad pane on a big screen is as
    narrow as a single pane on a phone. */
 @container (max-width: 420px) { .pane-bar-voice { display: none; } }
-@container (max-width: 360px) {
-  .pane-bar-views,
-  /* both rules: with the switch gone there is nothing left to rule apart */
-  .pane-bar-divider { display: none; }
-}
+/* The tools toggle stays: it is one button, and the only way into the tools. */
+@container (max-width: 360px) { .pane-bar-divider { display: none; } }
 /* Last resort — below this the name gives up its floor too, but it is still
    the widest thing left on the bar. */
 @container (max-width: 300px) { .pane-bar-title-block { min-width: 0; } }
@@ -2271,16 +2303,10 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes zen-enter {
-  from { opacity: 0; transform: scale(0.98); }
-  to   { opacity: 1; transform: scale(1); }
-}
 .terminal-pane { position: absolute; inset: 0; padding: 12px; overflow: hidden; animation: terminal-fade-in 0.3s ease-out; z-index: 1; background: #111411; }
-/* Zen trims the terminal's own inset too. In a grid the 12px keeps a pane's
-   text off its neighbours; alone on the screen there is no neighbour to keep
-   it off, and every row of it is a row of output. */
-.pane-zen .terminal-pane { padding: 8px 12px; }
-.pane-zen .terminal-pane > .xterm { padding: 4px 0; }
+/* A pane is alone on screen, so there is no neighbour to keep its text off
+   and every row of inset is a row of output given away. */
+.terminal-pane { padding: 8px 12px; }
 .terminal-pane > .xterm {
   /* Keep the first and last terminal rows off the pane edges. The outer
      container padding alone is consumed by FitAddon's measured viewport. */
@@ -2344,59 +2370,6 @@
   opacity: 0.55;
 }
 
-/* ── Terminal grid resize handles = the pen's interior rails ────────────────
-   The splits between panes are the fence *inside* the pen, so they read as
-   rail-and-picket rather than as a coloured bar. Straight lines evenly
-   spaced is the one thing CSS gradients are genuinely good at, and it is
-   also the right look here: an interior rail that sagged would be wrong, and
-   a canvas could not know where the user has dragged the split to anyway.
-
-   The drag affordance survives — hovering or dragging swaps the wood for the
-   brand gradient, so the handle still announces itself as a handle. */
-.terminal-resize-handle {
-  flex-shrink: 0;
-  background: transparent;
-  position: relative;
-  transition: background 0.15s;
-}
-.terminal-resize-handle::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.55;
-  transition: opacity 0.15s, filter 0.15s;
-}
-.terminal-resize-handle:hover::before,
-.terminal-resize-handle[data-separator="enabled"]:active::before,
-.terminal-resize-handle[data-resize-handle-active]::before {
-  opacity: 1;
-  background: var(--primary-gradient) !important;
-  filter: brightness(1.15);
-  box-shadow: 0 0 8px var(--primary);
-}
-.terminal-resize-handle-horizontal {
-  width: 12px;
-  cursor: col-resize;
-}
-/* A vertical rail with pickets crossing it. The ::before fills the handle —
-   an earlier version inset it by 4px each side, which left a 2px-wide box and
-   clipped every picket down to nothing. */
-.terminal-resize-handle-horizontal::before {
-  background:
-    repeating-linear-gradient(0deg, var(--fence) 0 1.6px, transparent 1.6px 26px)
-      50% 9px / 11px 100% no-repeat,
-    linear-gradient(var(--fence) 0 0) 50% 0 / 1.1px 100% no-repeat;
-}
-.terminal-resize-handle-vertical {
-  height: 12px;
-  cursor: row-resize;
-}
-.terminal-resize-handle-vertical::before {
-  background:
-    repeating-linear-gradient(90deg, var(--fence) 0 1.6px, transparent 1.6px 26px)
-      9px 50% / 100% 11px no-repeat,
-    linear-gradient(var(--fence) 0 0) 0 50% / 100% 1.1px no-repeat;
-}
 
 /* ── Split pane header ──────────────────────────────────────────────────────── */
 .pane-header-btn {
@@ -2696,3 +2669,104 @@
 .floating-panel .pane-bar-row button,
 .floating-panel .pane-bar-row input,
 .floating-panel .pane-bar-row a { cursor: auto; }
+
+/* ── The scratch terminals panel ───────────────────────────────────────────
+   Up to four headless shells tiled in one floating panel. This is the grid
+   that pens no longer have, and the two agree rather than contradict: a pen is
+   where you *read* — one terminal at full width with a browser or a diff
+   beside it — while these are shells you *watch*, in a box you put in a
+   corner, where seeing all four at once is the whole point.
+
+   Plain CSS grid, no draggable separators. `react-resizable-panels` went out
+   with the pen grid and is not worth bringing back so somebody can nudge a
+   scratch shell 40px wider; the panel itself resizes, and the tiles follow.
+
+   Three is one wide on top and two below rather than three thin columns: at
+   900px a third of the panel is ~290px, which is under the 560px where a
+   pane's own split stacks, so three columns would be three panes all in their
+   narrow layout at once. */
+.headless-grid {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  background: var(--background);
+}
+.headless-grid-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.headless-grid-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+.headless-grid-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "a a"
+    "b c";
+}
+.headless-grid-3 > .headless-cell:nth-child(1) { grid-area: a; }
+.headless-grid-3 > .headless-cell:nth-child(2) { grid-area: b; }
+.headless-grid-3 > .headless-cell:nth-child(3) { grid-area: c; }
+.headless-grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+/* Each tile is its own clipping box. A TerminalCell is `flex: 1` inside a
+   column, and without the explicit min-0 here a long line of output would set
+   the grid track's width and push its neighbour off the panel. */
+.headless-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Nothing open yet: one button filling the panel, rather than an empty box
+   with the only way forward hidden in the bar underneath it. */
+.headless-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed color-mix(in srgb, var(--muted-foreground) 42%, transparent);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.headless-empty:hover {
+  color: var(--foreground);
+  border-color: var(--primary);
+}
+
+.headless-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 5px 8px;
+  background: var(--chrome);
+  border-top: 1px solid var(--chrome-line);
+}
+.headless-count {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  margin-right: auto;
+}
+.headless-add {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.headless-add:hover:not(:disabled) { color: var(--foreground); border-color: var(--primary); }
+.headless-add:disabled { opacity: 0.4; cursor: default; }

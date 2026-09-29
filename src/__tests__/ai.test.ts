@@ -19,7 +19,8 @@ describe('readContextTokens', () => {
     const p = write([
       JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 32, cache_read_input_tokens: 450466, cache_creation_input_tokens: 547 } } }),
     ]);
-    expect(readContextTokens(p)).toBe(451045);
+    // No limit: Claude Code writes no window size anywhere in the transcript.
+    expect(readContextTokens(p)).toEqual({ used: 451045 });
   });
 
   it('takes the last turn, not the first', () => {
@@ -27,14 +28,31 @@ describe('readContextTokens', () => {
       JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 10, cache_read_input_tokens: 90 } } }),
       JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 5, cache_read_input_tokens: 200000 } } }),
     ]);
-    expect(readContextTokens(p)).toBe(200005);
+    expect(readContextTokens(p)).toEqual({ used: 200005 });
   });
 
-  it('reads a Codex usage record, which is already summed', () => {
+  // Current Codex. It writes the window size beside the count, which is what
+  // lets its panes show a percentage and Claude's panes not.
+  it('reads a Codex token_count row, with its window size', () => {
+    const p = write([
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: {
+        total_token_usage: { input_tokens: 622911 },
+        last_token_usage: { input_tokens: 85184, cached_input_tokens: 84992 },
+        model_context_window: 258400,
+      } } }),
+    ]);
+    // The LAST turn's prompt, not the session's running total — 622911 is every
+    // turn's input added up and is not what is in the context.
+    expect(readContextTokens(p)).toEqual({ used: 85184, limit: 258400 });
+  });
+
+  // The row type Codex used to write, and stopped. Reading only this one is
+  // why Codex panes had gone quiet about their context entirely.
+  it('still reads the older Codex usage record, which carries no window', () => {
     const p = write([
       JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 165411, cached_input_tokens: 164608, total_tokens: 165518 } } }),
     ]);
-    expect(readContextTokens(p)).toBe(165411);
+    expect(readContextTokens(p)).toEqual({ used: 165411 });
   });
 
   it('says nothing when no turn has been recorded yet', () => {
@@ -47,7 +65,7 @@ describe('readContextTokens', () => {
       'not json at all',
       JSON.stringify({ type: 'token_usage_record', payload: { usage: { input_tokens: 7 } } }),
     ]);
-    expect(readContextTokens(p)).toBe(7);
+    expect(readContextTokens(p)).toEqual({ used: 7 });
     expect(readContextTokens('/nope/not/here.jsonl')).toBe(null);
   });
 });
