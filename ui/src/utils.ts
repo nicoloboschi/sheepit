@@ -92,3 +92,47 @@ export function requestNotificationPermission(): void {
     Notification.requestPermission();
   }
 }
+
+/** A path found in terminal output, with its xterm link range (1-based,
+ *  inclusive on both ends; `y` is a buffer line index + 1). */
+export interface FileLinkMatch {
+  text: string;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}
+
+/**
+ * Find file paths in one logical terminal line.
+ *
+ * Two shapes: (1) anchored paths starting with `~/ ./ ../ /`; and (2) bare
+ * relative paths Claude Code prints — one or more `dir/` segments ending in a
+ * `name.ext`.
+ *
+ * `rows` are the *untrimmed* rows of one logical line (a long path is wrapped
+ * across several), so every row is exactly `cols` wide and a string index maps
+ * back to a buffer position by plain arithmetic. Matching a single row instead
+ * turns every wrapped path into a truncated one that opens nothing.
+ */
+export function findFileLinks(rows: string[], cols: number, topRow: number): FileLinkMatch[] {
+  const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+|(?:[\w.\-@+%]+\/)+[\w.\-@+%]+\.[A-Za-z0-9]{1,8})/g;
+  const text = rows.join('');
+  const out: FileLinkMatch[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = FILE_RE.exec(text)) !== null) {
+    const raw = match[1]!;
+    // A path never starts in the middle of a word, and this is what keeps
+    // prose out: `and/or` and `TCP/IP` otherwise match as `/or` and `/IP`,
+    // which — now that a plain click opens a file link — would hijack the pane
+    // on a click in a sentence. It also drops the tail of a URL
+    // (`https://x.dev/a` matches from its second slash), which the web-links
+    // provider owns and is asked for first.
+    if (raw.includes('://') || /[\w:/]/.test(text[match.index - 1] ?? ' ')) continue;
+    const last = match.index + raw.length - 1;
+    out.push({
+      text: raw,
+      start: { x: (match.index % cols) + 1, y: topRow + Math.floor(match.index / cols) + 1 },
+      end:   { x: (last % cols) + 1,        y: topRow + Math.floor(last / cols) + 1 },
+    });
+  }
+  return out;
+}

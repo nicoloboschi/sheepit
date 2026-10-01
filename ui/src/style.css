@@ -1154,6 +1154,53 @@
    purpose: it is one of several, and stretching it would make that row taller
    than the ones above it for no reason. */
 .pane-grid-list > .pane-card:only-child { grid-column: 1 / -1; }
+/* …and the same pen once the + strip stands beside it. The strip made the lone
+   card stop being an only child, which silently halved much the commonest pen
+   in the sidebar. The class is set where the count is already known. */
+.pane-grid-one > .pane-card:first-child { grid-column: 1 / -1; }
+
+/* Another sheep in this pen, from the flock — without going to the pen first.
+ *
+ * A full-width strip rather than a card in the grid: a card would wrap a
+ * one-sheep pen onto a second row, and a pen is paid for thirty times over in
+ * a sidebar this long. At ~20px it costs a pen less than half a card.
+ *
+ * Always drawn, and quiet rather than hidden. Revealing it on hover was tried
+ * and is worse: the strip is in the grid, so appearing grows the pen and
+ * shoves every pen below it down while you are still moving towards a card.
+ * A control that moves the thing you are aiming at costs more than the row it
+ * saves — and a hover-only control is no control at all on a phone. So it
+ * stays, at an opacity that keeps it out of the way of the one thing this
+ * list is for: seeing which sheep wants you. */
+.pane-card-add {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0;
+  border: 1px dashed rgba(162, 158, 121, 0.38);
+  border-radius: 5px;
+  /* OPAQUE, for the reason every pane card is: it lands in the deep bottom
+     padding of the pen, which is exactly where the fence canvas draws its
+     dense front strip of grass. Transparent, it was a dashed outline over
+     blades — the + inside it was invisible at a glance, which is the whole
+     job of the control. */
+  background: var(--accent);
+  color: var(--muted-foreground);
+  opacity: 0.8;
+  cursor: pointer;
+  transition: opacity 0.12s, border-color 0.12s, color 0.12s;
+}
+.pane-card-add:hover {
+  opacity: 1;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.pane-card-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; opacity: 1; }
+/* The pen you are standing in carries it a little brighter — that is the pen
+   you are most likely to want another sheep in. */
+.session-item.active .pane-card-add { opacity: 1; }
 
 .pane-card {
   /* Anchor for the sheep standing in the bottom-right corner, and a container

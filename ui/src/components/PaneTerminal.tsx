@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import useStore from '../store';
+import useStore, { addSheepToPen } from '../store';
 import SessionStatsBar from './SessionStatsBar';
 import TerminalGrid from './TerminalGrid';
 
@@ -66,24 +66,7 @@ export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JS
    *  is what you mean by "another one of these". */
   const handleAddSheep = useCallback(async (): Promise<void> => {
     if (!sessionId) return;
-    const state = useStore.getState();
-    const ws = state.workspaces[sessionId];
-    const activeSid = ws?.cells[ws.activeCell] ?? null;
-    const path = activeSid ? state.sessionMap[activeSid]?.path ?? null : null;
-    try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      const data = await res.json();
-      if (!data.ok || !data.session_id) return;
-      // Claim it for this pen *before* asking for the session list:
-      // renderSessions gives any unclaimed session a pen of its own, which is
-      // exactly what we do not want here.
-      useStore.getState().appendPaneToWorkspace(sessionId, data.session_id);
-      send({ type: 'list_sessions' });
-    } catch { /* the pen is unchanged */ }
+    await addSheepToPen(sessionId, send);
   }, [sessionId, send]);
 
   return (

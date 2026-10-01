@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X } from 'lucide-react';
 import FloatingPanel from './FloatingPanel';
 import FilesPane from './FilesPane';
@@ -20,6 +20,10 @@ function readFavourites(): string[] {
 
 interface FilesDialogProps {
   onClose: () => void;
+  /** A file to open, from a path clicked in a terminal. `seq` counts requests
+   *  rather than naming files: clicking the same path again after browsing away
+   *  means "take me back to it", and a value that has not changed says nothing. */
+  openFile?: { path: string; line: number | null; seq: number } | null;
 }
 
 /** The file browser as a dialog over the whole app — the Finder you do not
@@ -31,7 +35,7 @@ interface FilesDialogProps {
  *  home directory rather than inside one pane's repo, because a file manager
  *  that starts wherever the terminal happens to be standing is a pane, not a
  *  Finder. */
-export default function FilesDialog({ onClose }: FilesDialogProps) {
+export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
   // Any live session will do: the fs API is session-scoped only to resolve a
   // starting directory, and we hand it an absolute path instead.
   const sessionId = useStore(s => {
@@ -53,8 +57,8 @@ export default function FilesDialog({ onClose }: FilesDialogProps) {
     if (!dir) return;
     saveFavourites(isFavourite ? favourites.filter(p => p !== dir) : [...favourites, dir]);
   };
-  // FilesPane hands its "open this path" handle back through a ref, for the
-  // terminal's file links. Nothing calls it from here.
+  // FilesPane hands its "open this path" handle back through a ref — this is
+  // what a file link clicked in a terminal arrives through.
   const openFileRef = useRef<((path: string) => void | Promise<void>) | null>(null);
   /** "Browse to this folder", filled in by FilesPane. Called rather than
    *  passed as a value, so picking Home while standing in a folder under home
@@ -62,6 +66,20 @@ export default function FilesDialog({ onClose }: FilesDialogProps) {
   const browseRef = useRef<((path: string) => void) | null>(null);
 
   const goTo = (target: string) => { setPath(target); browseRef.current?.(target); };
+
+  /** The line to scroll to and tint, from a `path.ts:42` link. Kept here and
+   *  dropped as soon as another file is opened, or line 42 of that one would be
+   *  highlighted too. */
+  const [hlLine, setHlLine] = useState<number | null>(null);
+
+  // FilesPane's own mount effect browses `initialPath` at the same time, and it
+  // starts first (child effects run before the parent's), so this navigation
+  // has the higher sequence number inside FilesPane and wins.
+  useEffect(() => {
+    if (!openFile) return;
+    setHlLine(openFile.line);
+    void openFileRef.current?.(openFile.path);
+  }, [openFile?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const places: { label: string; path: string; icon: React.ReactNode }[] = [
     { label: 'Home',      path: '~',            icon: <Home size={13} /> },
@@ -162,7 +180,15 @@ export default function FilesDialog({ onClose }: FilesDialogProps) {
             </div>
           ))}
         </div>
-        <FilesPane sessionId={sessionId} openFileRef={openFileRef} browseRef={browseRef} initialPath={path} onDirChange={setDir} />
+        <FilesPane
+          sessionId={sessionId}
+          openFileRef={openFileRef}
+          browseRef={browseRef}
+          initialPath={path}
+          onDirChange={setDir}
+          highlightLine={hlLine}
+          onFileSelect={(p: string) => { if (p !== openFile?.path) setHlLine(null); }}
+        />
       </div>
     </FloatingPanel>
   );

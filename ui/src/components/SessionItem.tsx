@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Dog } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Dog, Plus } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
-import useStore, { type Session, type Workspace } from '../store';
+import useStore, { addSheepToPen, type Session, type Workspace } from '../store';
 import { useDndEnabled } from '../dndEnabled';
 
 
@@ -297,13 +297,16 @@ function PaneCard({
  *  as happily as it handled the grid.
  */
 function PaneGrid({
-  gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot,
+  gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot, onAddSheep,
 }: {
   gridId: string;
   cellIds: string[];
   activeCell: number;
   isRowActive: boolean;
   unseenCells: number[];
+  /** Start another sheep in this pen. Absent on the drag preview, which is a
+   *  picture of a row rather than a row you can act on. */
+  onAddSheep?: () => void;
   /** Called when a specific pane card is clicked. Caller decides what happens
    *  (typically: switch active workspace + focus that pane). */
   onActivate: (cellIdx: number) => void;
@@ -322,7 +325,12 @@ function PaneGrid({
 
   return (
     <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-      <div className="pane-grid pane-grid-list">
+      {/* `pane-grid-one` does what `:only-child` used to do on its own. The +
+          strip is a second child, so a lone sheep stopped being an only child
+          and lost its full-width row the moment the strip appeared. The count
+          is known here, so the class says it outright rather than asking the
+          CSS to reason about which siblings are cards. */}
+      <div className={`pane-grid pane-grid-list${cellIds.length === 1 ? ' pane-grid-one' : ''}`}>
         {cellIds.map((sid, idx) => (
           <PaneCard
             key={sid || `empty-${idx}`}
@@ -336,6 +344,29 @@ function PaneGrid({
           />
         ))}
         {previewExtraSlot && <PanePlaceholder tight={tight} />}
+        {/* Another sheep in THIS pen, without going to it first. The workspace
+            bar's + can only add to the pen you are standing in; from the flock
+            you can see which pen the work belongs to, and this puts the new
+            sheep straight in it.
+
+            A strip rather than a card: it spans both columns and is ~20px, so
+            it never disturbs the two-abreast card maths and costs a pen a
+            fraction of a card's height. Paid across thirty pens, a full card
+            here would have been most of a screen.
+
+            It stops the click reaching the row, which would otherwise select
+            the pen as well — adding to a pen is not the same as going to it. */}
+        {onAddSheep && (
+          <button
+            type="button"
+            className="pane-card-add"
+            title="Another sheep in this pen"
+            aria-label="Another sheep in this pen"
+            onClick={e => { e.stopPropagation(); onAddSheep(); }}
+          >
+            <Plus size={11} strokeWidth={2.5} />
+          </button>
+        )}
       </div>
     </SortableContext>
   );
@@ -593,6 +624,7 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
           isRowActive={isActive}
           unseenCells={unseenCells}
           previewExtraSlot={dragOver}
+          onAddSheep={() => { void addSheepToPen(workspace.id, send); }}
           onActivate={(cellIdx) => {
             onConnect(workspace.id);
             useStore.getState().setActivePane(workspace.id, cellIdx);

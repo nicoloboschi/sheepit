@@ -54,10 +54,28 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen,    setFilesOpen]    = useState(false);
+  /** A file a terminal link asked for, raising the Files panel if it is down.
+   *  The bar owns the panel, so this is where the pane's event has to land. */
+  const [filesFile, setFilesFile] = useState<{ path: string; line: number | null; seq: number } | null>(null);
   const [githubOpen,   setGithubOpen]   = useState(false);
   const [terminalsOpen, setTerminalsOpen] = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
   const { sheep, bleating, grazing } = useFlockCounts(sessionId);
+
+  /** A path clicked in any pane's terminal opens in the Files panel — which
+   *  lives here, over the whole app, rather than in the pane, because a path a
+   *  terminal printed is as often somewhere else on the machine as it is in the
+   *  repository that pane is standing in. */
+  useEffect(() => {
+    const onOpenFile = (e: Event) => {
+      const d = (e as CustomEvent).detail as { path?: string; line?: number | null } | undefined;
+      if (!d?.path) return;
+      setFilesFile(prev => ({ path: d.path!, line: d.line ?? null, seq: (prev?.seq ?? 0) + 1 }));
+      setFilesOpen(true);
+    };
+    window.addEventListener('sheepit:open-file', onOpenFile);
+    return () => window.removeEventListener('sheepit:open-file', onOpenFile);
+  }, []);
 
   if (!sessionId) return null;
 
@@ -285,7 +303,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
       {addSheepButton && <div>{addSheepButton}</div>}
       {zoomButtons && <div>{zoomButtons}</div>}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
-      {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} />}
+      {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} openFile={filesFile} />}
       {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
       {terminalsOpen && <TerminalsDialog onClose={() => setTerminalsOpen(false)} />}
     </div>

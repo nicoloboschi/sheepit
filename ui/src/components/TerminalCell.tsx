@@ -9,6 +9,7 @@ import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleVie
 import * as sharedWs from '../sharedWs';
 import PaneHeader from './PaneHeader';
 import { openExternal } from '../openExternal';
+import { findFileLinks } from '../utils';
 import GitDiffPane from './GitDiffPane';
 import GithubPane, { type GhRef } from './GithubPane';
 import TerminalTiles from './TerminalTiles';
@@ -396,11 +397,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
   const webglRef = useRef<WebglLike | null>(null);
 
   // Per-pane view (terminal / git / files) + a ref the Files view fills in so
-  // the git view (and terminal file links) can open a file in this same pane.
+  // the git view can open a file in this same pane.
   // New panes default to the split view (terminal + file browser); panes with a
   // saved preference reopen on whatever view they were left on.
   const [view, setView] = useState<PaneView>(() => (tile ? 'terminal' : readPaneView(sessionId) ?? 'split'));
-  const [filesHighlightLine, setFilesHighlightLine] = useState<number | null>(null);
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -488,8 +488,8 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
     };
   }, [isActive, tile]);
 
-  // Resolve a path clicked in the terminal (cmd/ctrl+click) against this pane's
-  // cwd, then open it in this pane's own Files view.
+  // Resolve a path clicked in the terminal against this pane's cwd, then open
+  // it in the app-wide Files panel.
   const handleFileLink = useCallback(async (rawPath: string) => {
     let cleaned = rawPath;
     let line: number | null = null;
@@ -510,11 +510,16 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
         absPath = cwd ? `${cwd}/${cleaned.replace(/^\.\//, '')}` : cleaned;
       } catch { /* use cleaned as-is */ }
     }
-    setFilesHighlightLine(line);
-    // Open in split view (terminal + files side by side) rather than replacing
-    // the whole pane with the Files view — keeps the clicked-from terminal visible.
-    setView('split');
-    setTimeout(() => openFileRef.current?.(absPath), 80);
+    // The app-wide Files panel, not the pane's own split: a path printed in a
+    // terminal is usually somewhere else entirely — a scratchpad under /private
+    // /tmp, a file in another checkout — and the pane's Files view is about the
+    // repository the pane is standing in. The panel floats over the whole app,
+    // so it also costs the terminal none of its width.
+    //
+    // A window event rather than a prop threaded up to the workspace bar, which
+    // is where the panel's state lives — the same channel StatChips already
+    // uses to push a PR into a pane, in the other direction.
+    window.dispatchEvent(new CustomEvent('sheepit:open-file', { detail: { path: absPath, line } }));
   }, [sessionId]);
   const handleFileLinkRef = useRef(handleFileLink);
   handleFileLinkRef.current = handleFileLink;
@@ -929,34 +934,36 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // File link provider — cmd/ctrl+click opens the path in this pane's Files view.
+  // File link provider — clicking a path opens it in this pane's Files view.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    // Two shapes: (1) anchored paths starting with ~/ ./ ../ or / ; and
-    // (2) bare relative paths Claude Code prints — one or more `dir/` segments
-    // ending in a `name.ext` (the extension requirement keeps prose like
-    // "and/or" or "TCP/IP" from matching). Both resolve via handleFileLink.
-    const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+|(?:[\w.\-@+%]+\/)+[\w.\-@+%]+\.[A-Za-z0-9]{1,8})/g;
+    /** How many wrapped rows of one logical line to stitch — a path is at most
+     *  a few hundred characters, and an unbounded walk would scan the screen. */
+    const MAX_WRAP_ROWS = 8;
     const provider = term.registerLinkProvider({
       provideLinks(y: number, callback: (links: any[]) => void): void {
-        const line = term.buffer.active.getLine(y - 1);
-        if (!line) { callback([]); return; }
-        const text = line.translateToString();
-        const links: any[] = [];
-        let match: RegExpExecArray | null;
-        FILE_RE.lastIndex = 0;
-        while ((match = FILE_RE.exec(text)) !== null) {
-          const raw = match[1]!;
-          if (raw.includes('://')) continue;
-          links.push({
-            range: { start: { x: match.index + 1, y }, end: { x: match.index + raw.length, y } },
-            text: raw,
-            decorations: { underline: true, pointerCursor: true },
-            activate(event: MouseEvent, linkText: string) { if (event?.metaKey || event?.ctrlKey) handleFileLinkRef.current(linkText); },
-          });
+        const buf = term.buffer.active;
+        // A path longer than the pane is wrapped across rows, so a single row
+        // holds only part of it — collect the whole logical line and let
+        // findFileLinks map matches back to buffer positions.
+        let top = y - 1;
+        while (top > 0 && buf.getLine(top)?.isWrapped) top--;
+        const rows: string[] = [];
+        for (let i = top; rows.length < MAX_WRAP_ROWS; i++) {
+          const l = buf.getLine(i);
+          if (!l || (i > top && !l.isWrapped)) break;
+          rows.push(l.translateToString());
         }
-        callback(links);
+        callback(findFileLinks(rows, term.cols, top).map(m => ({
+          range: { start: m.start, end: m.end },
+          text: m.text,
+          decorations: { underline: true, pointerCursor: true },
+          // A plain click is enough, as it is for a URL and for an OSC 8
+          // hyperlink: a path drawn as a link that ignores a click on it
+          // reads as the app being broken.
+          activate(_event: MouseEvent, linkText: string) { handleFileLinkRef.current(linkText); },
+        })));
       },
     });
     return () => provider.dispose();
@@ -1796,8 +1803,6 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
                 <FilesPane
                   sessionId={sessionId}
                   openFileRef={openFileRef}
-                  onFileSelect={() => setFilesHighlightLine(null)}
-                  highlightLine={filesHighlightLine}
                   onPreviewFile={(path: string) => {
                     setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
                     setView('split-preview');

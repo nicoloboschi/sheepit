@@ -1723,6 +1723,73 @@ subscribePreferences(keys => {
 });
 
 /**
+ * Put another sheep in a pen: a new session inheriting the pen's shown pane's
+ * cwd, appended to that pen and ready to be shown.
+ *
+ * A pen has no path of its own, so the cwd comes from whichever sheep the pen
+ * is currently showing — which is what "another one of these" means.
+ *
+ * **It claims the session for the pen before asking for the session list.**
+ * `renderSessions` gives any unclaimed session a pen of its own, so asking
+ * first would race it into a pen of its own and defeat the whole point.
+ *
+ * `send` is passed in rather than taken from the socket module: this lives
+ * beside the store action it calls, and the store does not otherwise know the
+ * socket exists. Both callers — the workspace bar and the pen's own + — have
+ * one to hand.
+ */
+export async function addSheepToPen(
+  workspaceId: string,
+  send: (msg: Record<string, unknown>) => void,
+): Promise<string | null> {
+  const state = useStore.getState();
+  const ws = state.workspaces[workspaceId];
+  if (!ws) return null;
+  const shownSid = ws.cells[ws.activeCell] ?? null;
+  const path = shownSid ? state.sessionMap[shownSid]?.path ?? null : null;
+  try {
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.session_id) return null;
+    const newId = data.session_id as string;
+
+    // Claim it first. `renderSessions` below gives any unclaimed session a pen
+    // of its own, and the whole point here is that it lands in *this* pen.
+    const store = useStore.getState();
+    store.appendPaneToWorkspace(workspaceId, newId);
+
+    // Then show it without waiting to be told it exists. The server makes the
+    // session in ~70ms — it comes out of the warm shell pool — but the session
+    // *list* costs 200-800ms with a flock this size, because it reads every
+    // pane's transcript for a title and a context count. Waiting for that put
+    // most of a second of blank pane between the click and the shell, and made
+    // a warm pool look like a cold one.
+    //
+    // Same optimistic seed the `session_created` path has always used for a
+    // brand-new pen: the whole known map plus this one, so `renderSessions`
+    // prunes nothing. The real name, git state and context arrive on the next
+    // sweep and quietly replace the placeholder.
+    if (!store.sessionMap[newId]) {
+      store.renderSessions([...Object.values(store.sessionMap), {
+        id: newId,
+        name: path ? path.split('/').pop() || 'terminal' : 'terminal',
+        path: path || undefined,
+        last_activity: Date.now() / 1000,
+      } as Session]);
+    }
+
+    send({ type: 'list_sessions' });
+    return newId;
+  } catch {
+    return null; // the pen is unchanged
+  }
+}
+
+/**
  * Is this pane the one on screen?
  *
  * Every pane in a pen stays mounted, all but one under `display: none`, so a
