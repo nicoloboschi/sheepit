@@ -16,3 +16,7 @@ release/
 
 # Vite scratch, written while it resolves its config.
 ui/vite.config.*.timestamp-*
+
+# Python bytecode cache — scripts/perf.py leaves this behind.
+__pycache__/
+*.pyc
