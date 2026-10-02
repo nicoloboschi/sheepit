@@ -40,9 +40,12 @@ COOLDOWN = 600           # do not repeat one finding more often than this
 # What a span costs when it is doing its job. `nativeBrowser:tick` only runs
 # while a browser pane is on screen, and following a moving box per frame is the
 # whole point of it — that is a floor, not a regression.
+# `nativeBrowser:tick` and its hit test are deliberately absent: their cost per
+# call is a forced layout, so it scales with how big the document is — 0.9ms at
+# 15,000 nodes, 1.19ms at 22,000 — and a fixed ms/sec ceiling for them drifts
+# upward every time another pane is opened. What can actually regress there is
+# the *gate* (see the ratio check below), not the size of your DOM.
 EXPECTED = {
-    "nativeBrowser:tick": 9.0,
-    "nativeBrowser:covered": 4.0,
     "commit:pane": 12.0,
     "commit:sidebar": 12.0,
     "commit:split": 12.0,
@@ -150,6 +153,17 @@ def watch():
             if s["msPerSec"] > EXPECTED.get(name, SPAN_MS_PER_SEC):
                 fire(f"hot:{name}", f"'{name}' at {s['msPerSec']} ms/sec "
                                     f"(n={s['n']}, max {s['maxMs']}ms)")
+
+        # The browser loop's real invariant: it runs one frame in six once the
+        # box has held still and nothing has been clicked. If that ratio climbs,
+        # the gate has stopped engaging — which is a regression. The absolute
+        # ms/sec is not, because it tracks document size.
+        counts = {c["name"]: c["n"] for c in d.get("counts", [])}
+        frames = counts.get("nativeBrowser:frame", 0)
+        ticks = next((x["n"] for x in d.get("spans", []) if x["name"] == "nativeBrowser:tick"), 0)
+        if frames > 2000 and ticks / frames > 0.5:
+            fire("browsergate", f"browser loop ran on {round(ticks / frames * 100)}% of frames "
+                                f"(gated it is ~17-30%) — the quiet gate has stopped engaging")
 
         m = d.get("main")
         if m and m.get("stalls", 0) > 0:
