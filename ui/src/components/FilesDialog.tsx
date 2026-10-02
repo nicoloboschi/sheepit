@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X } from 'lucide-react';
+import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X, History } from 'lucide-react';
 import FloatingPanel from './FloatingPanel';
 import FilesPane from './FilesPane';
 import useStore from '../store';
@@ -47,6 +47,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
   const [path, setPath] = useState<string>('~');
   const [dir, setDir] = useState<string | null>(null);
   const [favourites, setFavourites] = useState<string[]>(readFavourites);
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
 
   const saveFavourites = (next: string[]) => {
     setFavourites(next);
@@ -59,7 +60,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
   };
   // FilesPane hands its "open this path" handle back through a ref — this is
   // what a file link clicked in a terminal arrives through.
-  const openFileRef = useRef<((path: string) => void | Promise<void>) | null>(null);
+  const openFileRef = useRef<((path: string, opts?: { pin?: boolean }) => void | Promise<void>) | null>(null);
   /** "Browse to this folder", filled in by FilesPane. Called rather than
    *  passed as a value, so picking Home while standing in a folder under home
    *  still navigates. */
@@ -99,6 +100,8 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
       onClose={onClose}
       width={980}
       height={640}
+      minWidth={720}
+      minHeight={420}
     >
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div
@@ -179,6 +182,36 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
               </button>
             </div>
           ))}
+
+          {recentFiles.length > 0 && (
+            <>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                margin: '12px 2px 2px', fontSize: 10, letterSpacing: 0.4,
+                textTransform: 'uppercase', color: 'var(--muted-foreground)',
+              }}>
+                <span style={{ flex: 1 }}>Recent</span>
+              </div>
+              {recentFiles.map(file => {
+                const name = file.split('/').pop() ?? file;
+                return (
+                  <button
+                    key={file}
+                    onClick={() => { setHlLine(null); void openFileRef.current?.(file, { pin: false }); }}
+                    title={file}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 7, width: '100%', minWidth: 0,
+                      padding: '5px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                      fontSize: 12, textAlign: 'left', background: 'none', color: 'var(--muted-foreground)',
+                    }}
+                  >
+                    <History size={13} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </div>
         <FilesPane
           sessionId={sessionId}
@@ -186,6 +219,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
           browseRef={browseRef}
           initialPath={path}
           onDirChange={setDir}
+          onRecentFilesChange={setRecentFiles}
           highlightLine={hlLine}
           onFileSelect={(p: string) => { if (p !== openFile?.path) setHlLine(null); }}
         />

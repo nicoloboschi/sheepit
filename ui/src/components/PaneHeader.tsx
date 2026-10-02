@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, PanelRight, RotateCcw } from 'lucide-react';
+import { SquareTerminal, X, PanelRight, RotateCcw, Pi, Feather } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
 import DogStatus from './DogStatus';
@@ -192,6 +192,8 @@ export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, 
         <span className={`pane-header-kind-badge${isActive ? ' pane-header-kind-badge-active' : ''}`}>
           {session.isClaudeCode ? <ClaudeIcon size={15} />
             : session.isCodex    ? <OpenAIIcon size={15} />
+            : session.isPi       ? <Pi size={15} />
+            : session.isHermes   ? <Feather size={15} />
             : session.isOpencode ? <OpenCodeIcon size={15} />
             : session.isAntigravity ? <AntigravityIcon size={15} />
             : session.isCopilot  ? <GitHubCopilotIcon size={15} />

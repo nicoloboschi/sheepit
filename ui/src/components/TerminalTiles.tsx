@@ -1,4 +1,7 @@
 import { useCallback } from 'react';
+
+/** Stable empty handler — a tile has nothing to activate. */
+const noop = (): void => {};
 import { Plus } from 'lucide-react';
 import TerminalCell from './TerminalCell';
 import * as sharedWs from '../sharedWs';
@@ -56,7 +59,11 @@ export default function TerminalTiles({ ids, max, onAdd, emptyLabel, addLabel }:
               isActive
               // Bare terminal, no persisted view, no nested Terminals tab.
               tile
-              onActivate={() => {}}
+              // A tile is the only thing in its box, so there is nothing to
+              // activate. Closing is by id rather than by index, so these stay
+              // inline: `TerminalCell`'s memo does not bite here, and with at
+              // most four scratch shells that is not worth a lookup table.
+              onActivate={noop}
               onClose={() => close(id)}
             />
           </div>

@@ -54,10 +54,6 @@ const POOL_COLS = 120;
 const POOL_ROWS = 40;
 const POOL_PREFIX = 'pool-';
 
-/** Coalescing window for `current_input` broadcasts (see publishCurrentInput).
- *  Short enough that the sidebar still feels live, long enough that a fast
- *  typist produces ~20 broadcasts/second instead of one per character. */
-const INPUT_PUBLISH_MS = 50;
 
 /** Coalescing window for persisting sticky-mode changes (see schedulePersist). */
 const PERSIST_DEBOUNCE_MS = 1000;
@@ -110,7 +106,15 @@ const PROC_INFO_TTL_MS = 10_000;
  */
 const AGENT_RESUME_COMMANDS: Record<string, string> = {
   claude: 'claude --dangerously-skip-permissions -c',
+  // Pi files its sessions per directory, so `-c` continues the conversation
+  // that was running *here* — the same guarantee Claude's `-c` gives, which is
+  // the only reason either is safe to type into a restored pane.
+  pi: 'pi -c',
 };
+// Deliberately NOT here: `codex resume --last` and `hermes --continue` both
+// mean the most recent session on the machine, not the most recent one in this
+// directory. A pane that comes back holding somebody else's work is worse than
+// a pane that comes back holding a shell.
 
 /** How quiet a restored shell must go before the resume command is typed, and
  *  the longest we wait for that quiet.
@@ -121,6 +125,10 @@ const AGENT_RESUME_COMMANDS: Record<string, string> = {
  *  restoring twenty panes at once, where every shell starts slowly. The
  *  deadline is the backstop for a shell that never goes quiet on its own. */
 const RESUME_SETTLE_MS = 700;
+/** How long a discovered Pi transcript is trusted before the directory is read
+ *  again. Long enough that the session list's own sweep costs nothing, short
+ *  enough that a fresh `pi` in the same pane is picked up while you watch. */
+const PI_DISCOVER_TTL_MS = 10_000;
 const RESUME_DEADLINE_MS = 15_000;
 
 /** Run a background sweep's command at reduced scheduling priority.
@@ -181,6 +189,34 @@ export function findCodexRollout(root: string, agentSessionId: string): string |
     }
   }
   return null;
+}
+
+/**
+ * Find Pi's transcript for a directory.
+ *
+ * Pi has no hooks, so nothing ever reports its path — but it files its
+ * sessions per project, `<root>/<slug of cwd>/<ISO timestamp>_<id>.jsonl`, so
+ * the directory is the key and the newest filename is the live session.
+ *
+ * The slug is matched on its letters and digits alone rather than by rebuilding
+ * Pi's escaping (`--Users-me-dev-x--`): one `.` or space in a path and a
+ * reconstructed slug is silently wrong, while a comparison that ignores the
+ * punctuation cannot be. Filenames start with an ISO timestamp, so sorting
+ * them is sorting by age.
+ */
+export function findPiSession(root: string, cwd: string): string | null {
+  const key = (v: string): string => v.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const want = key(cwd);
+  if (!want) return null;
+  let dirs: string[];
+  try { dirs = readdirSync(root); } catch { return null; }
+  const dir = dirs.find(d => key(d) === want);
+  if (!dir) return null;
+  try {
+    const files = readdirSync(join(root, dir)).filter(f => f.endsWith('.jsonl')).sort();
+    const last = files[files.length - 1];
+    return last ? join(root, dir, last) : null;
+  } catch { return null; }
 }
 
 export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', 'unknown'];
@@ -426,7 +462,7 @@ export function parseOscProgress(data: string): boolean | null {
  *  `node -e "…isCodex…"`, or grepping for "claude", would flag itself as that
  *  agent. Two tokens is enough for both real shapes: `claude …` (direct binary)
  *  and `node …/bin/codex …` (wrapper script). */
-export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'hermes' | null {
+export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'hermes' | 'pi' | null {
   const tokens = args.split(/\s+/, 2);
   for (const [index, token] of tokens.entries()) {
     if (!token) continue;
@@ -435,6 +471,9 @@ export function detectAgentApp(args: string): 'claude' | 'codex' | 'opencode' | 
     if (base === 'codex' || token.includes('/codex/') || token.includes('/codex-')) return 'codex';
     if (base === 'opencode' || token.includes('/opencode/')) return 'opencode';
     if (base === 'hermes' || token.includes('/hermes/')) return 'hermes';
+    // `pi` is two letters, so it is matched as a whole basename only — a path
+    // containing `/pi/` would claim half of python's site-packages.
+    if (base === 'pi') return 'pi';
     if (base === 'agy' || base === 'antigravity' || token.includes('/antigravity-cli/')) return 'antigravity';
     if (base === 'copilot' || token.includes('/copilot/')) return 'copilot';
     if (base === 'grok' || base === 'grok-build' || token.includes('/grok-build/')) return 'grok';
@@ -482,12 +521,6 @@ const PID_FILE = join(CONFIG_DIR, 'pty-daemon.pid');
 
 const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
-function stripEscapeSequences(data: string): string {
-  return data.replace(
-    /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)?|\[[\x20-\x3f]*[\x40-\x7e]|.)/g,
-    ''
-  );
-}
 
 // ── Ring Buffer ──────────────────────────────────────────────────────────────
 
@@ -876,9 +909,6 @@ export class DirectBridge {
 
   private gitCache = new Map<string, { gitRoot: string | null; branch: string | null; dirty: boolean }>();
   private prCache = new Map<string, { prNum: number; prState: string; prUrl: string } | null>();
-  private inputBuffers = new Map<string, string>();
-  /** Pending coalesced `current_input` broadcasts (see publishCurrentInput). */
-  private inputPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Pending coalesced persist triggered by a mode change (see schedulePersist). */
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   /** Warm shells spawned in the proxy under POOL_PREFIX ids, waiting to be
@@ -919,7 +949,11 @@ export class DirectBridge {
   private ringWritesInFlight = new Set<string>();
   /** Per-session process stats (CPU/mem/app detection), refreshed on their own
    *  slower clock — see PROC_INFO_TTL_MS and listSessions. */
-  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; isHermes: boolean; cpuPercent: number; memMb: number }>();
+  /** Pi's transcript per pane, with the clock that bounds the directory scan.
+   *  `null` is cached too — a pane that has no Pi session yet must not read the
+   *  directory on every two-second sweep. */
+  private piPaths = new Map<string, { at: number; path: string | null }>();
+  private procInfo = new Map<string, { isClaudeCode: boolean; isCodex: boolean; isOpencode: boolean; isAntigravity: boolean; isCopilot: boolean; isGrok: boolean; isCursor: boolean; isHermes: boolean; isPi: boolean; cpuPercent: number; memMb: number }>();
   private procInfoAt = 0;
   /** Per-session state on disk, one file each (see session-store.ts). */
   /** Restored panes whose agent is waiting to be started again, keyed by
@@ -1094,7 +1128,7 @@ export class DirectBridge {
     this.cachedSessions = sessions;
     const liveIds = new Set(sessions.map(s => s.id));
     for (const id of this.knownSessions) {
-      if (!liveIds.has(id)) { this.knownSessions.delete(id); this.inputBuffers.delete(id); this.clearInputPublish(id); }
+      if (!liveIds.has(id)) this.knownSessions.delete(id);
     }
     for (const s of sessions) {
       if (!this.knownSessions.has(s.id)) { this.knownSessions.add(s.id); this.persist(); }
@@ -1292,6 +1326,20 @@ export class DirectBridge {
    */
   resolveAgentTranscript(sessionId: string): string | null {
     const ref = this.agentSessions.get(sessionId);
+    // Pi reports nothing — it has no hook system — so its transcript is found
+    // from the pane's own directory instead of from a ref. Re-discovered on a
+    // short TTL rather than cached for the session's life: starting a second
+    // `pi` in the same directory writes a *new* file beside the old one, and a
+    // path pinned once would leave the pane describing the conversation
+    // before last for ever.
+    const sess = this.sessions.get(sessionId);
+    if (sess?.sessionType === 'pi' && sess.path) {
+      const hit = this.piPaths.get(sessionId);
+      if (hit && Date.now() - hit.at < PI_DISCOVER_TTL_MS) return hit.path;
+      const found = findPiSession(join(os.homedir(), '.pi', 'agent', 'sessions'), sess.path);
+      this.piPaths.set(sessionId, { at: Date.now(), path: found });
+      return found;
+    }
     if (!ref) return null;
     if (ref.transcriptPath && existsSync(ref.transcriptPath)) return ref.transcriptPath;
     if (!ref.agentSessionId) return null;
@@ -1567,8 +1615,6 @@ export class DirectBridge {
 
     this.daemon.sendFire({ type: 'kill', id: sessionId });
     this.sessions.delete(sessionId);
-    this.inputBuffers.delete(sessionId);
-    this.clearInputPublish(sessionId);
     const ringPath = join(RING_DIR, `${sessionId}.buf`);
     try { if (existsSync(ringPath)) unlinkSync(ringPath); } catch {}
     // Drop everything else keyed by this session too, or it accumulates for
@@ -1636,45 +1682,11 @@ export class DirectBridge {
     // it would land in the middle of whatever they are typing.
     if (this.pendingResumes.size) this.cancelAgentResume(sessionId);
     this.daemon.sendFire({ type: 'write', id: sessionId, data });
-
-    const stripped = stripEscapeSequences(data);
-    for (const ch of stripped) {
-      if (ch === '\r' || ch === '\n') {
-        this.inputBuffers.set(sessionId, '');
-      } else if (ch === '\x7f' || ch === '\b') {
-        const cur = this.inputBuffers.get(sessionId) ?? '';
-        this.inputBuffers.set(sessionId, cur.slice(0, -1));
-      } else if (ch >= ' ' || ch === '\t') {
-        this.inputBuffers.set(sessionId, (this.inputBuffers.get(sessionId) ?? '') + ch);
-      }
-    }
-    if (stripped) this.publishCurrentInput(sessionId);
+    // Nothing else happens here on purpose. This is the path a keystroke
+    // travels, so anything added to it is felt. See the note on `current_input`
+    // in the removal below.
   }
 
-  /** Broadcast the session's in-progress input line, coalesced.
-   *
-   *  The buffer above updates per character, but subscribers only ever want the
-   *  settled line — publishing inside that loop sent one broadcast to EVERY
-   *  connected client per keystroke, and one per character on paste. That is
-   *  work on the same path a keystroke travels, so it showed up as input lag.
-   *  Trailing-edge: the first call schedules, the rest are absorbed, and the
-   *  timer fires with whatever the buffer holds by then. */
-  private publishCurrentInput(sessionId: string): void {
-    if (this.inputPublishTimers.has(sessionId)) return;
-    this.inputPublishTimers.set(sessionId, setTimeout(() => {
-      this.inputPublishTimers.delete(sessionId);
-      this.pubsub.publish('__sessions__', {
-        type: 'current_input',
-        session_id: sessionId,
-        input: this.inputBuffers.get(sessionId) ?? '',
-      });
-    }, INPUT_PUBLISH_MS));
-  }
-
-  private clearInputPublish(sessionId: string): void {
-    const t = this.inputPublishTimers.get(sessionId);
-    if (t) { clearTimeout(t); this.inputPublishTimers.delete(sessionId); }
-  }
 
   resize(sessionId: string, cols: number, rows: number): void {
     const sess = this.sessions.get(sessionId);
@@ -1841,20 +1853,21 @@ export class DirectBridge {
       this.procInfo.clear();
       for (const { id, pid } of pids) {
         const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, isHermes = false, cpuPercent = 0, memMb = 0;
+        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, isHermes = false, isPi = false, cpuPercent = 0, memMb = 0;
         for (const c of children) {
           const app = detectAgentApp(c.args);
           if (app === 'claude') isClaudeCode = true;
           else if (app === 'codex') isCodex = true;
           else if (app === 'opencode') isOpencode = true;
           else if (app === 'hermes') isHermes = true;
+          else if (app === 'pi') isPi = true;
           else if (app === 'antigravity') isAntigravity = true;
           else if (app === 'copilot') isCopilot = true;
           else if (app === 'grok') isGrok = true;
           else if (app === 'cursor') isCursor = true;
           cpuPercent += c.cpu; memMb += c.rssKb / 1024;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, isHermes, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
+        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, isHermes, isPi, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
         // Any child at all means the shell isn't just sitting at a prompt.
         const sess = this.sessions.get(id);
         if (sess) sess.liveApp = children.length > 0;
@@ -1866,15 +1879,28 @@ export class DirectBridge {
       const procs = processInfo.get(sess.id);
       const git = this.getGitInfo(sess.path);
       if (procs) {
-        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isOpencode ? 'opencode' : procs.isHermes ? 'hermes' : procs.isAntigravity ? 'antigravity' : procs.isCopilot ? 'copilot' : procs.isGrok ? 'grok' : procs.isCursor ? 'cursor' : null;
+        const newType = procs.isClaudeCode ? 'claude' : procs.isCodex ? 'codex' : procs.isPi ? 'pi' : procs.isOpencode ? 'opencode' : procs.isHermes ? 'hermes' : procs.isAntigravity ? 'antigravity' : procs.isCopilot ? 'copilot' : procs.isGrok ? 'grok' : procs.isCursor ? 'cursor' : null;
         if (newType && sess.sessionType !== newType) { sess.sessionType = newType; this.persist(); }
       }
       return {
         id: sess.id, name: sess.name, path: sess.path, username,
+        // KNOWN WRONG, and not a rename away from being right: this is the
+        // moment *this server process* created its session object, not when
+        // anything last happened in the pane. `createdAt` is `Date.now()` in
+        // the restore paths too, so after a restart all 54 sessions carry the
+        // identical stamp and it never moves again. Observed: every pane card
+        // in the sidebar showing the same age, and the New Session dialog
+        // sorting projects by it.
+        //
+        // Fixing it means deciding what counts as activity — output arriving,
+        // a key sent, an agent state change — and stamping that. Nothing in
+        // the UI will be right until then; `sessionLastEvent` in the store is
+        // derived from this field, so it inherits the same wrongness.
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: this.isSessionBusy(sess.id), fresh: this.isSessionFresh(sess.id),
         isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isHermes: procs?.isHermes ?? false,
+        isPi: procs?.isPi ?? false,
         isDog: isDog(sess.id), isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, sideOf: sess.sideOf, ...git,
@@ -2039,7 +2065,6 @@ export class DirectBridge {
       managedPtyDetails,
       scrollbackStreams: this.sessions.size,
       memBuffers: this.sessions.size,
-      inputBuffers: this.inputBuffers.size,
       knownSessions: this.knownSessions.size,
       pubsubChannels: this.pubsub.channelStats(),
       serverMemory: process.memoryUsage(),

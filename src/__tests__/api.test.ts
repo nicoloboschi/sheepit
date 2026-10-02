@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import express from 'express'
 import { createServer } from 'http'
 import type { AddressInfo } from 'net'
-import { createApiRouter, rollupState, parsePorcelain } from '../api.js'
+import { createApiRouter, rollupState, parsePorcelain, foldPerf } from '../api.js'
 import type { DirectBridge } from '../direct-bridge.js'
 import type { LogBuffer } from '../server.js'
 import type { AIService } from '../ai.js'
@@ -24,7 +24,6 @@ const mockBridge: DirectBridge = {
     managedPtys: 1,
     scrollbackStreams: 1,
     memBuffers: 0,
-    inputBuffers: 1,
     knownSessions: 1,
     pubsubChannels: [],
     serverMemory: { rss: 100000, heapUsed: 50000, heapTotal: 80000, external: 1000, arrayBuffers: 500 },
@@ -274,5 +273,47 @@ describe('parsePorcelain', () => {
       '/repo/moved.ts': 'renamed',
       '/repo/both.ts': 'modified',
     })
+  })
+})
+
+// The one check behind the perf fold: it is what turns 360 raw windows into the
+// answer "what is slow", and a wrong sum here sends every later fix at the
+// wrong thing.
+describe('foldPerf', () => {
+  const win = (shell: string, over: Record<string, unknown> = {}) => ({
+    at: 0, secs: 10, shell, fps: 60, slowFrames: 1, worstFrameMs: 30,
+    worstFrameBlame: 'xterm:write', longTasks: 1, longTaskMs: 60, worstLongTaskMs: 60,
+    spans: { 'xterm:write': { n: 10, totalMs: 100, maxMs: 30 } },
+    counts: { 'ws:msg': 50 }, terminals: 3, browserPanes: 0, domNodes: 100,
+    heapMb: 42, dpr: 2, ...over,
+  }) as never
+
+  it('is empty until something is posted', () => {
+    expect(foldPerf([], '')).toEqual({ windows: 0 })
+  })
+
+  it('adds spans and counts across windows, and keeps the worst single frame', () => {
+    const out = foldPerf([win('electron'), win('electron', { worstFrameMs: 120 })], '') as never as {
+      windows: number; seconds: number; worstFrameMs: number
+      spans: { name: string; n: number; totalMs: number; maxMs: number }[]
+      counts: { name: string; n: number }[]
+    }
+    expect(out.windows).toBe(2)
+    expect(out.seconds).toBe(20)
+    expect(out.worstFrameMs).toBe(120)
+    expect(out.spans[0]).toMatchObject({ name: 'xterm:write', n: 20, totalMs: 200, maxMs: 30 })
+    expect(out.counts[0]).toMatchObject({ name: 'ws:msg', n: 100 })
+  })
+
+  it('narrows to one shell, which is how the two are compared', () => {
+    const out = foldPerf([win('electron'), win('browser'), win('browser')], 'browser') as never as
+      { windows: number; shells: string[] }
+    expect(out.windows).toBe(2)
+    expect(out.shells.sort()).toEqual(['browser', 'electron'])
+  })
+
+  it('reports no main-process section for a plain tab', () => {
+    const out = foldPerf([win('browser')], '') as never as { main: unknown }
+    expect(out.main).toBeNull()
   })
 })

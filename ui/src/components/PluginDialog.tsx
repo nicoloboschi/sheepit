@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, Check, X } from 'lucide-react';
+import { Pi } from 'lucide-react';
 import ClaudeIcon from './ClaudeIcon';
 import OpenAIIcon from './OpenAIIcon';
 
@@ -12,6 +13,7 @@ interface PluginStatus {
   shipped: string | null;
   claude: AgentPluginState;
   codex: AgentPluginState;
+  pi: AgentPluginState;
 }
 
 interface HookTraceEntry {
@@ -238,7 +240,7 @@ export function PluginContent() {
     }
   }, []);
 
-  const anyAgent = !!status && (status.claude.available || status.codex.available);
+  const anyAgent = !!status && (status.claude.available || status.codex.available || status.pi.available);
 
   return (
     <div className="p-5">
@@ -270,6 +272,25 @@ export function PluginContent() {
             state={status.codex}
             shipped={status.shipped}
           />
+          {/* Pi takes no hooks plugin — it has no hook system — so what is
+              installed there is an *extension*: one module Pi imports at
+              startup, reporting the same states through the same endpoint. It
+              is listed beside the other two because the question is the same
+              one ("is this agent reporting, and from which build"), and a page
+              that listed two of the three would read as the third being
+              forgotten. Hermes is the one genuinely left out, and says so
+              below. */}
+          <AgentRow
+            label="Pi"
+            icon={<Pi size={15} />}
+            state={status.pi}
+            shipped={status.shipped}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            <strong>Hermes</strong> is not here: its hooks live in the same{' '}
+            <code>config.yaml</code> as your model and provider, behind its own consent
+            file, and sheepit does not edit that.
+          </p>
         </div>
       )}
 
@@ -298,8 +319,8 @@ export function PluginContent() {
 
       {!anyAgent && status && (
         <p className="mt-3 text-[11px] text-muted-foreground">
-          Neither <code>claude</code> nor <code>codex</code> is on this machine's PATH, so
-          there is nothing to install into.
+          None of <code>claude</code>, <code>codex</code> or <code>pi</code> is on this
+          machine's PATH, so there is nothing to install into.
         </p>
       )}
 
@@ -313,10 +334,10 @@ export function PluginContent() {
             background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
           }}
         >
-          Reinstalled. <strong>Agents already running keep the old hooks</strong> — both
-          Claude Code and Codex read them once, when they start. Restart the agent in a
-          pane for it to report again; restarting sheepit or reloading this page will not
-          do it.
+          Reinstalled. <strong>Agents already running keep the old code</strong> — Claude
+          Code and Codex read their hooks once, when they start, and Pi imports its
+          extension once. Restart the agent in a pane for it to report again; restarting
+          sheepit or reloading this page will not do it.
         </p>
       )}
 

@@ -55,6 +55,10 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
   // and the drag would otherwise re-render every pane 60 times a second.
   useEffect(() => {
     document.documentElement.style.setProperty('--flock-width-raw', `${collapsed ? 36 : sidebarW}px`);
+    // The desktop shell needs this as a class, not a `:has()` on the root: a
+    // root-anchored :has() is re-evaluated against every DOM mutation in the
+    // app, and this app mutates constantly. See electron/preload.cjs.
+    document.documentElement.classList.toggle('sidebar-collapsed', collapsed);
   }, [collapsed, sidebarW]);
 
   // Expose toggle so App can show a button when sidebar is collapsed

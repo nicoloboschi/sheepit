@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync, readFileSync, readdirSync, copyFileSync, cpSync, mkdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, copyFileSync, cpSync, mkdirSync, statSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -43,6 +43,69 @@ function codexInstalledVersion(): string | null {
   } catch { return null; }
 }
 
+/** Where Pi loads user extensions from, and the one file we put there.
+ *
+ *  Pi has no plugin manager and no hook system: an extension is a module in
+ *  this directory that Pi imports at startup, so installing is a file copy and
+ *  there is nothing to uninstall but a delete. The version is a comment on the
+ *  first line of the installed copy rather than a marker file beside it —
+ *  Pi scans this directory, and a second file in it is a second thing to
+ *  explain to whoever opens it. */
+function piExtensionPath(): string {
+  return join(homedir(), '.pi', 'agent', 'extensions', 'sheepit.js');
+}
+
+const PI_VERSION_RE = /^\/\/ sheepit plugin v(\S+)/;
+
+/** Version currently installed into Pi, if any. */
+function piInstalledVersion(): string | null {
+  try {
+    const first = readFileSync(piExtensionPath(), 'utf8').split('\n', 1)[0] ?? '';
+    return PI_VERSION_RE.exec(first)?.[1] ?? null;
+  } catch { return null; }
+}
+
+/**
+ * Install (or update) the Pi extension.
+ *
+ * Nothing like the other two: no CLI to drive, no marketplace, no version-keyed
+ * cache — so none of the traps those have. It is one `writeFileSync`, and the
+ * things worth saying about it are what that buys:
+ *
+ *  - **It reaches a running session on its next start and no sooner.** Pi
+ *    imports extensions once, at startup, exactly as the other agents read
+ *    `hooks.json` once. There is no `syncPluginScriptsIntoCaches` equivalent
+ *    to sneak a fix into a live session, because the code is already resident.
+ *  - **A forced reinstall is the same write.** Nothing refuses to touch an
+ *    already-installed copy, so the `uninstall`-then-`install` dance both
+ *    other installers need has no counterpart here; `force` only skips the
+ *    version comparison.
+ */
+async function installIntoPi(root: string, shipped: string, force = false): Promise<void> {
+  const current = piInstalledVersion();
+  if (current === shipped && !force) return;
+
+  // No Pi on this machine — nothing to install into, and not worth a warning.
+  try {
+    await execFileAsync('pi', ['--version'], { timeout: 10_000 });
+  } catch { return; }
+
+  const src = join(root, 'plugin', 'pi', 'sheepit.js');
+  if (!existsSync(src)) return;
+  try {
+    const dest = piExtensionPath();
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, `// sheepit plugin v${shipped}\n${readFileSync(src, 'utf8')}`);
+    logger.info(
+      current
+        ? `Updated Pi extension ${current} -> ${shipped}`
+        : `Installed Pi extension ${shipped}`,
+    );
+  } catch (e) {
+    logger.info(`Could not install the Pi extension (that pane's state falls back to heuristics): ${e}`);
+  }
+}
+
 /** Version currently installed into Claude Code, if any. */
 function installedVersion(): string | null {
   try {
@@ -79,6 +142,7 @@ export async function ensureAgentPluginInstalled(): Promise<void> {
   await Promise.all([
     installIntoClaude(root, shipped),
     installIntoCodex(root, shipped),
+    installIntoPi(root, shipped),
   ]);
 
   // Reach the sessions that are already running, not just the next one.
@@ -166,19 +230,24 @@ export interface PluginStatus {
   shipped: string | null;
   claude: AgentPluginState;
   codex: AgentPluginState;
+  /** Pi takes an extension rather than a hooks plugin, but it answers the same
+   *  two questions, so it rides in the same shape. */
+  pi: AgentPluginState;
 }
 
 /** Read-only: what is bundled, and what each agent currently has. */
 export async function getPluginStatus(): Promise<PluginStatus> {
   const root = packageRoot();
-  const [claudeAvailable, codexAvailable] = await Promise.all([
+  const [claudeAvailable, codexAvailable, piAvailable] = await Promise.all([
     agentAvailable('claude'),
     agentAvailable('codex'),
+    agentAvailable('pi'),
   ]);
   return {
     shipped: shippedVersion(root),
     claude: { available: claudeAvailable, installed: installedVersion() },
     codex: { available: codexAvailable, installed: codexInstalledVersion() },
+    pi: { available: piAvailable, installed: piInstalledVersion() },
   };
 }
 
@@ -204,6 +273,7 @@ export async function reinstallAgentPlugin(): Promise<PluginStatus> {
   await Promise.all([
     installIntoClaude(root, shipped, true),
     installIntoCodex(root, shipped, true),
+    installIntoPi(root, shipped, true),
   ]);
   syncPluginScriptsIntoCaches(root);
   return getPluginStatus();

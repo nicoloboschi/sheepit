@@ -7,50 +7,27 @@
 //   file has tracked changes.
 // - Git diff    → mounts with `defaultMode="diff"` and pre-parsed `hunks` (so
 //   it doesn't re-fetch); flipping to content fetches the raw file.
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
+import CsvTable from './CsvTable';
+// Lazy on purpose: CodeMirror and its language modes are 1.1 MB minified
+// (measured), and nothing needs them until you press Edit. The viewer's own
+// highlighting is Prism, which loads one grammar at a time.
+const CodeEditor = lazy(() => import('./CodeEditor'));
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+// The async-light build, not the barrel: the barrel bundles refractor's ~290
+// language grammars (measured: 632 KB minified, in a chunk the Files pane
+// fetches before it can show you a single file). This one loads refractor's
+// core and then the one grammar the file needs, each as its own small chunk.
+import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-async-light';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import CodeMirror from '@uiw/react-codemirror';
-import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-import { javascript } from '@codemirror/lang-javascript';
-import { python } from '@codemirror/lang-python';
-import { css } from '@codemirror/lang-css';
-import { html } from '@codemirror/lang-html';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
-import { rust } from '@codemirror/lang-rust';
-import { java } from '@codemirror/lang-java';
-import { cpp } from '@codemirror/lang-cpp';
-import { sql } from '@codemirror/lang-sql';
-import { yaml } from '@codemirror/lang-yaml';
-import { php } from '@codemirror/lang-php';
-import { go } from '@codemirror/lang-go';
-import { sass } from '@codemirror/lang-sass';
-import { less } from '@codemirror/lang-less';
-import { xml } from '@codemirror/lang-xml';
-import { StreamLanguage } from '@codemirror/language';
-import { EditorView } from '@codemirror/view';
-import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { ruby } from '@codemirror/legacy-modes/mode/ruby';
-import { toml } from '@codemirror/legacy-modes/mode/toml';
-import { swift } from '@codemirror/legacy-modes/mode/swift';
-import { lua } from '@codemirror/legacy-modes/mode/lua';
-import { perl } from '@codemirror/legacy-modes/mode/perl';
-import { r as rMode } from '@codemirror/legacy-modes/mode/r';
-import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
-import { properties } from '@codemirror/legacy-modes/mode/properties';
-import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { protobuf } from '@codemirror/legacy-modes/mode/protobuf';
-import { csharp, scala, kotlin, dart } from '@codemirror/legacy-modes/mode/clike';
-import type { Extension } from '@codemirror/state';
 import {
   ChevronDown, ChevronRight, FileCode, FilePlus, FileMinus,
   Eye, Pencil, Diff, Save, Copy, Check, ClipboardCopy, ExternalLink, Trash2,
   Maximize2, Minimize2, Loader2, AlertCircle,
 } from 'lucide-react';
 import * as sharedWs from '../sharedWs';
+import { ext, getLang } from '../lang';
 
 // Diff types and the parser live in ../diff so that GitDiffPane can have them
 // without loading this module's editor stack. Re-exported for convenience.
@@ -125,67 +102,9 @@ export function HunkView({ hunk }: { hunk: DiffHunk }) {
 
 // ── File-type helpers ───────────────────────────────────────────────────────
 
-const ext = (name: string): string => (name ?? '').split('.').pop()?.toLowerCase() ?? '';
+export { getLang };
 
-const EXT_LANG: Record<string, string> = {
-  js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
-  css: 'css', scss: 'scss', less: 'less', html: 'html', xml: 'xml',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  sql: 'sql', graphql: 'graphql', gql: 'graphql',
-  dockerfile: 'docker', makefile: 'makefile',
-  swift: 'swift', kt: 'kotlin', scala: 'scala', r: 'r',
-  lua: 'lua', perl: 'perl', php: 'php', dart: 'dart',
-  vue: 'html', svelte: 'html', astro: 'html',
-  md: 'markdown', mdx: 'markdown', tex: 'latex',
-  ini: 'ini', env: 'bash', conf: 'ini', cfg: 'ini',
-  proto: 'protobuf', tf: 'hcl',
-};
-export const getLang = (name: string) => EXT_LANG[ext(name)] ?? 'text';
 
-const legacy = (m: Parameters<typeof StreamLanguage.define>[0]): Extension => StreamLanguage.define(m);
-
-function getCmLang(name: string): Extension[] {
-  switch (getLang(name)) {
-    case 'javascript': return [javascript()];
-    case 'jsx':        return [javascript({ jsx: true })];
-    case 'typescript': return [javascript({ typescript: true })];
-    case 'tsx':        return [javascript({ jsx: true, typescript: true })];
-    case 'python':     return [python()];
-    case 'css':        return [css()];
-    case 'scss':       return [sass()];
-    case 'less':       return [less()];
-    case 'html':       return [html()];
-    case 'xml':        return [xml()];
-    case 'json':       return [json()];
-    case 'markdown':   return [markdown()];
-    case 'rust':       return [rust()];
-    case 'java':       return [java()];
-    case 'cpp': case 'c': return [cpp()];
-    case 'csharp':     return [legacy(csharp)];
-    case 'scala':      return [legacy(scala)];
-    case 'kotlin':     return [legacy(kotlin)];
-    case 'dart':       return [legacy(dart)];
-    case 'go':         return [go()];
-    case 'sql':        return [sql()];
-    case 'yaml':       return [yaml()];
-    case 'php':        return [php()];
-    case 'bash':       return [legacy(shell)];
-    case 'ruby':       return [legacy(ruby)];
-    case 'toml':       return [legacy(toml)];
-    case 'ini':        return [legacy(properties)];
-    case 'swift':      return [legacy(swift)];
-    case 'lua':        return [legacy(lua)];
-    case 'perl':       return [legacy(perl)];
-    case 'r':          return [legacy(rMode)];
-    case 'docker':     return [legacy(dockerFile)];
-    case 'protobuf':   return [legacy(protobuf)];
-    case 'latex':      return [legacy(stex)];
-    default:           return [];
-  }
-}
 
 
 /**
@@ -217,6 +136,8 @@ export const isPdf   = (name: string): boolean => ext(name) === 'pdf';
  *  more use than a format list kept by hand here. */
 export const isVideo = (name: string): boolean => ['mp4','webm','ogv','mov','m4v'].includes(ext(name));
 export const isMd    = (name: string): boolean => ['md','markdown','mdx'].includes(ext(name));
+/** Delimited data — View draws it as a sortable table, Edit opens the text. */
+export const isCsv   = (name: string): boolean => ['csv','tsv'].includes(ext(name));
 export const isText  = (name: string): boolean => !isImage(name) && !isPdf(name) && !isVideo(name);
 
 // ── Unified file view ─────────────────────────────────────────────────────────
@@ -266,6 +187,7 @@ export default function FileView({
 }: FileViewProps) {
   const name = (displayPath ?? path ?? '').split('/').pop() ?? '';
   const mdFile  = isMd(name);
+  const csvFile = isCsv(name);
   const imgFile = isImage(name);
   const pdfFile = isPdf(name);
   const vidFile = isVideo(name);
@@ -531,7 +453,7 @@ export default function FileView({
   const shownPath = displayPath ?? path ?? name;
   // Content side needs a path on disk; the diff side just needs changes.
   const toggleBtns = ([
-    path ? { id: 'preview' as const, icon: <Eye size={11} />, label: mdFile ? 'Preview' : 'View' } : null,
+    path ? { id: 'preview' as const, icon: <Eye size={11} />, label: mdFile ? 'Preview' : csvFile ? 'Table' : 'View' } : null,
     path && editable ? { id: 'edit' as const, icon: <Pencil size={11} />, label: 'Edit' } : null,
     hasDiff ? { id: 'diff' as const, icon: <Diff size={11} />, label: 'Diff' } : null,
   ].filter(Boolean)) as { id: Mode; icon: JSX.Element; label: string }[];
@@ -553,8 +475,8 @@ export default function FileView({
         boxShadow: '0 0 80px rgba(156, 188, 127,0.35), 0 20px 60px rgba(0,0,0,0.6)',
       }
     : collapsible
-      ? { border: `1px solid ${isFocused ? '#9cbc7f' : 'var(--border)'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
-      : { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 };
+      ? { border: `1px solid ${isFocused ? '#9cbc7f' : 'var(--border)'}`, borderRadius: 6, marginBottom: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }
+      : { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' };
 
   return (
     <>
@@ -695,18 +617,17 @@ export default function FileView({
 
           {textFile && mode === 'edit' && editable && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, minHeight: 0, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
-              <CodeMirror
-                value={content}
-                extensions={[EditorView.lineWrapping, ...getCmLang(name)]}
-                theme={vscodeDark}
-                onChange={setContent}
-                onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 's' && e.metaKey) { e.preventDefault(); if (isDirty) save(); } }}
-                basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true, tabSize: 2, searchKeymap: false }}
-                style={{ fontSize: 13, fontFamily: 'var(--font-mono)', minHeight: '100%' }}
-              />
+              <Suspense fallback={loadingEl}>
+                <CodeEditor
+                  name={name}
+                  value={content}
+                  onChange={setContent}
+                  onSave={() => { if (isDirty) save(); }}
+                />
+              </Suspense>
             </div>
           )}
-          {textFile && !svgFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !loading && (
+          {textFile && !svgFile && (mode === 'edit' && !editable || mode === 'preview') && !mdFile && !(csvFile && mode === 'preview') && !loading && (
             <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'auto' }}>
               {noHighlight ? (
                 <pre style={{ margin: 0, padding: '8px 12px', background: 'var(--background)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--foreground)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
@@ -723,6 +644,11 @@ export default function FileView({
                   }}
                 >{content}</SyntaxHighlighter>
               )}
+            </div>
+          )}
+          {textFile && mode === 'preview' && csvFile && !loading && (
+            <div className={justUpdated ? 'file-updated-flash' : undefined} style={{ flex: fill ? 1 : undefined, maxHeight: fill ? undefined : 600, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
+              <CsvTable text={content} />
             </div>
           )}
           {textFile && mode === 'preview' && mdFile && !loading && (

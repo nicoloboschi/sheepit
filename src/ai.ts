@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { configDir } from './paths.js';
 import { logger } from './server.js';
 import type { DirectBridge } from './direct-bridge.js';
+import { readOpeningPrompt } from './agent-info.js';
 
 /** The namer's CLI was killed rather than having failed.
  *
@@ -333,12 +334,18 @@ export function readContextTokens(transcriptPath: string): ContextUsage | null {
       let row: any;
       try { row = JSON.parse(line); } catch { continue; }
 
-      const claude = row?.message?.usage;
-      if (claude) {
-        const n = (Number(claude.input_tokens) || 0)
-          + (Number(claude.cache_read_input_tokens) || 0)
-          + (Number(claude.cache_creation_input_tokens) || 0);
-        // No limit: Claude Code does not write one down. See above.
+      const usage = row?.message?.usage;
+      if (usage) {
+        // Claude Code and Pi both hang the block off the reply row; only the
+        // field names differ, and one of the two sets is always absent, so
+        // adding both is the whole of telling them apart. Neither writes a
+        // window size, so neither gets a limit.
+        const n = (Number(usage.input_tokens) || 0)
+          + (Number(usage.cache_read_input_tokens) || 0)
+          + (Number(usage.cache_creation_input_tokens) || 0)
+          + (Number(usage.input) || 0)
+          + (Number(usage.cacheRead) || 0)
+          + (Number(usage.cacheWrite) || 0);
         if (n > 0) return { used: n };
       }
 
@@ -535,14 +542,18 @@ export class AIService {
    * the whole conversation, not the last three turns — so the prompt was
    * paying a model to do worse what the file already said.
    *
-   * Codex writes no title, so a Codex pane keeps whatever name it has. That is
-   * the deliberate cost of the removal: the alternative was keeping a naming
-   * pipeline, and its prompt, alive for the agent it named least well.
+   * Codex and Pi write no title anywhere in their transcripts, so those panes
+   * fall back to the **first thing the human asked** (`readOpeningPrompt`).
+   * It is the same material a title is made of, chosen by the person rather
+   * than the agent, and it has one property a title does not: it never
+   * changes, so a Codex pane is named once rather than renamed every turn.
+   * Before this they kept the directory's name, which is the name every other
+   * pane in the same checkout had too.
    */
   private async _nameSession(sessionId: string): Promise<void> {
     const transcript = this.bridge!.resolveAgentTranscript(sessionId);
     if (!transcript) return;
-    const title = readAgentTitle(transcript);
+    const title = readAgentTitle(transcript) ?? readOpeningPrompt(transcript);
     if (!title) return;
 
     // Case is kept: the title is written Sentence case on purpose and reads as

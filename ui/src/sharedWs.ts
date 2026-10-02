@@ -9,6 +9,7 @@
 import { wsUrl } from './serverUrl';
 import { applyRemotePreferences, resyncPreferences } from './preferences';
 import useStore from './store';
+import { perf } from './perf';
 
 type MessageHandler = (msg: Record<string, unknown>) => void;
 
@@ -179,10 +180,26 @@ function connect(): void {
 
   socket.onmessage = (ev: MessageEvent) => {
     if (destroyed) return;
+    // Every socket message is timed by type. This is the app's one inbound
+    // firehose — terminal output, the session list, preference patches — so a
+    // frame lost to it is lost here and nowhere else.
+    const endParse = perf.span('ws:parse');
     let msg: Record<string, unknown>;
-    try { msg = JSON.parse(ev.data); } catch { return; }
+    try { msg = JSON.parse(ev.data); } catch { endParse(); return; }
+    endParse();
+    perf.count('ws:bytes', typeof ev.data === 'string' ? ev.data.length : 0);
+    perf.count('ws:msg');
 
     const type = msg.type as string;
+    const endDispatch = perf.span(`ws:${type}`);
+    try {
+      dispatch(msg, type);
+    } finally {
+      endDispatch();
+    }
+  };
+
+  const dispatch = (msg: Record<string, unknown>, type: string) => {
     const sessionId = msg.session_id as string | undefined;
 
     // Another client wrote a preference. Merge it before anything else looks

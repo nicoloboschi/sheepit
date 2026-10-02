@@ -1,5 +1,5 @@
 {
-  "description": "Report agent state to sheepit. The four turn-level events go through report-state.mjs; the per-tool-call \"still working\" ping is a shell script, because a node spawn per tool call is not affordable. Claude Code and Codex do not name the same moments the same way, so a few events here exist for one agent only and the other silently ignores them.",
+  "description": "Report agent state to sheepit. The four turn-level events go through report-state.mjs; the per-tool-call \"still working\" ping is a shell script, because a node spawn per tool call is not affordable. Claude Code and Codex do not name the same moments the same way, so a few events here exist for one agent only and the other silently ignores them. Codex has no Notification event, so its \"waiting on you\" comes from PermissionRequest instead — through post.sh, never the node reporter, because that hook sits directly in front of the approval prompt the user is waiting to see and must print nothing and exit 0.",
   "hooks": {
     "SessionStart": [
       {
@@ -62,6 +62,17 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/report-state.mjs\" idle",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/post.sh\" agent-state '{\"state\":\"waiting\",\"source\":\"claude\",\"event\":\"PermissionRequest\"}'",
             "timeout": 5
           }
         ]

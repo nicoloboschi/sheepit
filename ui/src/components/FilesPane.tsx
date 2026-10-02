@@ -80,6 +80,7 @@ function fmtSize(b: number): string {
 }
 
 const ext     = (name: string): string => (name ?? '').split('.').pop()?.toLowerCase() ?? '';
+const MAX_RECENT_FILES = 12;
 
 
 // ── File list entry ───────────────────────────────────────────────────────────
@@ -592,7 +593,7 @@ export function SearchPanel({ sessionId, onOpenFile, active, scopeDir }: SearchP
 
 interface FilesPaneProps {
   sessionId: string | null;
-  openFileRef: React.MutableRefObject<((path: string) => void | Promise<void>) | null>;
+  openFileRef: React.MutableRefObject<((path: string, opts?: { pin?: boolean }) => void | Promise<void>) | null>;
   onFileSelect?: (path: string) => void;
   highlightQuery?: string | null;
   highlightLine?: number | null;
@@ -608,9 +609,11 @@ interface FilesPaneProps {
   /** The directory being shown, whenever it changes — so the Files dialog can
    *  offer to favourite it. */
   onDirChange?: (dir: string) => void;
+  /** LIFO of visited files, for the floating Files dialog's left sidebar. */
+  onRecentFilesChange?: (files: string[]) => void;
 }
 
-export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile, initialPath, onDirChange, browseRef }: FilesPaneProps) {
+export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile, initialPath, onDirChange, browseRef, onRecentFilesChange }: FilesPaneProps) {
   const [dir,          setDir]          = useState<string | null>(null);
   const [entries,      setEntries]      = useState<Entry[]>([]);
   const [cwd,          setCwd]          = useState<string | null>(null);
@@ -658,12 +661,16 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const draggingRef = useRef(false);
   const [focusedEntry, setFocusedEntry] = useState(-1);
   const fileListRef = useRef<HTMLDivElement>(null);
-  // ── Pinned tabs ───────────────────────────────────────────────────────────
+  // ── Pinned tabs + recent files ───────────────────────────────────────────
   // Double-clicking a file in the tree (or opening one via Search / external
   // openFileRef) promotes it from an ephemeral preview to a pinned tab. Tabs
   // are per-session and persisted in localStorage so switching away from the
   // Files view (or to a different session and back) keeps them visible.
   const [openTabs, setOpenTabs] = useState<string[]>([]);
+  // Recent files are LIFO and include ephemeral selections too. They answer a
+  // different question from tabs: not "keep this open", but "where was I just
+  // reading?".
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
 
   // Highlight state — seeded from props (terminal file-link clicks, git-diff
   // jumps), but the integrated search panel can also drive it for in-pane
@@ -768,21 +775,32 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   useEffect(() => { if (dir) onDirChange?.(dir); }, [dir]); // eslint-disable-line
 
-  // Load pinned tabs whenever the session changes (per-session storage key).
+  // Load pinned tabs and recent files whenever the session changes (per-session
+  // storage keys).
   useEffect(() => {
-    if (!sessionId) { setOpenTabs([]); return; }
+    if (!sessionId) { setOpenTabs([]); setRecentFiles([]); return; }
     try {
       const raw = preferences.getItem(`sheepit:files-tabs:${sessionId}`);
       const arr = raw ? JSON.parse(raw) : [];
       setOpenTabs(Array.isArray(arr) ? arr.filter((p): p is string => typeof p === 'string') : []);
     } catch { setOpenTabs([]); }
+    try {
+      const raw = preferences.getItem(`sheepit:files-recent:${sessionId}`);
+      const arr = raw ? JSON.parse(raw) : [];
+      setRecentFiles(Array.isArray(arr) ? arr.filter((p): p is string => typeof p === 'string').slice(0, MAX_RECENT_FILES) : []);
+    } catch { setRecentFiles([]); }
   }, [sessionId]);
 
-  // Persist tabs whenever they change.
+  // Persist tabs/recent whenever they change.
   useEffect(() => {
     if (!sessionId) return;
     try { preferences.setItem(`sheepit:files-tabs:${sessionId}`, JSON.stringify(openTabs)); } catch {}
   }, [openTabs, sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    try { preferences.setItem(`sheepit:files-recent:${sessionId}`, JSON.stringify(recentFiles)); } catch {}
+  }, [recentFiles, sessionId]);
+  useEffect(() => { onRecentFilesChange?.(recentFiles); }, [recentFiles, onRecentFilesChange]);
 
   // Fetch git status and refresh every 5s — but only for the pane on screen.
   // The default pane view mounts this pane, and every sheep in a pen stays
@@ -798,21 +816,34 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     } catch { /* decorative — leave the last known status up */ }
   }, [sessionId]), 5000, sessionId, filesOnScreen);
 
+  const rememberFile = useCallback((path: string) => {
+    setRecentFiles(files => [path, ...files.filter(p => p !== path)].slice(0, MAX_RECENT_FILES));
+  }, []);
+
+  const selectFile = useCallback((path: string) => {
+    setSelectedFile(path);
+    setMobileView('preview');
+    rememberFile(path);
+    onFileSelect?.(path);
+  }, [rememberFile, onFileSelect]);
+
   // Expose openFile(path) to parent via ref
   useEffect(() => {
     if (!openFileRef) return;
-    openFileRef.current = async (filePath: string) => {
+    openFileRef.current = async (filePath: string, opts?: { pin?: boolean }) => {
       // Browse to the file's parent directory, then select it
       const parentDir = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : null;
       await browse(parentDir);
       setSelectedFile(filePath);
       setMobileView('preview');
+      rememberFile(filePath);
       // External opens (e.g. search-result jump, "open in files") are
-      // intentional enough to pin as a tab.
-      setOpenTabs(tabs => tabs.includes(filePath) ? tabs : [...tabs, filePath]);
+      // intentional enough to pin as a tab. Recent-file jumps are navigation
+      // history, not a request to keep another tab open.
+      if (opts?.pin !== false) setOpenTabs(tabs => tabs.includes(filePath) ? tabs : [...tabs, filePath]);
       onFileSelect?.(filePath);
     };
-  }, [openFileRef, browse, onFileSelect]);
+  }, [openFileRef, browse, rememberFile, onFileSelect]);
 
   // The same handle for directories: the Files dialog's places sidebar drives
   // it. A prop would not do — picking Home while standing in a folder *under*
@@ -821,12 +852,6 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     if (!browseRef) return;
     browseRef.current = (dirPath: string) => { void browse(dirPath); };
   }, [browseRef, browse]);
-
-  const selectFile = (path: string) => {
-    setSelectedFile(path);
-    setMobileView('preview');
-    onFileSelect?.(path);
-  };
 
   /**
    * Go where the path bar says.
@@ -844,14 +869,15 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     if (parent && await browse(parent)) {
       setSelectedFile(target);
       setMobileView('preview');
+      rememberFile(target);
       setOpenTabs(tabs => tabs.includes(target) ? tabs : [...tabs, target]);
     }
-  }, [browse]);
+  }, [browse, rememberFile]);
 
   const openFileTab = useCallback((path: string) => {
     setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
     selectFile(path);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectFile]);
 
   // Click-handler for SearchPanel results: opens the file as a pinned tab,
   // sets the highlight so the viewer scrolls to and tints the match line,
@@ -864,7 +890,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     setSearchMode(false);
     setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
     selectFile(path);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectFile]);
 
   const closeTab = useCallback((path: string) => {
     setOpenTabs(tabs => {
@@ -875,12 +901,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       // so the viewer stays populated — matches how editors handle tab close.
       if (selectedFile === path) {
         const adjacent = next[idx] ?? next[idx - 1] ?? null;
-        if (adjacent) { setSelectedFile(adjacent); onFileSelect?.(adjacent); }
-        else         { setSelectedFile(null); setMobileView('list'); }
+        if (adjacent) selectFile(adjacent);
+        else          { setSelectedFile(null); setMobileView('list'); }
       }
       return next;
     });
-  }, [selectedFile, onFileSelect]);
+  }, [selectedFile, selectFile]);
 
   const startCreate = (type: 'file' | 'folder') => {
     setCreating(type);
@@ -912,7 +938,10 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     const deletedFile = selectedFile;
     setSelectedFile(null);
     setMobileView('list');
-    if (deletedFile) setOpenTabs(tabs => tabs.filter(t => t !== deletedFile));
+    if (deletedFile) {
+      setOpenTabs(tabs => tabs.filter(t => t !== deletedFile));
+      setRecentFiles(files => files.filter(p => p !== deletedFile));
+    }
     if (dir) browse(dir);
     if (deletedFile) onFileSelect?.(null as any);
   }, [selectedFile, dir, browse, onFileSelect]);
@@ -1239,7 +1268,6 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const tabsBar = openTabs.length > 0 && (
     <TabsBar tabs={openTabs} activePath={selectedFile} onSelect={selectFile} onClose={closeTab} />
   );
-
   const preview = (
     <>
       {toolbar(true)}

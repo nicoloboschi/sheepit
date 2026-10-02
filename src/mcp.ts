@@ -92,7 +92,7 @@ export function createMcpTools(bridge: DirectBridge): ToolDef[] {
    *  that answer "does this need me", and not one field more — a model given
    *  CPU percentages will find a reason to talk about CPU percentages. */
   const describe = (s: Awaited<ReturnType<typeof flock>>[number]) => {
-    const agent = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : s.isHermes ? 'hermes'
+    const agent = s.isClaudeCode ? 'claude' : s.isCodex ? 'codex' : s.isPi ? 'pi' : s.isHermes ? 'hermes'
       : s.isOpencode ? 'opencode' : s.isCopilot ? 'copilot' : s.isGrok ? 'grok'
       : s.isCursor ? 'cursor' : s.isAntigravity ? 'antigravity' : null;
     return {

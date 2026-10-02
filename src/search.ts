@@ -281,6 +281,18 @@ export function transcriptLineText(line: string): { role: 'user' | 'assistant'; 
     return text.trim() ? { role: row.type, text: text.trim(), at: rowTime(row) } : null;
   }
 
+  // Pi: one `message` row per message, role and text blocks inside it. Its
+  // tool results carry their own role (`toolResult`) and its preamble is a
+  // `system` row, so the role test is the whole filter.
+  if (row.type === 'message' && row.message && typeof row.message === 'object') {
+    const role = row.message.role;
+    if (role !== 'user' && role !== 'assistant') return null;
+    const text = Array.isArray(row.message.content)
+      ? row.message.content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
+      : '';
+    return text.trim() ? { role, text: text.trim(), at: rowTime(row) } : null;
+  }
+
   // Codex: rollout rows, where the conversation lives in `response_item`.
   if (row.type === 'response_item' && row.payload?.type === 'message') {
     const role = row.payload.role;
@@ -308,6 +320,10 @@ function transcriptRoots(): string[] {
   return [
     join(homedir(), '.claude', 'projects'),
     join(homedir(), '.codex', 'sessions'),
+    // Pi files per project directory. Hermes has no root here on purpose: it
+    // keeps its conversations in a SQLite state.db, not in files ripgrep can
+    // read.
+    join(homedir(), '.pi', 'agent', 'sessions'),
   ];
 }
 

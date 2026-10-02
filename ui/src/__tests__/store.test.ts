@@ -26,7 +26,6 @@ describe('useStore', () => {
       sessionLastEvent: {},
       sessionOrder: [],
       sessionMap: {},
-      sessionCurrentInput: {},
       workspaces: {},
       workspaceOrder: [],
       fields: {},
@@ -81,6 +80,33 @@ describe('useStore', () => {
       expect(second.workspaces).toBe(first.workspaces)
       expect(second.workspaceOrder).toBe(first.workspaceOrder)
       expect(second.sessionMap).toBe(first.sessionMap)
+    })
+
+    it('keeps the object of every session that did not change', () => {
+      // Identity is what every selector downstream reads. One pane moving must
+      // re-render that pane, not the whole flock: this used to be
+      // all-or-nothing, so a single `last_activity` rebuilt all 54 session
+      // objects and every component selecting `sessionMap[id]` re-rendered on a
+      // 2-second timer.
+      const at = 1_700_000_000_000
+      const list = (branch = 'main') => [
+        { ...makeSession('$0', 'shell'), last_activity: at },
+        { ...makeSession('$1', 'dev'), last_activity: at, gitBranch: branch },
+        { ...makeSession('$2', 'test'), last_activity: at },
+      ]
+      useStore.getState().renderSessions(list())
+      const before = useStore.getState().sessionMap
+
+      // Only $1 moved. (A branch, not `last_activity` — that one deliberately
+      // does not invalidate identity; see `sameSession`.)
+      useStore.getState().renderSessions(list('feature'))
+      const after = useStore.getState().sessionMap
+
+      expect(after['$1']).not.toBe(before['$1'])
+      expect(after['$1']!.gitBranch).toBe('feature')
+      // The two that did not move keep the objects they had.
+      expect(after['$0']).toBe(before['$0'])
+      expect(after['$2']).toBe(before['$2'])
     })
 
     it('still updates when a session actually changes', () => {
@@ -402,10 +428,46 @@ describe('fields', () => {
     })
   })
 
-  describe('current input', () => {
-    it('stores current input per session', () => {
-      useStore.getState().setCurrentInput('$0', 'git st')
-      expect(useStore.getState().sessionCurrentInput['$0']).toBe('git st')
+  describe('busy flags', () => {
+    it('writes every pane that went busy together in one update', async () => {
+      // Agents start work together, so their 2200ms timers fire together. Each
+      // one writing on its own meant N full store writes and N full React
+      // commits in a row — measured as a 412ms frame.
+      vi.useFakeTimers()
+      try {
+        const store = useStore.getState()
+        store.renderSessions([makeSession('$0', 'a'), makeSession('$1', 'b'), makeSession('$2', 'c')])
+
+        let writes = 0
+        const unsub = useStore.subscribe(() => { writes++ })
+        store.updateActivity('$0', true)
+        store.updateActivity('$1', true)
+        store.updateActivity('$2', true)
+        vi.advanceTimersByTime(2200)   // the per-pane timers
+        vi.advanceTimersByTime(1)      // the shared flush
+        unsub()
+
+        const busy = useStore.getState().sessionBusy
+        expect([busy['$0'], busy['$1'], busy['$2']]).toEqual([true, true, true])
+        expect(writes).toBe(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not mark a pane busy that finished while the flush was pending', () => {
+      vi.useFakeTimers()
+      try {
+        const store = useStore.getState()
+        store.renderSessions([makeSession('$0', 'a')])
+        store.updateActivity('$0', true)
+        vi.advanceTimersByTime(2200)   // timer fired; the flush has not run yet
+        store.updateActivity('$0', false)
+        vi.advanceTimersByTime(1)
+        expect(useStore.getState().sessionBusy['$0']).not.toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 

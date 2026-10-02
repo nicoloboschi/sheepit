@@ -1,8 +1,8 @@
 {
   "name": "sheepit",
-  "description": "Reports coding-agent state (busy / waiting / idle), the last exchange, and any pull request or issue the agent touched, to the sheepit session that owns this terminal — so panes light up the moment a turn ends, sessions are named from what was actually asked, and the pane bar shows the PR without anything reading the terminal. Works with Claude Code and Codex.",
-  "version": "0.12.0",
+  "description": "Reports coding-agent state (busy / waiting / idle), the last exchange, and any pull request or issue the agent touched, to the sheepit session that owns this terminal \u2014 so panes light up the moment a turn ends, sessions are named from what was actually asked, and the pane bar shows the PR without anything reading the terminal. Works with Claude Code and Codex; Pi gets the same reports from an extension (plugin/pi/sheepit.js), since it has no hooks.",
+  "version": "0.13.0",
   "author": {
-    "name": "Nicolò Boschi"
+    "name": "Nicol\u00f2 Boschi"
   }
 }

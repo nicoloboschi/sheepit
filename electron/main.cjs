@@ -127,6 +127,51 @@ async function createWindow() {
     : `http://127.0.0.1:${backendPort}`);
 }
 
+// ── Main-process health ──────────────────────────────────────────────────────
+// Window events, native view placement and every IPC message are handled on
+// this process's event loop, so a stall here is input lag the renderer cannot
+// see or measure — it is not the one that is blocked. The renderer's own
+// numbers live in ui/src/perf.ts; this is the half of the picture only the main
+// process has, and it is reported into the same place via `main:lag`.
+const LAG_TICK_MS = 250;
+const LAG_REPORT_MS = 50;
+const mainLag = { ticks: 0, stalls: 0, worstMs: 0, totalExcessMs: 0, ipc: {} };
+
+function watchMainLag() {
+  let expected = Date.now() + LAG_TICK_MS;
+  setInterval(() => {
+    const drift = Date.now() - expected;
+    expected = Date.now() + LAG_TICK_MS;
+    mainLag.ticks++;
+    if (drift > LAG_REPORT_MS) {
+      mainLag.stalls++;
+      mainLag.totalExcessMs += drift;
+      if (drift > mainLag.worstMs) mainLag.worstMs = drift;
+    }
+  }, LAG_TICK_MS).unref?.();
+}
+
+/** Time an IPC handler, so a slow native call is named rather than guessed at. */
+function timedIpc(channel, handler) {
+  ipcMain.on(channel, (...args) => {
+    const t0 = Date.now();
+    try { handler(...args); } finally {
+      const dt = Date.now() - t0;
+      const s = mainLag.ipc[channel] || (mainLag.ipc[channel] = { n: 0, totalMs: 0, maxMs: 0 });
+      s.n++; s.totalMs += dt; if (dt > s.maxMs) s.maxMs = dt;
+    }
+  });
+}
+
+// The renderer asks for this once per perf window and folds it into its own
+// snapshot, so there is still exactly one place to read.
+ipcMain.handle('perf:main', () => {
+  const out = JSON.parse(JSON.stringify(mainLag));
+  mainLag.ticks = mainLag.stalls = mainLag.worstMs = mainLag.totalExcessMs = 0;
+  mainLag.ipc = {};
+  return out;
+});
+
 // ── Native browser views ─────────────────────────────────────────────────────
 // A pane's browser, as a real Chromium view laid over the pane's box — not the
 // headless browser streamed as frames. It is in a window you are looking at, so
@@ -249,7 +294,7 @@ ipcMain.on('browser:open', (event, id, url) => {
   if (url) view.webContents.loadURL(url).catch(() => {});
 });
 
-ipcMain.on('browser:bounds', (_event, id, rect) => {
+timedIpc('browser:bounds', (_event, id, rect) => {
   const view = viewOf(id);
   if (!view) return;
   if (!rect) { view.setVisible(false); return; }
@@ -310,6 +355,8 @@ function stopOwnedProcesses() {
     if (!child.killed) child.kill('SIGTERM');
   }
 }
+
+watchMainLag();
 
 app.whenReady().then(createWindow).catch((error) => {
   dialog.showErrorBox('Sheepit failed to start', error.stack || error.message);

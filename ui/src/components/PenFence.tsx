@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { perf } from '../perf';
 import useStore from '../store';
 import { noise, scatterGrass, frontGrass } from './grass';
 
@@ -41,6 +42,14 @@ export default function PenFence({
     if (!cv || !host) return;
 
     const draw = () => {
+      // Timed: a canvas redraw that also reads layout and computed style.
+      // One per pen, and pens redraw on resize and theme change — so if this
+      // shows up per frame, something is calling it that should not.
+      const endDraw = perf.span('penFence:draw');
+      try { drawNow(); } finally { endDraw(); }
+    };
+
+    const drawNow = () => {
       const box = host.getBoundingClientRect();
       if (!box.width || !box.height) return;
       const dpr = window.devicePixelRatio || 1;
@@ -134,11 +143,32 @@ export default function PenFence({
     };
 
     draw();
-    // The pen's height changes when a pane is added, when a font lands, and
-    // when the sidebar is dragged — observe the box rather than the window.
-    const ro = new ResizeObserver(draw);
+    // The box changes when a pane is added, when a font lands, and when the
+    // sidebar is dragged — so observe the box, not the window.
+    //
+    // Coalesced into one frame, and the reason is reads, not paint.
+    //
+    // A drag resizes continuously and a ResizeObserver will call back more than
+    // once before anything is painted. Each callback does
+    // `getBoundingClientRect` and `getComputedStyle` — and it does them with the
+    // layout already dirty, which is the expensive case: measured on a real page
+    // at **1.26ms and 1.54ms per call**, against ~0ms when the layout is
+    // settled. Then it assigns `cv.width`, which dirties the layout again for
+    // the next pen's draw. A column of pens therefore pays a full style and
+    // layout recalculation each, in sequence — classic read/write thrash, and
+    // it is where a slow fence redraw actually goes. The canvas work itself is
+    // ~2ms for the whole main area (see ./grass).
+    //
+    // Redrawing at most once per frame is the most the screen can show anyway,
+    // and it collapses a drag's worth of those recalculations into one.
+    let pending = 0;
+    const redraw = () => {
+      if (pending) return;
+      pending = requestAnimationFrame(() => { pending = 0; draw(); });
+    };
+    const ro = new ResizeObserver(redraw);
     ro.observe(host);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (pending) cancelAnimationFrame(pending); };
     // `active` is in the deps because the canvas cannot react to a CSS colour
     // change on its own — --fence is read at paint time, so the fence has to
     // be repainted when the selected pen changes.

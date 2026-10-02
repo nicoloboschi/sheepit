@@ -989,6 +989,7 @@
   padding: 8px 0 4px 0;
   margin: 0 0 5px 0;
   cursor: pointer;
+
   /* Subtle card look for inactive rows — flat dark background + hairline
      border + rounded corners. Each workspace reads as its own card even
      when nothing is selected. */
@@ -1591,9 +1592,27 @@
 .sheep-idle .sheep-tail { opacity: 0.75; }
 .sheep-idle .sheep-fleece circle { fill: color-mix(in srgb, var(--wool) 60%, var(--accent)); }
 .sheep-idle .sheep-zzz { opacity: 1; }
-.sheep-idle .sheep-zzz path { animation: sheep-zzz-drift 3s ease-out infinite; }
-.sheep-idle .sheep-zzz path:nth-child(2) { animation-delay: 1s; }
-.sheep-idle .sheep-zzz path:nth-child(3) { animation-delay: 2s; }
+/* The zzz drifts only on the full-size sheep in the pane bar, and stands still
+   everywhere else.
+   Idle is the commonest state a pane is in, and the sidebar draws one sheep per
+   pane card, so this was three infinite animations per idle pane across the
+   whole flock: measured on a real session, 105 of them running at once out of
+   152 animations in the document. The cost was repeated 92–118ms frames
+   carrying no script at all — pure compositing — with the GPU process at ~40%
+   in a window where nothing was happening.
+   The glyph stays, so the state still reads at a glance; only the motion goes.
+   At 26px (22px in a tight card) a 3px `z` drifting 6px is not motion anybody
+   can see — the same argument `SheepDot` makes about a 6px dot, where the
+   animal's posture is the signal and nothing else survives the size. There is
+   one pane bar on screen at a time, so what is left is three animations instead
+   of a hundred, on the one animal you are actually looking at. */
+.pane-header .sheep-idle .sheep-zzz path { animation: sheep-zzz-drift 3s ease-out infinite; }
+.pane-header .sheep-idle .sheep-zzz path:nth-child(2) { animation-delay: 1s; }
+.pane-header .sheep-idle .sheep-zzz path:nth-child(3) { animation-delay: 2s; }
+/* Standing still, the three strokes would stack at full strength and read as
+   scribble; staggered opacity keeps them reading as a rising zzz. */
+.sheep-idle .sheep-zzz path:nth-child(2) { opacity: 0.7; }
+.sheep-idle .sheep-zzz path:nth-child(3) { opacity: 0.45; }
 @keyframes sheep-zzz-drift {
   0%   { opacity: 0; transform: translate(2px, 4px) scale(0.55); }
   25%  { opacity: 1; }
@@ -2717,6 +2736,58 @@
 .floating-panel .pane-bar-row input,
 .floating-panel .pane-bar-row a { cursor: auto; }
 
+/* The native `resize: both` handle was technically enough, but it hid behind
+   the panel contents and only worked from one corner. The explicit handles make
+   every floating view — Files, GitHub, Knowledge, scratch terminals and the dog
+   — resize from any edge without adding another dependency. */
+.floating-panel-resize {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+.floating-panel-resize-n,
+.floating-panel-resize-s {
+  left: 8px;
+  right: 8px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.floating-panel-resize-n { top: -4px; }
+.floating-panel-resize-s { bottom: -4px; }
+.floating-panel-resize-e,
+.floating-panel-resize-w {
+  top: 8px;
+  bottom: 8px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.floating-panel-resize-e { right: -4px; }
+.floating-panel-resize-w { left: -4px; }
+.floating-panel-resize-ne,
+.floating-panel-resize-nw,
+.floating-panel-resize-se,
+.floating-panel-resize-sw {
+  width: 16px;
+  height: 16px;
+}
+.floating-panel-resize-ne { top: -4px; right: -4px; cursor: nesw-resize; }
+.floating-panel-resize-nw { top: -4px; left: -4px; cursor: nwse-resize; }
+.floating-panel-resize-se { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.floating-panel-resize-sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.floating-panel-resize-se::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  opacity: 0.45;
+  background:
+    linear-gradient(135deg, transparent 0 45%, var(--muted-foreground) 46% 54%, transparent 55%),
+    linear-gradient(135deg, transparent 0 65%, var(--muted-foreground) 66% 74%, transparent 75%);
+  pointer-events: none;
+}
+
 /* ── The scratch terminals panel ───────────────────────────────────────────
    Up to four headless shells tiled in one floating panel. This is the grid
    that pens no longer have, and the two agree rather than contradict: a pen is
@@ -2817,3 +2888,226 @@
 }
 .headless-add:hover:not(:disabled) { color: var(--foreground); border-color: var(--primary); }
 .headless-add:disabled { opacity: 0.4; cursor: default; }
+
+/* ── The agent half: what you have asked this pane ───────────────────────────
+ *
+ * Reads the agent's own transcript, so it is prose you wrote — which is why the
+ * prompt list is the body text face and not the mono one the diff and the file
+ * tree use. The facts above it stay mono: those are identifiers.
+ */
+.agent-pane {
+  flex: 1; min-height: 0; overflow: auto;
+  background: var(--background);
+  font-size: 12px;
+}
+.agent-pane-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 7px; text-align: center; padding: 26px 20px; color: var(--muted-foreground);
+}
+.agent-pane-empty p { margin: 0; }
+.agent-dim { color: var(--muted-foreground); opacity: 0.75; font-size: 11px; }
+.agent-pad { padding: 10px 12px; }
+.agent-retry {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px;
+  background: none; color: var(--muted-foreground); font-size: 11px; cursor: pointer;
+}
+.agent-retry:hover { border-color: var(--primary); color: var(--primary); }
+
+.agent-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px;
+  background: var(--chrome); border-bottom: 1px solid var(--chrome-line);
+  color: var(--foreground);
+}
+.agent-head b { font-size: 12px; font-weight: 600; }
+.agent-model {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--muted-foreground);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+}
+.agent-copy {
+  margin-left: auto; display: flex; align-items: center;
+  background: none; border: none; cursor: pointer; padding: 3px;
+  color: var(--muted-foreground);
+}
+.agent-copy:hover:not(:disabled) { color: var(--primary); }
+.agent-copy:disabled { opacity: 0.35; cursor: default; }
+
+.agent-facts { padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.agent-fact { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.agent-fact-k {
+  flex: 0 0 72px; font-size: 10px; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--muted-foreground); opacity: 0.8;
+}
+.agent-fact-v {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* A section head is a BAND, not a line of small caps with a rule over it.
+   This half of the pane is four lists stacked in one scroller — facts, plan,
+   links, prompts — and with a hairline between them the eye reads one long
+   list and has to find the headings in it. A filled strip with the label in
+   the foreground colour is a shape you scan past, which is what makes the
+   boundary visible while scrolling. */
+.agent-section {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px;
+  background: var(--accent);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px; font-weight: 600; letter-spacing: 0.7px; text-transform: uppercase;
+  color: var(--foreground);
+}
+.agent-section svg { color: var(--muted-foreground); flex: 0 0 auto; }
+/* Anything after the label — "(capped)", a hint — is not part of the title. */
+.agent-section .agent-dim { font-size: 9px; letter-spacing: 0; text-transform: none; }
+/* Brand green, like the pen card's context count and for the same reason: it
+   is a measure you scan, and nothing is wrong about it. A pill rather than a
+   bare number, because the band is itself a filled surface and a digit on it
+   reads as part of the title. */
+.agent-count {
+  margin-left: auto;
+  color: var(--primary); font-family: var(--font-mono); font-weight: 500;
+  font-size: 10px; letter-spacing: 0;
+  padding: 1px 6px; border-radius: 9px;
+  background: var(--primary-tint); border: 1px solid var(--border);
+}
+/* The lists breathe at the bottom so the next band is not sitting on the last
+   row of the one above it. */
+.agent-links, .agent-prompts { padding-bottom: 10px; }
+
+.agent-prompts { list-style: none; margin: 0; padding: 0 10px 14px; }
+.agent-prompt {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-prompt:last-child { border-bottom: none; }
+.agent-prompt-head {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; color: var(--muted-foreground);
+}
+.agent-prompt-more {
+  margin-left: auto; background: none; border: none; cursor: pointer;
+  color: var(--muted-foreground); font-size: 10px; padding: 0;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.agent-prompt-more:hover { color: var(--primary); }
+/* Clamped, not cut: a pasted essay is a real prompt, but a list where every
+   entry is forty lines is not a list you can scan. `more` opens it in place. */
+.agent-prompt-text {
+  margin-top: 2px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.agent-prompt-open { -webkit-line-clamp: unset; display: block; }
+/* A slash command is not prose — drawn as what it is, so a list with six
+   `/clear`s in it reads as six commands rather than six sentences. */
+.agent-prompt-cmd .agent-prompt-text {
+  font-family: var(--font-mono); font-size: 11px; color: var(--primary);
+}
+
+/* Context, at the top of the agent half because it is the thing that decides
+   whether this pane can keep going. */
+.agent-ctx { padding: 9px 10px 10px; border-bottom: 1px solid var(--border); }
+.agent-ctx-head { display: flex; align-items: baseline; gap: 7px; font-size: 10px;
+  letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted-foreground); }
+.agent-ctx-head b {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  letter-spacing: 0; text-transform: none; color: var(--primary);
+}
+.agent-ctx-head .agent-dim { text-transform: none; letter-spacing: 0; }
+.agent-bar {
+  margin-top: 6px; height: 4px; border-radius: 3px; overflow: hidden;
+  background: rgba(234, 232, 221, 0.10);
+}
+.agent-bar-fill { height: 100%; background: var(--primary-gradient); border-radius: 3px; }
+.agent-ctx-parts {
+  margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 10px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--muted-foreground);
+}
+
+/* ── CSV / TSV table view (Files) ─────────────────────────────────────────── */
+/* The body is the only scroller. Very wide exports must never widen the Files
+   panel and push the file controls away; they get their own horizontal scroll
+   instead. The range bar is deliberately not the OS scrollbar: on macOS the
+   native scrollbar can be invisible until a gesture, while a wide CSV needs an
+   obvious control at the top, where you are reading. */
+.csv-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+}
+.csv-xbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 4px 10px 5px;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+}
+.csv-xbar input {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.csv-scroll::-webkit-scrollbar { height: 10px; width: 10px; }
+.csv-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted-foreground) 45%, transparent); border-radius: 8px; }
+.csv-scroll::-webkit-scrollbar-track { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+/* The header is sticky because the only reason to read a wide export in here
+   is to tell which column a value is in. */
+.csv-table { border-collapse: collapse; font-size: 12px; font-family: var(--font-mono); white-space: pre; width: max-content; min-width: 100%; }
+.csv-table th, .csv-table td {
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  text-align: left;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+.csv-table thead th { position: sticky; top: 0; z-index: 1; background: var(--accent); color: var(--foreground); font-weight: 600; padding: 0; }
+.csv-table thead th button {
+  display: flex; align-items: center; gap: 4px; width: 100%;
+  background: none; border: none; color: inherit; font: inherit; font-weight: 600;
+  padding: 4px 8px; cursor: pointer;
+}
+.csv-table thead th button:hover { color: var(--primary); }
+.csv-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--foreground) 3%, transparent); }
+.csv-table tbody tr:hover { background: var(--primary-tint); }
+.csv-gutter { color: var(--muted-foreground); text-align: right !important; user-select: none; font-variant-numeric: tabular-nums; }
+
+/* Every url either side put in the conversation. Opens in the user's own
+   browser, not in the pane's — a link somebody shared is one you go and read,
+   and the pane beside it is where the work is. */
+.agent-links { list-style: none; margin: 0; padding: 0 10px 14px; }
+.agent-link {
+  display: flex; align-items: baseline; gap: 7px; min-width: 0;
+  padding: 3px 0; font-size: 11px;
+}
+.agent-link-from {
+  flex: 0 0 34px; font-size: 9px; letter-spacing: 0.4px; text-transform: uppercase;
+  color: var(--muted-foreground); opacity: 0.8;
+}
+.agent-link-me .agent-link-from { color: var(--primary); opacity: 1; }
+.agent-link a {
+  flex: 1; min-width: 0; color: inherit; text-decoration: none;
+  font-family: var(--font-mono);
+  /* Wraps rather than ellipsising: a path is shown whole, and the part that
+     says which file it is, is the end. */
+  overflow-wrap: anywhere;
+}
+.agent-link-time {
+  flex: 0 0 auto; font-size: 9px; color: var(--muted-foreground); opacity: 0.75;
+  white-space: nowrap;
+}
+.agent-link a:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.agent-link-out { flex: 0 0 auto; color: var(--muted-foreground); opacity: 0.5; }

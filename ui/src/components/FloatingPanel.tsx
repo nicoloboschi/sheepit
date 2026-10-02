@@ -32,6 +32,10 @@ let topZ = 1002;
 /** How close two presses on the handle have to be to mean "put this away".
  *  Matches the usual system double-click window. */
 const DOUBLE_MS = 400;
+const MIN_WIDTH = 260;
+const MIN_HEIGHT = 160;
+
+type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
 interface FloatingPanelProps {
   /** A header with this name and a close button. Omit it for a panel whose
@@ -42,6 +46,11 @@ interface FloatingPanelProps {
   onClose: () => void;
   width?: number;
   height?: number;
+  /** Smallest useful size for this kind of panel. The default is deliberately
+   *  low so terminal-like panels can still be tucked away; richer panels pass
+   *  their own floor. */
+  minWidth?: number;
+  minHeight?: number;
   /** Where a drag starts, as a CSS selector. Defaults to the panel's own
    *  header; a terminal panel passes its pane bar instead. */
   dragHandle?: string;
@@ -50,13 +59,24 @@ interface FloatingPanelProps {
 
 export default function FloatingPanel({
   title, icon, onClose, width = 520, height = 340,
+  minWidth = MIN_WIDTH, minHeight = MIN_HEIGHT,
   dragHandle = '.floating-panel-head', children,
 }: FloatingPanelProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<{ dx: number; dy: number } | null>(null);
-  // Until it is dragged the panel has no position of its own and stays parked
-  // in the bottom-right corner.
+  const resizeRef = useRef<{
+    dir: ResizeDir;
+    sx: number;
+    sy: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  // Until it is dragged or resized the panel has no position of its own and
+  // stays parked in the bottom-right corner.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [size, setSize] = useState(() => ({ w: width, h: height }));
   const [z, setZ] = useState(() => ++topZ);
   /** When the handle was last pressed, for the double-press that puts the
    *  panel away. */
@@ -73,9 +93,26 @@ export default function FloatingPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [title, onClose]);
 
+  const beginResize = (dir: ResizeDir, e: React.PointerEvent) => {
+    const box = boxRef.current;
+    if (!box) return;
+    toFront();
+    const r = box.getBoundingClientRect();
+    resizeRef.current = { dir, sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, w: r.width, h: r.height };
+    // Once the panel has been resized it needs a real left/top anchor; keeping
+    // a bottom/right anchor would make the opposite edge move as the size
+    // changes, which feels like the panel is slipping away from the pointer.
+    setPos({ x: r.left, y: r.top });
+    setSize({ w: r.width, h: r.height });
+    box.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     toFront();
     const el = e.target as HTMLElement;
+    if (el.closest('.floating-panel-resize')) return;
     if (!el.closest(dragHandle) || el.closest('button, input, a, [role="button"]')) return;
     const box = boxRef.current;
     if (!box) return;
@@ -96,7 +133,32 @@ export default function FloatingPanel({
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    const grab = grabRef.current, box = boxRef.current;
+    const box = boxRef.current;
+    const resizing = resizeRef.current;
+    if (resizing) {
+      const dx = e.clientX - resizing.sx;
+      const dy = e.clientY - resizing.sy;
+      const right = resizing.x + resizing.w;
+      const bottom = resizing.y + resizing.h;
+      let x = resizing.x;
+      let y = resizing.y;
+      let w = resizing.w;
+      let h = resizing.h;
+      const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(v, max));
+
+      const minW = Math.min(minWidth, window.innerWidth);
+      const minH = Math.min(minHeight, window.innerHeight);
+      if (resizing.dir.includes('e')) w = clamp(resizing.w + dx, minW, window.innerWidth - resizing.x);
+      if (resizing.dir.includes('s')) h = clamp(resizing.h + dy, minH, window.innerHeight - resizing.y);
+      if (resizing.dir.includes('w')) { w = clamp(resizing.w - dx, minW, right); x = right - w; }
+      if (resizing.dir.includes('n')) { h = clamp(resizing.h - dy, minH, bottom); y = bottom - h; }
+
+      setPos({ x, y });
+      setSize({ w, h });
+      return;
+    }
+
+    const grab = grabRef.current;
     if (!grab || !box) return;
     const r = box.getBoundingClientRect();
     const clamp = (v: number, max: number) => Math.max(0, Math.min(v, max));
@@ -106,23 +168,30 @@ export default function FloatingPanel({
     });
   };
 
+  const endPointer = () => {
+    grabRef.current = null;
+    resizeRef.current = null;
+  };
+
   return createPortal(
     <div
       ref={boxRef}
       className="floating-panel"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={() => { grabRef.current = null; }}
-      onPointerCancel={() => { grabRef.current = null; }}
+      onPointerUp={endPointer}
+      onPointerCancel={endPointer}
       style={{
         position: 'fixed', zIndex: z,
         ...(pos ? { left: pos.x, top: pos.y } : { right: 24, bottom: 24 }),
-        // Never taller or wider than the window, however big the default is.
-        width: `min(${width}px, calc(100vw - 48px))`,
-        height: `min(${height}px, calc(100vh - 48px))`,
-        minWidth: 260, minHeight: 160,
-        // Native resize handle — the browser already has one.
-        resize: 'both', overflow: 'hidden',
+        // Never taller or wider than the window, however big the default or
+        // user-resized box is.
+        width: `min(${size.w}px, calc(100vw - 48px))`,
+        height: `min(${size.h}px, calc(100vh - 48px))`,
+        minWidth: `min(${minWidth}px, calc(100vw - 48px))`,
+        minHeight: `min(${minHeight}px, calc(100vh - 48px))`,
+        maxWidth: 'calc(100vw - 48px)', maxHeight: 'calc(100vh - 48px)',
+        overflow: 'hidden',
         display: 'flex', flexDirection: 'column',
         background: 'var(--border)', padding: 1, borderRadius: 6,
         boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
@@ -158,6 +227,14 @@ export default function FloatingPanel({
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--background)', overflow: 'hidden' }}>
         {children}
       </div>
+      {(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeDir[]).map(dir => (
+        <div
+          key={dir}
+          className={`floating-panel-resize floating-panel-resize-${dir}`}
+          onPointerDown={e => beginResize(dir, e)}
+          aria-hidden
+        />
+      ))}
     </div>,
     document.body,
   );

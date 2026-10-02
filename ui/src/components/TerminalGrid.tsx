@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, memo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import TerminalCell from './TerminalCell';
 import PenFence from './PenFence';
@@ -27,7 +27,7 @@ interface TerminalGridProps {
  * the pane's two chrome bars into one. The sidebar is the switcher; ⌘↑/↓ walks
  * the same sheep without leaving the keyboard.
  */
-export default function TerminalGrid({ sessionId: workspaceId }: TerminalGridProps) {
+function TerminalGridInner({ sessionId: workspaceId }: TerminalGridProps) {
   const ws = useStore(useShallow(s => {
     const w = s.workspaces[workspaceId];
     if (!w) return null;
@@ -101,11 +101,31 @@ export default function TerminalGrid({ sessionId: workspaceId }: TerminalGridPro
             gridId={workspaceId}
             paneIndex={i}
             isActive={sid === shown}
-            onActivate={() => setActiveCell(i)}
-            onClose={() => closePane(i)}
+            // The `useCallback`s themselves, not arrows closing over `i`:
+            // TerminalCell is memoised and takes the index as an argument, so
+            // a fresh function here would re-render every mounted pane in the
+            // pen on every render of the grid.
+            onActivate={setActiveCell}
+            onClose={closePane}
           />
         </div>
       ))}
     </div>
   );
 }
+
+/**
+ * Memoised, because `PaneTerminal` renders one of these per *mounted* pen and
+ * keeps up to a dozen alive.
+ *
+ * Without it, clicking a pen in the sidebar re-rendered every mounted pen's
+ * grid, not just the two involved in the switch — and clicking was the worst
+ * thing in the app: the browser blamed 148–208ms frames on `DIV#root.onclick`,
+ * which is exactly the "clicking feels unreactive" this work started from.
+ *
+ * The prop is a single string, so there is nothing here to get wrong — but a
+ * pen whose own contents changed still re-renders, because the `useStore`
+ * selector above fires regardless of the parent. That is the point: memo stops
+ * the eleven pens that did not change.
+ */
+export default memo(TerminalGridInner);

@@ -44,6 +44,8 @@ export default function TerminalsDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       width={900}
       height={560}
+      minWidth={520}
+      minHeight={320}
     >
       <TerminalTiles
         ids={ids}

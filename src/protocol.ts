@@ -18,6 +18,8 @@ export interface Session {
   isOpencode?: boolean;
   /** Hermes — the harness the sheepdog runs in. See src/sheepdog.ts. */
   isHermes?: boolean;
+  /** Pi — the pi coding agent. */
+  isPi?: boolean;
   /** This pane IS the sheepdog. It is drawn as a dog, and it is never
    *  counted as a sheep. */
   isDog?: boolean;
@@ -91,7 +93,6 @@ export type BridgeMessage =
    *  decoded lines of output; nothing rendered the text, and the signal is the
    *  agent's hooks firing rather than bytes moving. */
   | { type: 'activity'; session_id: string; busy: boolean }
-  | { type: 'current_input'; session_id: string; input: string }
   /** The app in the PTY asked for the user's attention (OSC 9) — for coding
    *  agents this is emitted when a turn completes. */
   | { type: 'attention'; session_id: string; message: string }

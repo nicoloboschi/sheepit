@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo, memo, Profiler } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree, Globe, TerminalSquare } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree, Globe, TerminalSquare, Bot } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
+import { perf } from '../perf';
 import PaneHeader from './PaneHeader';
 import { openExternal } from '../openExternal';
 import { findFileLinks } from '../utils';
@@ -15,6 +16,7 @@ import GithubPane, { type GhRef } from './GithubPane';
 import TerminalTiles from './TerminalTiles';
 import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
+import AgentPane from './AgentPane';
 import { TERMINAL_THEMES, TERMINAL_LINE_HEIGHT } from '../theme';
 import type { AppTheme } from '../theme';
 
@@ -120,7 +122,7 @@ interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
  * reopens the tool that was showing last. `split` keeps its name — it is the
  * oldest of them and the persisted value.
  */
-export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals';
+export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals' | 'split-agent';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 // `showsTerminal()` used to live here, answering "does xterm have a size right
 // now". Every view keeps the terminal since the git group became a split, so
@@ -137,7 +139,7 @@ function readPaneView(sid: string): PaneView | undefined {
     // GitHub took the whole pane for one release, and now sits beside the
     // terminal like the other two things you read while typing.
     if (raw === 'github') return 'split-github';
-    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals'] as const).includes(raw) ? raw : undefined;
+    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals', 'split-agent'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 /** The git family's tabs, as a rail rather than a strip. Vertical because the
@@ -168,6 +170,10 @@ const TOOL_TABS = [
   // run yourself — and it is the only tool here that is not a way of looking
   // at something. See SideTerminals.
   { id: 'split-terminals' as const, Icon: TerminalSquare, label: 'Terminals — shells in this pane\u2019s directory' },
+  // After the tools, because it is not one: the other six are ways of looking
+  // at the repository or of acting on it, and this is the pane's own history —
+  // what you have asked the agent, read back from the agent's own transcript.
+  { id: 'split-agent' as const, Icon: Bot, label: 'Agent — what you have asked this pane' },
 ];
 
 function ToolRail({ view, onPick }: { view: PaneView; onPick: (v: PaneView) => void }) {
@@ -375,13 +381,37 @@ interface TerminalCellProps {
    *  would fill with the ids of shells that no longer exist), and it never
    *  claims the global active-pane registries — see `isActive` below. */
   tile?: boolean;
-  onActivate: () => void;
+  /**
+   * Both take the pane's own index rather than closing over it.
+   *
+   * That is what lets this component be memoised at all: a parent writing
+   * `onActivate={() => setActiveCell(i)}` builds a new function on every render,
+   * so every mounted pane in the pen re-rendered whenever the grid did —
+   * measured at 25ms of every second in `commit:pane`. Handed the index, the
+   * parent can pass one `useCallback` to all of them.
+   */
+  onActivate: (index: number) => void;
   /** Remove this pane from its workspace. If it was the last pane, the
    *  workspace dissolves (Android-folder style). */
-  onClose: () => void;
+  onClose: (index: number) => void;
 }
 
-export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, tile = false, onActivate, onClose }: TerminalCellProps) {
+/** What one commit of a pane's tool split costs. Separated from `commit:pane`
+ *  because a 147ms pane commit says nothing about *which half* — the terminal
+ *  and its chrome, or the diff / files / browser beside it. */
+const recordSplitCommit = (id: string, _phase: string, actualDuration: number): void => {
+  perf.commit(id, actualDuration);
+};
+
+function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = false, onActivate, onClose }: TerminalCellProps) {
+  // Bound to this pane's index once, so the handlers below are stable and the
+  // parent can hand every pane the same two callbacks.
+  const activate = useCallback(() => onActivate(paneIndex), [onActivate, paneIndex]);
+  const close = useCallback(() => onClose(paneIndex), [onClose, paneIndex]);
+  // Every pane in the shown pen stays mounted, so this count is how many of
+  // them React re-rendered. A number far above the pane count per second is a
+  // render loop, which is invisible in a frame graph and obvious here.
+  perf.count('render:TerminalCell');
   // `gridId` holds the synthetic workspace id — zoom is keyed by workspace so
   // every pane sharing a workspace scales together.
   const zoom = useStore(s => s.fontSize);
@@ -415,7 +445,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
   /** Everything except the bare terminal shares the pane with something: files,
    *  the browser, or one of the three git views. */
   const isSplit = view !== 'terminal';
-  const openFileRef = useRef<((path: string) => void) | null>(null);
+  const openFileRef = useRef<((path: string, opts?: { pin?: boolean }) => void) | null>(null);
   // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
   // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
   const wheelPendingRef = useRef(0);
@@ -481,7 +511,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
         // Hidden, then rail order — so cycling walks the rail top to bottom.
-        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview'];
+        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview', 'split-terminals', 'split-agent'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
@@ -1000,6 +1030,11 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
       return;
     }
     outputBufRef.current = '';
+    // The terminal's own cost, timed: parsing and rasterising the bytes the
+    // agent produced. The biggest single thing on the main thread while an agent
+    // is running, and the first place to look when typing feels behind.
+    const endWrite = perf.span('xterm:write');
+    perf.count('xterm:bytes', batch.length);
     try {
       t.write(theme === 'light' ? makeLightTruecolorReadable(batch) : batch, () => {
         if (isRestoringRef.current) {
@@ -1017,7 +1052,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
       // Renderer not ready — re-queue the batch
       outputBufRef.current = batch + outputBufRef.current;
       flushRafRef.current = requestAnimationFrame(flushOutput);
+      endWrite();
       return;
+    } finally {
+      endWrite();
     }
     // Track SGR mouse encoding (DEC private mode 1006) from the stream so the
     // wheel handler only synthesizes SGR wheel reports when the app enabled it.
@@ -1609,6 +1647,80 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * The tool split, as one element that is reused until something it shows
+   * actually changes.
+   *
+   * Every sheep in a pen stays mounted under `display: none`, and they re-render
+   * with everything else: measured at **11 split commits per sweep when at most
+   * one split is ever on screen**, and `commit:split` is ~90% of `commit:pane`.
+   * That is what a click cost — 180-230ms, scaling with how much you have open.
+   *
+   * A `useMemo` fixes it rather than a `memo()` wrapper or a visibility flag,
+   * for two reasons. `GitDiffPane`, `FilesPane`, `GithubPane` and `AgentPane`
+   * subscribe to the store **not at all**, so they re-render only because this
+   * component does — hold the element still and the whole subtree stops. And
+   * nothing unmounts, which matters: `PreviewPane` owns a live browser view,
+   * and `FilesPane` and `GitDiffPane` hold scroll and expansion state that an
+   * unmount would throw away on every pen switch.
+   *
+   * Every dependency here is stable by construction — the three are `useState`
+   * setters, `openFileRef` is a ref and `startSplitDrag` is a `useCallback`. **An
+   * inline lambda added to this block turns the whole thing off**, silently.
+   */
+  const splitEl = useMemo(() => isSplit ? (
+        <Profiler id="split" onRender={recordSplitCommit}>
+          <div
+            onMouseDown={startSplitDrag}
+            className={`terminal-resize-handle terminal-resize-handle-${stacked ? 'vertical' : 'horizontal'}`}
+            style={stacked
+              ? { height: 6, flexShrink: 0, cursor: 'row-resize', background: 'var(--border)' }
+              : { width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
+          />
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+            {/* Every tool shares the rail, so moving between a pull request,
+                what you have changed, what you have committed, the files and
+                the browser is one click and never changes the pane's shape. */}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+              <ToolRail view={view} onPick={setView} />
+              {/* minWidth 0, or a tool as wide as its content (a diff with a
+                  long line) pushes the pane past the screen edge. */}
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              {view === 'split-preview' ? (
+                <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
+              ) : view === 'split-github' ? (
+                <GithubPane sessionId={sessionId} selected={githubRef} onSelect={setGithubRef} />
+              ) : view === 'split-terminals' ? (
+                <SideTerminals sessionId={sessionId} />
+              ) : view === 'split-agent' ? (
+                <AgentPane sessionId={sessionId} />
+              ) : view === 'split' ? (
+                <FilesPane
+                  sessionId={sessionId}
+                  openFileRef={openFileRef}
+                  onPreviewFile={(path: string) => {
+                    setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                    setView('split-preview');
+                  }}
+                />
+              ) : (
+                <GitDiffPane
+                  sessionId={sessionId}
+                  mode={view === 'log' ? 'log' : 'head'}
+                  onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
+                />
+              )}
+              </div>
+            </div>
+          </div>
+        </Profiler>
+  ) : null, [isSplit, view, sessionId, previewUrl, previewNav, githubRef, stacked,
+             // Stable by construction, and listed rather than silenced with an
+             // eslint-disable: the next person to edit this block needs the
+             // linter to tell them when they have added a dependency, because
+             // a missing one here does not crash — it quietly freezes the split.
+             startSplitDrag, setView, setGithubRef, setPreviewUrl, openFileRef]);
+
   return (
     <>
       <div
@@ -1626,10 +1738,10 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
           outline: (fileDragOver || isPaneDragOver) ? '2px solid var(--primary)' : 'none',
           transition: 'outline 0.15s ease',
         }}
-        onClick={onActivate}
+        onClick={activate}
         // mousedown with capture — runs before xterm's own handler so we
         // always register the focus change even when xterm stops propagation.
-        onMouseDownCapture={onActivate}
+        onMouseDownCapture={activate}
         // Native HTML5 drag events ONLY handle external file drops now.
         // Pane drags are intercepted by dnd-kit (useDroppable above), which
         // operates on a separate event stream and doesn't fire dragenter/over/drop.
@@ -1661,7 +1773,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
         sessionId={sessionId}
         workspaceId={gridId}
         isActive={isActive}
-        onClose={onClose}
+        onClose={close}
         toolsOpen={isSplit}
         // No tools in a tile — so no button offering them either.
         onToggleTools={tile ? undefined : toggleTools}
@@ -1775,51 +1887,7 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
           the git group. One divider and one stored width for all of them,
           because it is the same question — how much of the pane is not the
           terminal. */}
-      {isSplit && (
-        <>
-          <div
-            onMouseDown={startSplitDrag}
-            className={`terminal-resize-handle terminal-resize-handle-${stacked ? 'vertical' : 'horizontal'}`}
-            style={stacked
-              ? { height: 6, flexShrink: 0, cursor: 'row-resize', background: 'var(--border)' }
-              : { width: 6, flexShrink: 0, cursor: 'col-resize', background: 'var(--border)' }}
-          />
-          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
-            {/* Every tool shares the rail, so moving between a pull request,
-                what you have changed, what you have committed, the files and
-                the browser is one click and never changes the pane's shape. */}
-            <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-              <ToolRail view={view} onPick={setView} />
-              {/* minWidth 0, or a tool as wide as its content (a diff with a
-                  long line) pushes the pane past the screen edge. */}
-              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              {view === 'split-preview' ? (
-                <PreviewPane sessionId={sessionId} initialUrl={previewUrl} navSeq={previewNav} />
-              ) : view === 'split-github' ? (
-                <GithubPane sessionId={sessionId} selected={githubRef} onSelect={setGithubRef} />
-              ) : view === 'split-terminals' ? (
-                <SideTerminals sessionId={sessionId} />
-              ) : view === 'split' ? (
-                <FilesPane
-                  sessionId={sessionId}
-                  openFileRef={openFileRef}
-                  onPreviewFile={(path: string) => {
-                    setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
-                    setView('split-preview');
-                  }}
-                />
-              ) : (
-                <GitDiffPane
-                  sessionId={sessionId}
-                  mode={view === 'log' ? 'log' : 'head'}
-                  onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
-                />
-              )}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+      {splitEl}
       </div>{/* /terminal+split row */}
 
       </div>{/* /pane body */}
@@ -1832,3 +1900,18 @@ export default function TerminalCell({ sessionId, gridId, paneIndex, isActive, t
     </>
   );
 }
+
+/**
+ * Memoised, and that is load-bearing.
+ *
+ * Every sheep in a pen stays mounted (all but one under `display: none`), so a
+ * render of the grid used to re-render every pane in it — the terminal, its
+ * chrome bar, and whichever tool split it has open. `commit:pane` was 25ms of
+ * every second with the app idle.
+ *
+ * It only works while the props stay stable: `onActivate`/`onClose` take the
+ * pane index so the parent can pass one `useCallback` to all of them, and the
+ * rest are strings, numbers and booleans. A handler built inline at the call
+ * site turns this off again.
+ */
+export default memo(TerminalCellInner);

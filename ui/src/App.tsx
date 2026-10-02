@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react';
+import { useEffect, useRef, useCallback, useState, lazy, Suspense, Profiler } from 'react';
+import { perf } from './perf';
 import {
   DndContext,
   DragOverlay,
@@ -52,7 +53,15 @@ import { preferences } from './preferences';
 
 // ── App ──────────────────────────────────────────────────────────────────────
 
+/** What React says one commit of a subtree cost. `actualDuration` is the work
+ *  it actually did, which is the number that matters; `baseDuration` is what it
+ *  would have cost with no memoisation and is not what the user waited for. */
+const recordCommit = (id: string, _phase: string, actualDuration: number): void => {
+  perf.commit(id, actualDuration);
+};
+
 export default function App() {
+  perf.count('render:App');
   const currentSessionId = useStore(s => s.currentSessionId);
   const attentionCount = useStore(s => Object.values(s.sessionNeedsAttention).filter(Boolean).length);
 
@@ -324,9 +333,6 @@ export default function App() {
       }
       case 'activity':
         store.updateActivity(msg.session_id as string, msg.busy as boolean | undefined);
-        break;
-      case 'current_input':
-        store.setCurrentInput(msg.session_id as string, msg.input as string);
         break;
       case 'attention':
         // The app said it's done (OSC 9). Exact, and immediate — no waiting for
@@ -668,15 +674,24 @@ export default function App() {
           fontFamily: 'var(--font-sans)', fontSize: 13,
         }}
       >
-        <Sidebar onConnect={connectSession} send={send} />
+        {/* Two Profilers, and only two: the sidebar and the pane. They are the
+            app's two halves, and a 300ms commit lands in one of them — which is
+            the only question a wrapper here can answer that a render counter
+            cannot. Reported into ui/src/perf.ts as `commit:*` so it ranks
+            beside every other hotspot. */}
+        <Profiler id="sidebar" onRender={recordCommit}>
+          <Sidebar onConnect={connectSession} send={send} />
+        </Profiler>
 
         <div className="flex flex-col flex-1 min-w-0">
           <MobileTopBar onConnect={connectSession} send={send} />
 
-          <PaneTerminal
-            sessionId={currentSessionId}
-            send={send}
-          />
+          <Profiler id="pane" onRender={recordCommit}>
+            <PaneTerminal
+              sessionId={currentSessionId}
+              send={send}
+            />
+          </Profiler>
           <PipTerminal send={send} />
 
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
@@ -732,6 +747,8 @@ function PipTerminal({ send }: { send: (msg: Record<string, unknown>) => void })
       onClose={() => useStore.getState().setPip(null)}
       width={520}
       height={340}
+      minWidth={360}
+      minHeight={240}
     >
       <TerminalCell
         sessionId={sessionId}

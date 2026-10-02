@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
+import { perf } from '../perf';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Dog, Plus } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Dog, Plus, Pi, Feather } from 'lucide-react';
 import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
@@ -54,12 +55,36 @@ interface SessionItemProps {
 // Replaces the old "session icon + mini-grid" duo — each pane can now show
 // its own icon because a split grid can mix AI and plain shells.
 
-type PaneKind = 'claude' | 'codex' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'terminal';
+type PaneKind = 'claude' | 'codex' | 'pi' | 'hermes' | 'opencode' | 'antigravity' | 'copilot' | 'grok' | 'cursor' | 'terminal';
+
+/**
+ * A pane's age, and the only thing in the sidebar that re-renders on a clock.
+ *
+ * The tick used to live on `SessionItem`, which meant every five seconds every
+ * pen re-rendered its whole subtree — the pane cards, their agent marks, their
+ * context counts and a 44x38 SVG sheep each — to refresh a string like "48s".
+ * Owning the tick here puts the re-render where the change is. The timer is
+ * still shared, so forty of these are one interval and one tick, which is what
+ * `useSharedTick` is for.
+ */
+function PaneAge({ sessionId }: { sessionId: string }): React.ReactElement | null {
+  // Subscribed here rather than passed in. `sessionLastEvent` moves on every
+  // output message an agent produces — measured at 22 a second — and while the
+  // card above held the subscription, each of those re-rendered the whole card:
+  // its name, agent mark, context count and sheep. Now the only thing that
+  // re-renders is the string that actually changed.
+  const at = useStore(s => s.sessionLastEvent[sessionId] ?? null);
+  useSharedTick(5_000);
+  const time = compactRelativeTime(at);
+  return time ? <span className="pane-card-time">{time}</span> : null;
+}
 
 function getPaneKind(s: Session | undefined): PaneKind {
   if (!s) return 'terminal';
   if (s.isClaudeCode) return 'claude';
   if (s.isCodex) return 'codex';
+  if (s.isPi) return 'pi';
+  if (s.isHermes) return 'hermes';
   if (s.isOpencode) return 'opencode';
   if (s.isAntigravity) return 'antigravity';
   if (s.isCopilot) return 'copilot';
@@ -72,6 +97,11 @@ function PaneIcon({ kind, size }: { kind: PaneKind; size: number }): React.React
   switch (kind) {
     case 'claude':   return <ClaudeIcon size={size} />;
     case 'codex':    return <OpenAIIcon size={size} />;
+    // Pi and Hermes ship no mark of their own, so they borrow a glyph rather
+    // than a logo: the letter the agent is named after, and the messenger's
+    // feather. Both take currentColor like the vendor icons beside them.
+    case 'pi':       return <Pi size={size} />;
+    case 'hermes':   return <Feather size={size} />;
     case 'opencode': return <OpenCodeIcon size={size} />;
     case 'antigravity': return <AntigravityIcon size={size} />;
     case 'copilot':    return <GitHubCopilotIcon size={size} />;
@@ -136,13 +166,14 @@ function PaneCard({
    *  showing the visual "tall pane + 2 stacked" arrangement. */
   gridArea?: string;
 }): React.ReactElement {
+  // Counted separately from the pen. A pen and the cards inside it re-render
+  // for different reasons, and one number for both cannot say which.
+  perf.count('render:PaneCard');
   const session   = useStore(s => s.sessionMap[sessionId]);
-  const lastEvent = useStore(s => s.sessionLastEvent[sessionId] ?? null);
   const busy = useStore(s => !!s.sessionBusy[sessionId]);
   const needsAttention = useStore(s => !!s.sessionNeedsAttention[sessionId]);
   const kind = getPaneKind(session);
   const name = session?.name ?? '\u2026';
-  const time = compactRelativeTime(lastEvent);
   // The last segment only. A trailing slash would otherwise pop an empty
   // string, and `/` has no segment at all \u2014 both fall out as falsy and draw
   // nothing, which is right: there is no directory name to show.
@@ -276,7 +307,7 @@ function PaneCard({
             {formatCtx(session.ctxTokens, session.ctxLimit)}
           </span>
         ) : null}
-        {time && <span className="pane-card-time">{time}</span>}
+        <PaneAge sessionId={sessionId} />
         {dog?.sessionId === sessionId
           ? <DogStatus state={dog.state} />
           : <SheepStatus state={sheepState} />}
@@ -416,7 +447,27 @@ export function PaneCardPreview({ session }: { session: Session }): React.ReactE
 }
 
 
-export default function SessionItem({ workspace, isActive, onConnect, send }: SessionItemProps) {
+/**
+ * One pen in the sidebar.
+ *
+ * Memoised, and that is load-bearing rather than decoration. The sidebar
+ * re-renders on every session sweep, and without this every pen re-rendered
+ * with it — the whole column, several times a second, because one pane
+ * somewhere had new output. Each pen holds a list of pane cards, so it is the
+ * widest render surface in the app.
+ *
+ * It works because the props are all stable: `workspace` keeps its object
+ * unless that pen actually changed (`nextWorkspaces` in renderSessions),
+ * `isActive` is a boolean, and `onConnect`/`send` are `useCallback`s in App
+ * whose own dependencies bottom out at `[]`. A pen whose own data changed still
+ * re-renders — its `useStore` selectors fire regardless of the parent, which is
+ * the point: memo stops the *parent-driven* renders, not the real ones.
+ *
+ * If you give this component a prop built inline at the call site, you have
+ * turned the memo off.
+ */
+function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemProps) {
+  perf.count('render:SessionItem');
   const showConfirm = useStore(s => s.showConfirm);
   const renameWorkspace = useStore(s => s.renameWorkspace);
   const dndEnabled = useDndEnabled();
@@ -469,9 +520,6 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
   }));
   const unseen = unseenCells.length > 0;
   const elRef = useRef<HTMLDivElement | null>(null);
-  // Re-render on a clock so the row's relative age stays honest. Shared, so
-  // twenty pens mean one timer and one tick, not twenty of each.
-  useSharedTick(5_000);
 
   useEffect(() => {
     if (isActive && elRef.current) {
@@ -712,3 +760,5 @@ export default function SessionItem({ workspace, isActive, onConnect, send }: Se
     </div>
   );
 }
+
+export default memo(SessionItemInner);

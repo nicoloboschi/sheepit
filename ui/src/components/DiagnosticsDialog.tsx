@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ConfigDialog from './ConfigDialog';
+import { perf, type PerfSnapshot } from '../perf';
 
 interface PubsubChannel {
   channel: string;
@@ -33,7 +34,6 @@ interface Diagnostics {
   managedPtyDetails: ManagedPty[];
   scrollbackStreams: number;
   memBuffers: number;
-  inputBuffers: number;
   knownSessions: number;
   pubsubChannels: PubsubChannel[];
   serverMemory: ServerMemory;
@@ -44,11 +44,7 @@ interface Diagnostics {
   };
 }
 
-interface BrowserMemory {
-  jsHeapSizeLimit: number;
-  totalJSHeapSize: number;
-  usedJSHeapSize: number;
-}
+
 
 function fmt(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
@@ -96,7 +92,11 @@ interface DiagnosticsDialogProps {
 export function DiagnosticsContent() {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [browserMem, setBrowserMem] = useState<BrowserMemory | null>(null);
+  // The dialog measures nothing itself. It used to sample `performance.memory`
+  // and count websocket resource entries on its own timer, which made it a
+  // second, shorter-lived answer beside perf.ts's. See ui/src/perf.ts.
+  const [snap, setSnap] = useState<PerfSnapshot>(() => perf.live());
+  const [hot, setHot] = useState(() => perf.hotspots(8));
 
   useEffect(() => {
     let cancelled = false;
@@ -112,30 +112,19 @@ export function DiagnosticsContent() {
       }
     }
 
-    function sampleBrowser() {
-      const perf = (performance as any).memory;
-      if (perf) {
-        setBrowserMem({
-          jsHeapSizeLimit: perf.jsHeapSizeLimit,
-          totalJSHeapSize: perf.totalJSHeapSize,
-          usedJSHeapSize: perf.usedJSHeapSize,
-        });
-      }
+    function samplePerf() {
+      setSnap(perf.live());
+      setHot(perf.hotspots(8));
     }
 
     fetchDiag();
-    sampleBrowser();
-    const id = setInterval(() => { fetchDiag(); sampleBrowser(); }, 3000);
+    samplePerf();
+    const id = setInterval(() => { fetchDiag(); samplePerf(); }, 3000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const heapUsedGb = browserMem ? browserMem.usedJSHeapSize / (1024 ** 3) : 0;
-  const heapHigh = heapUsedGb > 1;
-
-  // Count browser-side resources
-  const xtermCount = document.querySelectorAll('.xterm').length;
+  const heapHigh = (snap.heapMb ?? 0) > 1024;
   const canvasCount = document.querySelectorAll('.xterm canvas').length;
-  const wsCount = (performance as any).getEntriesByType?.('resource')?.filter?.((r: any) => r.initiatorType === 'websocket')?.length;
 
   return (
     <div style={{ padding: 16, overflowY: 'auto', flex: 1, fontSize: 12 }}>
@@ -145,39 +134,81 @@ export function DiagnosticsContent() {
             </div>
           )}
 
-          {/* Browser / Tab Memory */}
-          <div style={SECTION}>Browser Tab</div>
-          {browserMem ? (
-            <>
-              <div style={ROW}>
-                <span style={LABEL}>JS Heap Used</span>
-                <span style={heapHigh ? WARN : VALUE}>{fmt(browserMem.usedJSHeapSize)}</span>
-              </div>
-              <div style={ROW}>
-                <span style={LABEL}>JS Heap Total</span>
-                <span style={VALUE}>{fmt(browserMem.totalJSHeapSize)}</span>
-              </div>
-              <div style={ROW}>
-                <span style={LABEL}>JS Heap Limit</span>
-                <span style={VALUE}>{fmt(browserMem.jsHeapSizeLimit)}</span>
-              </div>
-              {heapHigh && (
-                <div style={{ color: 'var(--destructive)', fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
-                  Heap is above 1 GB. Possible memory leak. Try closing and reopening the tab.
-                </div>
-              )}
-            </>
-          ) : (
-            <div style={{ color: 'var(--muted-foreground)', fontSize: 11 }}>
-              performance.memory not available (requires Chromium-based browser)
+          {/* Performance — the one place the UI measures itself (ui/src/perf.ts) */}
+          <div style={SECTION}>Performance ({snap.shell}, last {snap.secs}s)</div>
+          <div style={ROW}>
+            <span style={LABEL}>Frames per second</span>
+            <span style={snap.fps < 45 ? WARN : VALUE}>{snap.fps}</span>
+          </div>
+          <div style={ROW}>
+            <span style={LABEL}>Slow frames (&gt;20ms)</span>
+            <span style={snap.slowFrames > 20 ? WARN : VALUE}>{snap.slowFrames}</span>
+          </div>
+          <div style={ROW}>
+            <span style={LABEL}>Worst frame</span>
+            <span style={snap.worstFrameMs > 100 ? WARN : VALUE}>
+              {snap.worstFrameMs.toFixed(0)}ms{snap.worstFrameBlame ? ` — ${snap.worstFrameBlame}` : ''}
+            </span>
+          </div>
+          <div style={ROW}>
+            <span style={LABEL}>Long tasks</span>
+            <span style={snap.longTaskMs > 1000 ? WARN : VALUE}>
+              {snap.longTasks} ({snap.longTaskMs}ms, worst {snap.worstLongTaskMs}ms)
+            </span>
+          </div>
+          {snap.main && (
+            <div style={ROW}>
+              <span style={LABEL}>Main process stalls</span>
+              <span style={snap.main.stalls > 0 ? WARN : VALUE}>
+                {snap.main.stalls} (worst {snap.main.worstMs}ms)
+              </span>
             </div>
           )}
 
-          {/* Browser terminal instances */}
-          <div style={SECTION}>Browser Terminal Instances</div>
+          {snap.loaf.length > 0 && (
+            <>
+              <div style={SECTION}>Worst long frames (what the browser blamed)</div>
+              {snap.loaf.map((l, i) => (
+                <div key={i} style={{ ...SUB_ROW, display: 'block' }}>
+                  <div style={{ ...VALUE, color: l.durationMs > 200 ? 'var(--destructive)' : undefined }}>
+                    {l.durationMs}ms — blocking {l.blockingMs}ms, style+layout {l.styleAndLayoutMs}ms
+                  </div>
+                  <div style={{ ...LABEL, fontFamily: 'monospace', fontSize: 10 }}>
+                    {l.script}{l.scriptMs ? ` (${l.scriptMs}ms` : ''}{l.invoker ? `, ${l.invoker})` : l.scriptMs ? ')' : ''}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          <div style={SECTION}>Hotspots (kept history, worst total first)</div>
+          {hot.length === 0 ? (
+            <div style={{ color: 'var(--muted-foreground)', fontSize: 11 }}>
+              Nothing timed yet — the first window closes after 10s.
+            </div>
+          ) : hot.map(h => (
+            <div key={h.name} style={SUB_ROW}>
+              <span style={LABEL}>{h.name}</span>
+              <span style={VALUE}>
+                {Math.round(h.totalMs)}ms / {h.n}× / max {h.maxMs.toFixed(1)}ms
+              </span>
+            </div>
+          ))}
+
+          <div style={SECTION}>Browser Tab</div>
+          <div style={ROW}>
+            <span style={LABEL}>JS Heap Used</span>
+            <span style={heapHigh ? WARN : VALUE}>
+              {snap.heapMb === null ? 'not available' : `${snap.heapMb} MB`}
+            </span>
+          </div>
           <div style={ROW}>
             <span style={LABEL}>Active xterm instances</span>
-            <span style={xtermCount > 15 ? WARN : VALUE}>{xtermCount}</span>
+            <span style={snap.terminals > 15 ? WARN : VALUE}>{snap.terminals}</span>
+          </div>
+          <div style={ROW}>
+            <span style={LABEL}>Browser panes</span>
+            <span style={VALUE}>{snap.browserPanes}</span>
           </div>
           <div style={ROW}>
             <span style={LABEL}>Canvas elements</span>
@@ -185,8 +216,13 @@ export function DiagnosticsContent() {
           </div>
           <div style={ROW}>
             <span style={LABEL}>DOM nodes (total)</span>
-            <span style={VALUE}>{document.querySelectorAll('*').length}</span>
+            <span style={snap.domNodes > 20000 ? WARN : VALUE}>{snap.domNodes}</span>
           </div>
+          {heapHigh && (
+            <div style={{ color: 'var(--destructive)', fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+              Heap is above 1 GB. Possible memory leak. Try closing and reopening the tab.
+            </div>
+          )}
 
           {diag && (
             <>
@@ -269,10 +305,6 @@ export function DiagnosticsContent() {
               <div style={ROW}>
                 <span style={LABEL}>Memory Buffers</span>
                 <span style={VALUE}>{diag.memBuffers}</span>
-              </div>
-              <div style={ROW}>
-                <span style={LABEL}>Input Buffers</span>
-                <span style={VALUE}>{diag.inputBuffers}</span>
               </div>
 
               {/* PubSub */}

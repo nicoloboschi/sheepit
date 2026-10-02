@@ -138,6 +138,8 @@ export default function GithubDialog({ onClose }: GithubDialogProps) {
       onClose={onClose}
       width={1040}
       height={680}
+      minWidth={720}
+      minHeight={420}
     >
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div

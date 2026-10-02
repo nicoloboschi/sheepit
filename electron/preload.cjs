@@ -15,7 +15,7 @@ const DESKTOP_CSS = `
 /* Room for the traffic lights (trafficLightPosition in main.cjs). */
 .desktop-app .sidebar-header { padding-left: 84px; }
 .desktop-app .sidebar-shell-collapsed { padding-top: 40px; }
-.desktop-app:has(.sidebar-shell-collapsed) .workspace-bar { padding-left: 52px; }
+.desktop-app.sidebar-collapsed .workspace-bar { padding-left: 52px; }
 `;
 window.addEventListener('DOMContentLoaded', () => {
   document.documentElement.classList.add('desktop-app');
@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('sheepitDesktop', {
    *  in another window of this app. Not under `browser` — that is the native
    *  view a pane draws, and this is the opposite of it. */
   openExternal: url => ipcRenderer.send('shell:open-external', url),
+  /** Main-process event-loop lag and IPC handler timing since the last ask.
+   *  The renderer folds it into its own perf snapshot (ui/src/perf.ts), so a
+   *  stall in the process the renderer cannot see still lands in one place. */
+  perfMain: () => ipcRenderer.invoke('perf:main'),
   browser: {
     open: (id, url) => ipcRenderer.send('browser:open', id, url),
     bounds: (id, rect) => ipcRenderer.send('browser:bounds', id, rect),

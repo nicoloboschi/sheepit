@@ -17,6 +17,8 @@ export default function KnowledgeDialog({ onClose }: KnowledgeDialogProps) {
       onClose={onClose}
       width={880}
       height={620}
+      minWidth={620}
+      minHeight={420}
     >
       <NotesPane />
     </FloatingPanel>

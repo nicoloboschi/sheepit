@@ -13,6 +13,7 @@
  * animates; the movement in the pasture is the sheep.
  */
 import { useEffect, useRef } from 'react';
+import { perf } from '../perf';
 import useStore from '../store';
 import { scatterGrass, frontGrass } from './grass';
 
@@ -31,6 +32,14 @@ export default function FlockGrass(): React.ReactElement {
     if (!cv) return;
 
     const draw = () => {
+      // Timed: a canvas redraw that also reads layout and computed style.
+      // One per pen, and pens redraw on resize and theme change — so if this
+      // shows up per frame, something is calling it that should not.
+      const endDraw = perf.span('flockGrass:draw');
+      try { drawNow(); } finally { endDraw(); }
+    };
+
+    const drawNow = () => {
       const box = cv.getBoundingClientRect();
       if (!box.width || !box.height) return;
       const dpr = window.devicePixelRatio || 1;
@@ -59,9 +68,17 @@ export default function FlockGrass(): React.ReactElement {
     draw();
     // The sidebar is draggable and the mobile header is not the same width as
     // the sidebar, so follow the element rather than the window.
-    const ro = new ResizeObserver(draw);
+    // Coalesced into one frame: a drag resizes continuously and a
+    // ResizeObserver can call back more than once before anything is painted,
+    // and each call is a full redraw that reads layout and computed style.
+    let pending = 0;
+    const redraw = () => {
+      if (pending) return;
+      pending = requestAnimationFrame(() => { pending = 0; draw(); });
+    };
+    const ro = new ResizeObserver(redraw);
     ro.observe(cv);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (pending) cancelAnimationFrame(pending); };
   }, [theme]);
 
   return <canvas ref={ref} className="flock-grass" aria-hidden />;

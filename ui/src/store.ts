@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { perf } from './perf';
 import { notify } from './utils';
 import { applyTheme, readTheme, readTerminalFont, DEFAULT_TERMINAL_FONT, TERMINAL_FONT_KEY, type AppTheme } from './theme';
 import { preferences, subscribePreferences } from './preferences';
@@ -14,6 +15,7 @@ export interface Session {
   isClaudeCode?: boolean;
   isCodex?: boolean;
   isHermes?: boolean;
+  isPi?: boolean;
   /** This pane is the sheepdog — drawn as a dog, never counted as a sheep. */
   isDog?: boolean;
   isOpencode?: boolean;
@@ -137,7 +139,6 @@ export interface StoreState {
   sessionLastEvent: Record<string, number>;
   sessionOrder: string[];
   sessionMap: Record<string, Session>;
-  sessionCurrentInput: Record<string, string>;
   openPaneMap: Record<string, number[]>;
   /** Per-workspace state. Keyed by **synthetic workspace id**. */
   workspaces: Record<string, Workspace>;
@@ -198,13 +199,15 @@ export interface StoreState {
   searchOpen: boolean;
   setSearchOpen: (open: boolean) => void;
   renderSessions: (sessions: Session[]) => void;
+  /** The body of `renderSessions`, split out only so the whole reconcile can be
+   *  timed as one span. Not a seam to call directly. */
+  renderSessionsInner: (sessions: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
   setOpenPaneMap: (panes: (string | null)[]) => void;
   /** A pane's agent started or finished working (server `activity` message). */
   updateActivity: (sessionId: string, busy?: boolean) => void;
   showConfirm: (message: string) => Promise<boolean>;
   dismissConfirm: (result: boolean) => void;
-  setCurrentInput: (sessionId: string, input: string) => void;
   /** The app in the session asked for attention (OSC 9) — for coding agents,
    *  the turn finished. */
   sessionAttention: (sessionId: string, message: string) => void;
@@ -323,6 +326,48 @@ const LAST_WORKSPACE_KEY  = 'sheepit-last-workspace';
 const LEGACY_GRID_KEY     = 'sheepit:term-grid';
 const LEGACY_ZOOM_KEY     = 'sheepit:session-zoom';
 const LEGACY_LAST_KEY     = 'sheepit-last-session';
+
+/**
+ * Whether two readings of the same session are the same as far as the UI is
+ * concerned — the allowlist.
+ *
+ * It is an allowlist, not a deep compare, because the session objects carry
+ * fields nothing renders. Leave a rendered field out and it draws once and then
+ * freezes, since a list that calls itself unchanged never re-renders; put a
+ * churning field in and nothing is ever equal and the allowlist buys nothing.
+ *
+ * `busy` is deliberately absent: it rides the activity message into
+ * `sessionBusy` and is never read off these objects.
+ */
+function sameSession(p: Session, s: Session): boolean {
+  return p.id === s.id && p.name === s.name && p.path === s.path
+    && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
+    && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
+    && p.isOpencode === s.isOpencode && p.isAntigravity === s.isAntigravity
+    && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
+    && p.isPi === s.isPi && p.isHermes === s.isHermes
+    && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
+    && p.prNum === s.prNum && p.prState === s.prState
+    && p.prRefs?.length === s.prRefs?.length
+    && (p.prRefs ?? []).every((r, n) => r.num === s.prRefs?.[n]?.num && r.kind === s.prRefs[n]?.kind)
+    // `last_activity` is in this list, and it costs nothing: the server sets it
+    // from `sess.createdAt`, so it is fixed for a session's whole life and
+    // never invalidates anything. It is also why the age the UI shows is wrong
+    // — see the note in direct-bridge.ts.
+    && p.last_activity === s.last_activity
+    && p.isHeadless === s.isHeadless
+    // Without this the context number renders once and then freezes: it climbs
+    // with every reply, and a list that calls itself unchanged never re-renders
+    // it. The limit rides along for the same reason — it arrives one sweep
+    // after the count on a fresh Codex pane, and that sweep changes nothing
+    // else.
+    && p.ctxTokens === s.ctxTokens && p.ctxLimit === s.ctxLimit
+    // A pane's Terminals split is `sessions.filter(sideOf === id)`, so a new
+    // side terminal has to reach the list or the split never draws it — and the
+    // sweep that carries it changes nothing else.
+    && p.sideOf === s.sideOf
+    && p.fresh === s.fresh;
+}
 
 // ── Fields ──────────────────────────────────────────────────────────────────
 
@@ -769,6 +814,10 @@ function isOnScreen(
 
 // Debounce timers kept outside store state (no re-renders on timer changes)
 const _busyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Sessions whose busy timer has fired and are waiting to be written together.
+ *  See the flush in `updateActivity`. */
+const _busyPending = new Set<string>();
+let _busyFlush: ReturnType<typeof setTimeout> | null = null;
 
 // Active terminal send/refresh/scroll — updated by TerminalCell when it becomes active
 export const activeTerminalSend    = { current: (_msg: Record<string, unknown>) => {} };
@@ -812,7 +861,6 @@ const useStore = create<StoreState>((set, get) => ({
   sessionLastEvent: {},
   sessionOrder: [],
   sessionMap: {},
-  sessionCurrentInput: {},
   openPaneMap: {},
   workspaces: _initialWorkspaces.workspaces,
   workspaceOrder: _initialWorkspaces.order,
@@ -849,9 +897,21 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   renderSessions(sessions: Session[]) {
+    // Timed: this runs every two seconds against every pane, and it is the one
+    // place that reconciles the whole sidebar, assigns fields, dedupes pens and
+    // writes preferences. If the app stutters on a tick rather than on input,
+    // it stutters here.
+    const endPerf = perf.span('renderSessions');
+    try {
+      this.renderSessionsInner(sessions);
+    } finally {
+      endPerf();
+    }
+  },
+
+  renderSessionsInner(sessions: Session[]) {
     const { currentSessionId, workspaces, workspaceOrder } = get();
 
-    const sessionMap = Object.fromEntries(sessions.map(s => [s.id, s]));
     const liveSessionIds = new Set(sessions.map(s => s.id));
     // Two kinds of pane never get a pen, and so never appear in the sidebar:
     // the headless singleton, and the sheepdog. The dog is not one of the
@@ -870,9 +930,21 @@ const useStore = create<StoreState>((set, get) => ({
     const sorted = [...workspaceSessions].sort((a, b) =>
       (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0)
     );
-    const allSorted = [...sessions].sort((a, b) =>
-      (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0)
-    );
+    const prevSessions = get().sessions;
+    const prevById = new Map(prevSessions.map(s => [s.id, s]));
+    const allSorted = [...sessions]
+      .sort((a, b) => (parseInt(a.id.replace('$', ''), 10) || 0) - (parseInt(b.id.replace('$', ''), 10) || 0))
+      // Identity is the signal every selector downstream reads, so a session
+      // whose allowlisted fields all match keeps the object it already had.
+      .map(s => {
+        const p = prevById.get(s.id);
+        return p && sameSession(p, s) ? p : s;
+      });
+    // Built from the identity-preserved list, so `sessionMap[id]` keeps its
+    // reference for every pane that did not change. Building it from the raw
+    // input instead would hand every selector a new object regardless, which is
+    // the whole thing being fixed.
+    const sessionMap = Object.fromEntries(allSorted.map(s => [s.id, s]));
 
     const byPath: Record<string, Session[]> = {};
     for (const s of sorted) {
@@ -963,34 +1035,23 @@ const useStore = create<StoreState>((set, get) => ({
     const workspacesUnchanged =
       nextWorkspaceOrder.length === prev.workspaceOrder.length &&
       nextWorkspaceOrder.every((id, i) => prev.workspaceOrder[i] === id && prev.workspaces[id] === nextWorkspaces[id]);
-    const sessionsUnchanged =
-      allSorted.length === prev.sessions.length &&
-      allSorted.every((s, i) => {
-        const p = prev.sessions[i];
-        // `busy` is deliberately absent: it rides the preview message into
-        // `sessionBusy` and is never read off these objects.
-        return !!p && p.id === s.id && p.name === s.name && p.path === s.path
-          && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
-          && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
-          && p.isOpencode === s.isOpencode && p.isAntigravity === s.isAntigravity
-          && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
-          && p.gitBranch === s.gitBranch && p.gitDirty === s.gitDirty
-          && p.prNum === s.prNum && p.prState === s.prState
-          && p.prRefs?.length === s.prRefs?.length
-          && (p.prRefs ?? []).every((r, n) => r.num === s.prRefs?.[n]?.num && r.kind === s.prRefs[n]?.kind)
-          && p.last_activity === s.last_activity && p.isHeadless === s.isHeadless
-          // Without this the context number renders once and then freezes: it
-          // climbs with every reply, and a list that calls itself unchanged
-          // never re-renders it. The limit rides along for the same reason —
-          // it arrives one sweep after the count on a fresh Codex pane, and
-          // that sweep changes nothing else.
-          && p.ctxTokens === s.ctxTokens && p.ctxLimit === s.ctxLimit
-          // A pane's Terminals split is `sessions.filter(sideOf === id)`, so a
-          // new side terminal has to reach the list or the split never draws
-          // it — and the sweep that carries it changes nothing else.
-          && p.sideOf === s.sideOf
-          && p.fresh === s.fresh;
-      });
+    // Every session that did not change keeps its previous object.
+    //
+    // This was all-or-nothing: one pane's `last_activity` moving rebuilt the
+    // whole array and the whole `sessionMap`, so every component selecting
+    // `sessionMap[id]` re-rendered — all fifty-four of them, for the one that
+    // changed. With an agent running somewhere, something changes almost every
+    // sweep, so in practice the entire tree re-rendered on a 2-second timer.
+    // Measured before this: a socket message costing 251ms of React, with
+    // `commit:pane` alone up to 198ms and `TerminalCell` re-rendering four
+    // times a second against a single mounted terminal.
+    //
+    // It is the same fix `nextWorkspaces` above already makes, for the same
+    // reason, and it is why that comment says minting fresh objects
+    // "invalidated every selector downstream".
+    const identical = allSorted.every((s, i) => prev.sessions[i] === s);
+    const sessionsUnchanged = allSorted.length === prev.sessions.length && identical;
+
     // Seed the busy flag for panes this tab has no opinion about yet.
     //
     // `activity` messages own transitions — they are what fires "finished" —
@@ -1084,7 +1145,31 @@ const useStore = create<StoreState>((set, get) => ({
       if (_busyTimers.has(sessionId)) return;
       _busyTimers.set(sessionId, setTimeout(() => {
         _busyTimers.delete(sessionId);
-        set(s => ({ sessionBusy: { ...s.sessionBusy, [sessionId]: true } }));
+        // Written with every other pane that went busy at the same moment,
+        // rather than on its own.
+        //
+        // Each pane had its own 2200ms timer and its own `set`, and agents start
+        // work together — a sweep of hook reports, a fan-out, a restart — so
+        // their timers fire together. Every one of those is a separate task, so
+        // React cannot batch them: fifteen panes going busy meant fifteen full
+        // store writes and fifteen full commits, back to back. Measured: a 412ms
+        // frame carrying 169ms of script, blamed on this timer.
+        //
+        // The 0ms flush collects whatever fires in the same turn into one write.
+        // It changes no semantics — same 2200ms delay, same result — it just
+        // stops the work being done N times.
+        _busyPending.add(sessionId);
+        if (_busyFlush) return;
+        _busyFlush = setTimeout(() => {
+          _busyFlush = null;
+          const ids = [..._busyPending];
+          _busyPending.clear();
+          set(s => {
+            const next = { ...s.sessionBusy };
+            for (const id of ids) next[id] = true;
+            return { sessionBusy: next };
+          });
+        }, 0);
       }, 2200));
     } else if (busy === false) {
       const pending = _busyTimers.get(sessionId);
@@ -1093,6 +1178,9 @@ const useStore = create<StoreState>((set, get) => ({
         _busyTimers.delete(sessionId);
         return;
       }
+      // It may also have fired and be waiting in the flush below — a pane that
+      // finished in that window is not busy, and must not be written as busy.
+      _busyPending.delete(sessionId);
       const { sessionBusy, sessionMap } = get();
       const wasBusy = sessionBusy[sessionId] ?? false;
       if (wasBusy && !isVisible) {
@@ -1118,9 +1206,6 @@ const useStore = create<StoreState>((set, get) => ({
     }
   },
 
-  setCurrentInput(sessionId: string, input: string) {
-    set(s => ({ sessionCurrentInput: { ...s.sessionCurrentInput, [sessionId]: input } }));
-  },
 
   sessionAttention(sessionId: string, message: string) {
     const { currentSessionId, workspaces, sessionMap } = get();

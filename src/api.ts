@@ -12,6 +12,7 @@ import {
 } from './sheepdog.js';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
+import { readAgentInfo, type AgentInfo } from './agent-info.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
@@ -27,6 +28,117 @@ import type { AIService } from './ai.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+// ── UI performance snapshots ─────────────────────────────────────────────────
+// What ui/src/perf.ts posts. An hour at one snapshot per 10s, in memory.
+interface PerfStat { n: number; totalMs: number; maxMs: number }
+interface PerfSnapshot {
+  at: number; page?: string; secs: number; visibleSecs?: number; shell: string; fps: number;
+  slowFrames: number; worstFrameMs: number; worstFrameBlame: string;
+  longTasks: number; longTaskMs: number; worstLongTaskMs: number;
+  spans: Record<string, PerfStat>; counts: Record<string, number>;
+  terminals: number; browserPanes: number; domNodes: number;
+  heapMb: number | null; dpr: number;
+  loaf?: { at: number; durationMs: number; blockingMs: number; styleAndLayoutMs: number;
+           script: string; scriptMs: number; invoker: string }[];
+  main?: { ticks: number; stalls: number; worstMs: number; totalExcessMs: number;
+           ipc: Record<string, PerfStat> } | null;
+}
+const PERF_KEEP = 360;
+const perfSnapshots: PerfSnapshot[] = [];
+
+/** Every window folded into one answer. `shell` narrows it to 'electron' or
+ *  'browser', which is how the two are compared — the same UI in two shells,
+ *  so a span that only costs in one of them is the whole finding. */
+export function foldPerf(snaps: PerfSnapshot[], shell: string, page = '') {
+  const use = snaps.filter(s => (!shell || s.shell === shell) && (!page || s.page === page));
+  if (!use.length) return { windows: 0 };
+  const spans = new Map<string, PerfStat>();
+  const counts = new Map<string, number>();
+  let secs = 0, visible = 0, frames = 0, slow = 0, worstFrame = 0, worstBlame = '';
+  let longTasks = 0, longMs = 0, worstLong = 0;
+  const blame = new Map<string, number>();
+  for (const s of use) {
+    secs += s.secs;
+    // Frames exist only while the window is on screen, so the fps average is
+    // weighted by that and not by wall-clock.
+    const vis = s.visibleSecs ?? s.secs;
+    visible += vis; frames += s.fps * vis; slow += s.slowFrames;
+    longTasks += s.longTasks; longMs += s.longTaskMs;
+    if (s.worstFrameMs > worstFrame) { worstFrame = s.worstFrameMs; worstBlame = s.worstFrameBlame; }
+    if (s.worstLongTaskMs > worstLong) worstLong = s.worstLongTaskMs;
+    if (s.worstFrameBlame) blame.set(s.worstFrameBlame, (blame.get(s.worstFrameBlame) ?? 0) + 1);
+    for (const [k, v] of Object.entries(s.spans)) {
+      const m = spans.get(k);
+      if (!m) spans.set(k, { ...v });
+      else { m.n += v.n; m.totalMs += v.totalMs; m.maxMs = Math.max(m.maxMs, v.maxMs); }
+    }
+    for (const [k, v] of Object.entries(s.counts)) counts.set(k, (counts.get(k) ?? 0) + v);
+  }
+  const last = use[use.length - 1];
+  // Every page that reported, so a fold mixing two windows is visible as such
+  // rather than read as one slow app.
+  const pages = [...new Set(snaps.map(s => s.page ?? '?'))].map(id => {
+    const mine = snaps.filter(s => (s.page ?? '?') === id);
+    const last = mine[mine.length - 1]!;
+    return { page: id, shell: last.shell, windows: mine.length, domNodes: last.domNodes,
+             terminals: last.terminals, browserPanes: last.browserPanes };
+  });
+  return {
+    windows: use.length,
+    pages,
+    shells: [...new Set(snaps.map(s => s.shell))],
+    seconds: Math.round(secs),
+    fps: +(frames / Math.max(1, visible)).toFixed(1),
+    // How much of the sample the window was actually on screen for. A low
+    // number means most of it was spent behind something else, and the frame
+    // figures speak for little of it.
+    onScreenSeconds: Math.round(visible),
+    slowFramesPerMin: +(slow / Math.max(1, secs / 60)).toFixed(1),
+    worstFrameMs: +worstFrame.toFixed(1),
+    worstFrameBlame: worstBlame,
+    // Which span was open most often when a window's worst frame landed. '' is
+    // "none of ours", which points at style, layout or paint.
+    blame: [...blame].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name: name || '(none)', n })),
+    longTasksPerMin: +(longTasks / Math.max(1, secs / 60)).toFixed(1),
+    longTaskMsPerMin: Math.round(longMs / Math.max(1, secs / 60)),
+    worstLongTaskMs: worstLong,
+    // Worst total time first: what to go and fix.
+    spans: [...spans].map(([name, v]) => ({
+      name, n: v.n, totalMs: Math.round(v.totalMs), maxMs: +v.maxMs.toFixed(1),
+      avgMs: +(v.totalMs / v.n).toFixed(2),
+      msPerSec: +(v.totalMs / Math.max(1, secs)).toFixed(2),
+    })).sort((a, b) => b.totalMs - a.totalMs),
+    counts: [...counts].map(([name, n]) => ({ name, n, perSec: +(n / Math.max(1, secs)).toFixed(2) }))
+      .sort((a, b) => b.n - a.n),
+    // The worst long animation frames across every window, biggest first. This
+    // is the first thing to read: it names the script and file the browser
+    // itself blamed, so it finds stalls no span was written for.
+    loaf: use.flatMap(s => s.loaf ?? []).sort((a, b) => b.durationMs - a.durationMs).slice(0, 15),
+    // Electron only. A stall here is input lag the renderer could not see.
+    main: (() => {
+      const ms = use.map(s => s.main).filter(Boolean) as NonNullable<PerfSnapshot['main']>[];
+      if (!ms.length) return null;
+      const ipc = new Map<string, PerfStat>();
+      for (const m of ms) for (const [k, v] of Object.entries(m.ipc)) {
+        const e = ipc.get(k);
+        if (!e) ipc.set(k, { ...v });
+        else { e.n += v.n; e.totalMs += v.totalMs; e.maxMs = Math.max(e.maxMs, v.maxMs); }
+      }
+      return {
+        stalls: ms.reduce((a, m) => a + m.stalls, 0),
+        worstStallMs: Math.max(...ms.map(m => m.worstMs)),
+        excessMsPerMin: Math.round(ms.reduce((a, m) => a + m.totalExcessMs, 0) / Math.max(1, secs / 60)),
+        ipc: [...ipc].map(([name, v]) => ({ name, n: v.n, totalMs: Math.round(v.totalMs), maxMs: v.maxMs }))
+          .sort((a, b) => b.totalMs - a.totalMs),
+      };
+    })(),
+    holding: last && {
+      terminals: last.terminals, browserPanes: last.browserPanes,
+      domNodes: last.domNodes, heapMb: last.heapMb, dpr: last.dpr,
+    },
+  };
+}
 
 /** Every `gh` command, timed. GitHub is the slowest thing sheepit waits on, so
  *  each call says what it was and what it cost — `[gh]` in the log. */
@@ -176,6 +288,9 @@ interface GitStatusValue {
 }
 // Shorter than the client's 5s poll, so nothing is staler than it already was.
 const gitStatus = makeCoalescer<GitStatusValue | null>(2000);
+/** Keyed on transcript path + mtime, so an entry is only ever reused for a file
+ *  that has not moved — which makes the TTL a backstop rather than the rule. */
+const agentInfoCache = makeCoalescer<AgentInfo>(60_000);
 /** Does something on this port answer HTTP?
  *
  *  A machine has dozens of listeners and almost none of them are web servers —
@@ -771,6 +886,45 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     }
   });
 
+  // ── UI performance snapshots ───────────────────────────────────────────────
+  // ui/src/perf.ts posts one every 10s. Kept in memory for an hour, which is
+  // the whole point: a bottleneck in real daily use has to be readable after
+  // the fact, by a `curl`, rather than only in a profiling session somebody sat
+  // down to run. Not persisted — a server restart losing them is fine, since
+  // what matters is the session you are in.
+  router.post('/perf', (req, res) => {
+    const snap = req.body;
+    if (!snap || typeof snap !== 'object') return res.status(400).json({ error: 'not a snapshot' });
+    perfSnapshots.push(snap);
+    while (perfSnapshots.length > PERF_KEEP) perfSnapshots.shift();
+    res.json({ ok: true });
+  });
+
+  // Cleared deliberately, to measure a fix: the point of comparing before and
+  // after is that the history holds one of them and not both.
+  router.delete('/perf', (_req, res) => {
+    const had = perfSnapshots.length;
+    perfSnapshots.length = 0;
+    res.json({ cleared: had });
+  });
+
+  // `?spans=1` folds every window's spans and counts together, worst total
+  // first — the one view that answers "what is slow", rather than 360 windows
+  // of raw numbers to read by eye.
+  router.get('/perf', (req, res) => {
+    if (!req.query.spans) return res.json({ kept: perfSnapshots.length, snapshots: perfSnapshots });
+    // `?minutes=` folds only what happened recently. Without it the fold covers
+    // the whole retained hour, which is right for "what is this app like" and
+    // wrong for "did that change help" — an hour of pre-fix windows drowns ten
+    // minutes of post-fix ones, and a watchdog reading the whole hour reports a
+    // regression that was fixed forty minutes ago.
+    const minutes = Number(req.query.minutes ?? 0);
+    const recent = minutes > 0
+      ? perfSnapshots.filter(s => s.at >= Date.now() - minutes * 60_000)
+      : perfSnapshots;
+    res.json(foldPerf(recent, String(req.query.shell ?? ''), String(req.query.page ?? '')));
+  });
+
   router.get('/diagnostics', (_req, res) => {
     try {
       const diag = bridge.diagnostics();
@@ -1066,6 +1220,34 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         endpoint: 'resolve', sessionId, source: null, event: null, state: null, turn: null, refs: null, outcome: 'ok',
       });
       res.json({ sessionId });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /**
+   * What the agent in this pane has been asked to do.
+   *
+   * Read from the agent's own transcript — the rule that nothing reads the
+   * terminal as text holds here as it does everywhere else.
+   *
+   * `null` means "no agent, or no transcript to read", which is a real answer
+   * for a plain shell and for every Codex pane before its first turn. It is not
+   * an error, and the pane says so in words rather than showing an empty list,
+   * which would claim the agent had been asked nothing.
+   *
+   * Coalesced on the transcript path and its mtime: the file only changes when
+   * the agent replies, so re-reading an unchanged one is pure waste — the same
+   * trick `contextTokens` uses, which is why that one stats before it reads.
+   */
+  router.get('/sessions/:id/agent', async (req, res) => {
+    try {
+      const path = bridge.resolveAgentTranscript(req.params.id);
+      if (!path) return res.json(null);
+      let mtime = 0;
+      try { mtime = statSync(path).mtimeMs; } catch { return res.json(null); }
+      const info = await coalesced(agentInfoCache, `${path}:${mtime}`, () => readAgentInfo(path));
+      res.json(info);
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

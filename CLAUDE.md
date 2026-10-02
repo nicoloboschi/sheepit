@@ -70,6 +70,13 @@ The two live states take precedence: a sheep that is still working shows that
 it is working, unread or not. Bleating wins over grazing when both would apply, so the two
 counts never double-count a pane.
 
+**An idle sheep's `zzz` only drifts in the pane bar.** Everywhere else — every
+pane card in every pen — it is drawn as three static strokes at falling opacity.
+Idle is the commonest state there is, so animating it per card meant a hundred
+infinite animations running at once for a signal that means *nothing is
+happening*; see [Measuring the UI](#measuring-the-ui--one-place-always-on). The
+glyph is the signal and it is unchanged; only the motion is scoped.
+
 Write `sheep`/`pen` in UI copy and `pane`/`workspace` in code — including on
 the wire, where the server and its API keep the plain names. A comment
 explaining a UI string may use either, whichever makes the sentence clearer.
@@ -735,9 +742,25 @@ than three exchanges, and free. It named a pane `Litellm-sdk bedrock support`
 that our own namer had called `merge`. `readAgentTitle` reads it from the tail
 of the transcript — the rows are one per turn and only the last is current, and
 a transcript runs to hundreds of megabytes. **Codex writes no title at all**
-(`session_meta`, `turn_context`, `response_item`, nothing else), so those panes
-fall through to the namer below; a null here is the normal case for half the
-flock, not a failure.
+(`session_meta`, `turn_context`, `response_item`, nothing else), and **Pi
+writes none either** (`session`, `model_change`, `message`) — so a null here is
+the normal case for half the flock, not a failure.
+
+**An agent with no title is named from the first thing you asked it**
+(`readOpeningPrompt`). Those panes used to keep the directory's name, which is
+the name every other pane in the same checkout had as well — so a flock of
+eight Codex panes in eight worktrees of one project was eight panes called
+`memlake`. The opening prompt is the same material a title is made of, chosen
+by the person rather than the agent, and it has the one property a title does
+not: **it never changes**, so the pane is named once instead of renamed every
+turn. It is read from the **head** of the file, which is the opposite of every
+other read here and is the point — the first prompt is at the top of a file
+that may be 47MB, so one bounded 256KB chunk, no streaming. A slash command is
+skipped: a pane whose first line was `/clear` would be called `clear`. The
+name still goes through `normalizeAssignedName`, so it is six words and the
+reader can claim it — a prompt head reads a little oddly (`can you make the
+Files floating`) and that is the cost; what it buys is a name that says which
+pane this is.
 
 There is no model call here any more. There used to be one per pane per
 sweep — three exchanges, a prompt with six rules in it, a one-shot `claude -p`
@@ -759,8 +782,8 @@ them any more.
 ### The transcript also says how full the context is
 
 `readContextTokens` reads it from the same tail the title comes from, and the
-pen card shows it (`ctxTokens`, `.pane-card-ctx`). Both agents record it, in
-different places:
+pen card shows it (`ctxTokens`, `.pane-card-ctx`). All three agents with a
+transcript record it, in different places:
 
 - **Claude Code** puts a `usage` block on every assistant row, and the prompt
   is `input + cache_read + cache_creation`. **The cached part is nearly all of
@@ -770,7 +793,15 @@ different places:
   `info.last_token_usage.input_tokens` is the last prompt, already summed (its
   `cached_input_tokens` is a subset, not an addition). Take the **last turn's**
   figure, not `total_token_usage`, which is every turn's input added up and is
-  not what is in the context. The older `token_usage_record` row is still read
+  not what is in the context.
+- **Pi** is Claude's shape under shorter names — `usage.input`, `cacheRead`,
+  `cacheWrite`, `output` on every assistant row — so the same sum applies, and
+  for the same reason: a real session reports `input: 1561` beside
+  `cacheRead: 106368`. `readContextTokens` adds both sets of field names in one
+  expression rather than branching, because one of the two is always absent.
+  Pi is also the only agent that prices its own turns (`usage.cost.total`, in
+  dollars), which the Agent tab shows as **Cost**; absent there means *not
+  reported*, never free. The older `token_usage_record` row is still read
   as a fallback — current Codex writes none, and reading only that one is why
   Codex panes had stopped reporting any context at all.
 
@@ -870,7 +901,74 @@ green. A name the namer cannot recognise is one it can never fix — the same
 failure `stripNameDecoration` exists for, which arrived as a session called
 `` `pytest` ``.
 
-## Agent hooks — the two agents do not share a vocabulary
+## Four agents, and what each one can be asked
+
+A pane can hold Claude Code, Codex, Pi or Hermes (and the marks-only ones:
+opencode, Copilot, Grok, Cursor, Antigravity). They are detected the same way
+— `detectAgentApp` on the process tree — and after that they diverge, because
+what sheepit can say about a pane is exactly what that agent writes down
+somewhere. The table is the whole of it:
+
+| | Claude Code | Codex | Pi | Hermes |
+|---|---|---|---|---|
+| transcript | `~/.claude/projects/<slug>/<uuid>.jsonl` | `~/.codex/sessions/Y/M/D/rollout-*-<id>.jsonl` | `~/.pi/agent/sessions/<slug of cwd>/<ts>_<id>.jsonl` | **none** — a SQLite `state.db` |
+| how we find it | the hook hands over the path | the hook hands over a session id; the filename ends in it | **nothing reports** — found from the pane's cwd (`findPiSession`) | — |
+| reporter | the hooks plugin | the hooks plugin | **an extension** (`plugin/pi/sheepit.js`), since it has no hooks | none — see below |
+| busy / bleating | hooks | hooks (`waiting` from `PermissionRequest`) | the extension's own events | nothing |
+| title | `ai-title`, every turn | none → opening prompt | none → opening prompt | — |
+| context | sums `input + cache_read + cache_creation` | `last_token_usage` | sums `input + cacheRead + cacheWrite` | — |
+| window size | **never recorded** | `model_context_window` | **never recorded** | — |
+| cost | — | — | **`usage.cost.total`**, in dollars | — |
+| resume after a reboot | `claude … -c` | — | `pi -c` | — |
+
+Three things in it are worth the words:
+
+- **A transcript is found, not reported, for Pi.** It has no hooks, so nothing
+  can hand over a path — but it files its sessions per project directory, so
+  the cwd is the key and the newest filename is the live session.
+  `resolveAgentTranscript` is the one chokepoint every reader goes through
+  (the Agent tab, the pen card's context count, ⌘K, the dog's `read_pane`), so
+  Pi arrived in all four at once by being added there. The discovery is cached
+  for ten seconds rather than for the session's life: a second `pi` in the same
+  directory writes a *new* file beside the old one, and a path pinned once
+  would leave the pane describing the conversation before last for ever. The
+  slug is matched on its **letters and digits alone** rather than by rebuilding
+  Pi's escaping — one `.` or space in a path and a reconstructed slug is
+  silently wrong, while a comparison that ignores the punctuation cannot be.
+- **Only Claude and Pi can be resumed**, and that is about the flag, not about
+  favouritism: `claude -c` and `pi -c` both mean *the last conversation in this
+  directory*, because both file their sessions per project. `codex resume
+  --last` and `hermes --continue` mean the most recent session on the machine,
+  so a restored pane would come back holding somebody else's work — worse than
+  coming back holding a shell. See `AGENT_RESUME_COMMANDS`.
+- **Every agent but Hermes reports its own state.** Claude Code and Codex
+  load one `hooks.json`; Pi has no hook system at all, so the same reporter
+  runs *inside* it as an extension. See [Agent
+  hooks](#agent-hooks--the-agents-do-not-share-a-vocabulary) for both, and for
+  the one rule that matters while testing: a Pi extension loaded twice reports
+  everything twice.
+- **Hermes is the one agent with nothing to read.** Its conversation lives in
+  a SQLite `state.db` under `HERMES_HOME`, not in a JSONL anybody can tail, so
+  the Agent tab says so in words rather than showing an empty list, `AgentKind`
+  deliberately has no `hermes` member, and `transcriptRoots()` has no Hermes
+  root. It still gets detected, drawn and counted; it is simply not a pane you
+  can ask what it has been told. Its hooks are real (`hermes hooks`) but they
+  are declared in the `config.yaml` that also holds the user's model and
+  provider, under their own event names, behind a first-use consent allowlist
+  — so wiring a reporter into them means editing that file, which is the one
+  thing [the sheepdog's own setup](#its-own-hermes-profile) is careful never
+  to do.
+
+**What was silently empty on a Codex pane**, until the fields were read under
+the names Codex actually uses: its **turns** (it writes `task_complete`, where
+Claude writes a `stop_reason` of `end_turn` and Pi a `stopReason` of `stop`),
+its **effort** (`turn_context.effort`), its **sandbox** (`{"type":"read-only"}`
+— the code read a `mode` key that current Codex does not write), and its
+**branch** (`session_meta.git.branch`, written once at the top rather than on
+every row). All four showed as absent, which reads as *this agent does not
+report it* — the same wrong answer the hook trace exists to make visible.
+
+## Agent hooks — the agents do not share a vocabulary
 
 `plugin/hooks/hooks.json` is one file loaded by **both** Claude Code and
 Codex, and each silently ignores event names it does not know. That tolerance
@@ -885,28 +983,34 @@ The events are **not** the same set:
 | turn starts | `UserPromptSubmit` | `UserPromptSubmit` |
 | still working | `PreToolUse` / `PostToolUse` | `PreToolUse` / `PostToolUse` |
 | turn ends | `Stop` | `Stop` |
-| **waiting on you** | `Notification` | `PermissionRequest` — **not wired yet**, see below |
+| **waiting on you** | `Notification` | `PermissionRequest` — wired, see below |
 | session starts / cleared | `SessionStart` (`startup`, `clear`) | `SessionStart` (`startup`, `resume`, `clear`, `compact`) |
 | session ends | `SessionEnd` | `SessionEnd` |
 
 Codex has **no `Notification` event at all**. Its full set is `PreToolUse`,
 `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
 `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`,
-`SubagentStop`, `Stop`, `Interrupt`. So the plugin reports `waiting` for
-Claude and never once for Codex — the pane goes from grazing straight to
-nothing while the agent sits on an approval prompt.
+`SubagentStop`, `Stop`, `Interrupt`. Without its own `waiting`, a Codex pane
+went from grazing straight to nothing while the agent sat on an approval
+prompt — the one state the flock exists to show.
 
-**`PermissionRequest` is deliberately not wired yet.** It is the right event,
-but it is not a passive notification the way `Notification` is: Codex reads
-the hook's *decision* from it, an exit code of 2 denies the request, and
-invalid JSON on stdout is an error. A reporter on that hook sits directly in
-front of the approval prompt the user is waiting to see. If it is wired, it
-must go through `post.sh` rather than `report-state.mjs` — a fixed body needs
-no payload parsing, so there is nothing to buy with a node spawn, and there
-the rule that every path exits 0 and prints nothing stops being politeness and
-becomes the thing that keeps it from answering a permission question nobody
-asked it. Verify it against the hook trace on a real approval before trusting
-it.
+**`PermissionRequest` is wired, and it is wired through `post.sh`.** It is not
+a passive notification the way `Notification` is: Codex reads the hook's
+*decision* from it, an exit code of 2 denies the request, and invalid JSON on
+stdout is an error. A reporter on that hook sits directly in front of the
+approval prompt the user is waiting to see — so it carries a **fixed body**
+(`{"state":"waiting",…}`) and never the node reporter. There is nothing to buy
+with a payload parse here, and in `post.sh` the rule that every path exits 0
+and prints nothing stops being politeness and becomes the thing that keeps it
+from answering a permission question nobody asked it.
+
+Two things about it that are not optional, and the second is why a first look
+reads as broken: the event needs a **Codex restart** before it fires at all,
+and Codex will not run a hook it has not **trusted by hash** (see below), so
+a new event also needs the user's approval once. **Verify it against the hook
+trace on a real approval** — a `waiting` row with `source: codex` and
+`event: PermissionRequest` — rather than trusting this paragraph; nothing else
+distinguishes a hook that never fired from one that failed.
 
 `post.sh` carries a fixed body, so it cannot be handed the caller's name —
 hooks.json is one file and said `"source":"claude"` for both agents. It works
@@ -916,10 +1020,67 @@ than leaving them unlabelled: the trace is where you go to ask "is Codex
 reporting at all", and it answered no while Codex was reporting fine.
 
 Codex reports the whole turn correctly — `UserPromptSubmit` with the prompt,
-tool pings, and `Stop` with the response. The only thing genuinely missing is
-`waiting`, for the reason above. Do not read a short sample of the trace as a
-missing event: `Stop` fires once per turn against hundreds of tool pings, so
-an idle minute looks exactly like a broken hook.
+tool pings, and `Stop` with the response. Do not read a short sample of the
+trace as a missing event: `Stop` fires once per turn against hundreds of tool
+pings, so an idle minute looks exactly like a broken hook.
+
+### Pi has no hooks, so the reporter lives inside it
+
+`plugin/pi/sheepit.js` is a **Pi extension**: a module Pi imports at startup
+and calls back on its own lifecycle events. It reports the same four states to
+the same agent-agnostic endpoint as `source: "pi"`, so the hook trace, the
+activity dot, the pane's name and ⌘K work for a Pi pane with no server-side
+knowledge of Pi beyond reading its transcript.
+
+Its events map cleanly, and one of them is better than what the other two
+offer:
+
+| moment | Pi event |
+|---|---|
+| turn starts | `turn_start`, and `message_end` (role `user`) for the prompt |
+| still working | `tool_execution_start` / `tool_execution_end` |
+| **waiting on you** | `ui_prompt_start` → `waiting`, `ui_prompt_end` → back |
+| turn ends | `agent_settled`, with the reply kept from `message_end` |
+| session starts / cleared | `session_start` (`reason: "new"` is the `/clear`) |
+| session ends | `session_shutdown` (`reason: "quit"`) |
+
+In-process changes the rules in both directions, and the file says so at
+length because every one of them is a trap the hook plugin does not have:
+
+- **A handler is awaited by the agent**, so nothing in that file is ever
+  awaited: every POST is fire-and-forget. That is the in-process spelling of
+  `post.sh` backgrounding its curl.
+- **A throw lands in the agent**, not in a subprocess nobody reads, and **a
+  returned value is how an extension changes Pi's behaviour**. So every
+  handler is wrapped and every path returns `undefined` — asserted in
+  `pi-extension.test.ts`, which drives the real file the way Pi drives it.
+- **There is nothing to spawn**, so the per-tool-call ping costs a function
+  call rather than the ~25ms interpreter start `post.sh` exists to avoid. The
+  whole reason that file is POSIX sh does not apply here.
+- **`ui_prompt_start` is the `waiting` Codex had to wait for.** Any prompt Pi
+  puts up is a question only the person can answer, which is exactly what a
+  bleating sheep means — and unlike Codex's `PermissionRequest` it is
+  notification-only, so a reporter on it cannot affect what is being asked.
+- **`agent_settled`, not `agent_end`.** Retries, recovery and compaction can
+  still follow an `agent_end`, and a pane that went quiet and then started
+  working again is the wrong notification twice.
+
+Installing is a **file copy** into `~/.pi/agent/extensions/sheepit.js`
+(`installIntoPi`), which Pi loads with no settings entry — there is no plugin
+manager, no marketplace and no version-keyed cache, so none of the traps those
+have. The version is a comment on the installed file's first line rather than a
+marker file beside it, because Pi scans that directory. Like `hooks.json`, it
+is read **once at startup**: a running Pi pane keeps the old code, and there is
+no `syncPluginScriptsIntoCaches` equivalent to sneak a fix in, because the code
+is already resident.
+
+**Do not load it twice.** A copy passed with `pi --extension` *and* the
+installed copy are two independent reporters, and every state arrives twice —
+which is exactly what a hook trace showing `count: 2` on every Pi row means.
+It cost an hour of looking for a duplicate-send bug in the reporter that was
+never there: the extension issues one request per event, and two module
+instances issued two. When testing a change, pass `--extension` with a path
+*and* move the installed copy aside, or just reinstall and run plain `pi`.
 
 ### Never delete a plugin directory a session is using
 
@@ -969,6 +1130,326 @@ is for. Two columns carry what the hooks brought rather than what they were:
 pane bar shows). Both are otherwise invisible, and a blank column is the whole
 explanation for a pane that lights up correctly but is never named, or never
 shows its PR.
+
+## Measuring the UI — one place, always on
+
+`ui/src/perf.ts` is the only thing in the UI that measures the UI. Nothing else
+may call `performance.now()`, stand up a `PerformanceObserver`, or keep its own
+frame counter — a second measurement is a second answer, and the whole value of
+this file is that there is one. `DiagnosticsDialog` used to sample
+`performance.memory` and count websocket resource entries on its own 3-second
+timer; it now reads `perf.live()` like everything else.
+
+It is **on in every build**, because the bottlenecks worth finding are the ones
+in real daily use, and those are never in a profiling session somebody sat down
+to run. The cost is one `requestAnimationFrame` for the whole app, two
+observers, and a `Map` bump per span; nothing allocates per frame.
+
+Four kinds of measurement, and they answer different questions:
+
+| | what it tells you |
+|---|---|
+| `perf.span(name)` | what code *you suspected* costs. Returns the end function; nesting is fine, and the innermost open span is what a janky frame is blamed on. It is the only timing helper — `timed()`/`timedAsync()` wrappers were written and deleted unused |
+| `perf.count(name)` | things with no duration — a render, an IPC send, bytes over the wire |
+| `perf.commit(id, ms)` | what one React commit of a subtree cost, from a `<Profiler>` |
+| long animation frames | what costs that **nobody wrote a span for** — the browser's own attribution: which script, which file, called from what, and how much of the frame was style and layout rather than JavaScript |
+
+Two of those four do not survive a production build, and reading a number
+without knowing which is how you end up optimising the profiler:
+
+- **`commit:*` works in a production build too.** This file previously claimed
+  otherwise — that `<Profiler>` is a no-op unless built against
+  `react-dom/profiling`. That was true of React 16/17 and is not true here:
+  the spans are present in the Vite production bundle, checked by serving
+  `ui/dist` and reading them. So commit timings are available wherever you run,
+  which is what makes the dev-versus-production comparison below possible at
+  all.
+- **Dev inflates every React number.** Vite serves React's development build,
+  which is several times slower than production, and `main.tsx` wraps the app in
+  `StrictMode`, which renders every component twice. A commit measured at 113ms
+  in `./dev.sh --desktop` is not 113ms in a packaged app. The *shape* still
+  holds — one socket message should not commit the whole tree — but never quote
+  a dev millisecond as the user's millisecond.
+
+That last row is the one that earns its keep. A `span` can only answer for code
+someone already suspected, and the first time you look, that is not where the
+time is going. The long-frame observer named a 343ms click as 307ms of React
+with 16ms of style and layout — which is the opposite of what the CSS suspects
+in this file would have predicted, and it took no guessing at all.
+
+**A `render:` counter is not a substitute for a commit.** A counter averages a
+burst away: thirty renders inside one click and nothing for ten seconds reads as
+three a second. The commit carries the duration of the work React actually did,
+so the one 300ms commit shows up as a 300ms maximum. There are exactly two
+`<Profiler>`s — `sidebar` and `pane` — because the only question a wrapper here
+answers is which half a slow commit landed in.
+
+**An occluded window reports slowly, not never.** Browsers throttle background
+timers to roughly once a minute, so a window behind something else posts a
+snapshot about that often rather than every 10 seconds. A gap in the data after
+a `DELETE` is usually that, not a broken client — wait a minute before
+concluding anything is wrong.
+
+**A window nobody is looking at is still measured.** The snapshot is closed by a
+timer, never by the frame loop — the OS stops producing frames for an occluded
+window, so rolling inside `requestAnimationFrame` meant such a window reported
+*nothing at all*, and a real day's work has plenty of time with the window
+behind something else. Frames only exist while it is on screen, so `visibleSecs`
+says how much of the snapshot they can speak for and `fps` is a rate over that
+rather than over wall-clock. Without it, a window spending nine seconds of ten
+behind another app read as 7fps.
+
+### The snapshots leave the browser
+
+Every 10 seconds the window is folded into a snapshot and posted to
+`POST /api/perf`, where the server keeps an hour of them in memory. **That is
+the point of the whole file**: a measurement nobody can read afterwards is a
+profile of a moment nobody cared about. Reading it:
+
+```
+curl -s 'localhost:4445/api/perf?spans=1&shell=electron' | python3 -m json.tool
+curl -X DELETE localhost:4445/api/perf     # before measuring a fix
+```
+
+`?minutes=N` folds only the last N minutes. The server keeps an hour, which is
+right for "what is this app like" and wrong for "did that change help" — an hour
+of pre-fix windows drowns ten minutes of post-fix ones, and anything watching
+the whole hour will report a problem that was fixed forty minutes ago.
+
+`?spans=1` folds every window into one answer, worst total first. `shell=`
+narrows to `electron` or `browser` — the same UI in two shells, so **a span that
+only costs in one of them is the whole finding**. Not persisted: a server
+restart losing them is fine, since what matters is the session you are in.
+
+In Electron there is a second half the renderer cannot see. Window events,
+native view placement and every IPC message are handled on the **main**
+process's event loop, so a stall there is input lag that the process being
+blocked cannot measure. `main.cjs` watches its own loop drift and times each IPC
+handler; the renderer asks for it once per window (`perf:main`) and folds it in,
+so there is still one place to read.
+
+**One series per page.** A machine routinely has several pages open at once —
+the desktop window, a tab, a second window — and folded together they average
+into a picture that describes none of them. Every snapshot carries a `page` id,
+regenerated per load, and the fold lists every page that reported so a mixed
+sample is visible as mixed. `?page=` narrows to one.
+
+**Compare like with like.** A window holding 5 panes, 5 browser surfaces and
+18,500 DOM nodes against a tab holding 1 terminal and 3,800 nodes is not a
+measurement of Electron versus the browser — it is a measurement of five things
+versus one. `holding` is on every snapshot for exactly this reason: check it
+before believing a difference.
+
+### What it found first
+
+- **A hidden browser pane used to poll.** `NativeBrowserSurface` followed its
+  box on a timer even when the pane was not on screen — four times a second,
+  per pane, and every poll a `getBoundingClientRect`, which is a forced layout
+  flush over the whole document. Every pane in a pen stays mounted, so most of
+  them were panes nobody could see. Measured: 5 panes, 20 forced layouts a
+  second on an 18,500-node tree, **7.3ms of every second, forever, for no
+  information** — and the browser build pays none of it, which is exactly the
+  shape of the original complaint. An `IntersectionObserver` answers the same
+  question for free, because the compositor already knows: a `display: none` box
+  does not intersect, and being shown fires the callback with the new rect
+  attached. The `requestAnimationFrame` now exists only while there is something
+  to follow. Do not reintroduce a timer here.
+- **The stalls are React, not CSS.** On a real session the worst frames were
+  270–340ms of script with 1–16ms of style and layout, triggered by
+  `DIV#root.onclick` and by `DOMWebSocket.onmessage`. Note what this is measured
+  *in*: Vite serves React's **development** build and `main.tsx` wraps the app in
+  `StrictMode`, which double-renders every component. Both inflate these
+  numbers, and both are absent from a packaged build — so the number is not the
+  user's number, but the **shape** is real: one socket message should not cause a
+  300ms commit.
+- **The flock was animating itself to a standstill.** An idle sheep drifts three
+  `zzz` strokes for ever, and idle is the commonest state a pane is in — so with
+  one sheep per pane card the sidebar ran **105 of those animations at once**,
+  out of 152 in the document. It did not show up as script at all: the frames
+  were 92–118ms carrying *no* JavaScript, with the GPU process at ~40% in a
+  window where nothing was happening, which is why no amount of reading the
+  JavaScript would have found it. The drift is now scoped to
+  `.pane-header .sheep-idle` — the full-size animal in the pane bar, and there is
+  one pane bar on screen — and the sidebar's sheep keep the glyph with staggered
+  opacity instead. 153 running animations became 13. At 26px a 3px `z` drifting
+  6px was never motion anybody could see; it is the same argument `SheepDot`
+  makes about a 6px dot. **Do not re-scope an infinite animation to a selector
+  that matches once per pane.**
+  `content-visibility: auto` on the pen row was tried for the same problem and
+  **removed**: a real flock fits on screen (7 pens, 41 sheep on the machine this
+  was measured on), so it saved nothing that the scoping had not already saved,
+  and a skipped subtree has no rendered descendants — which is exactly what
+  dnd-kit measures when you drag a pane into another pen. If the sidebar ever
+  does grow past a screenful, that is the right tool; it is not a free win to
+  add speculatively.
+- **One pane changing re-rendered every pane.** `renderSessions`' equality check
+  was all-or-nothing: if any single session differed, the whole `sessions` array
+  and the whole `sessionMap` were rebuilt, so every component selecting
+  `sessionMap[id]` re-rendered. With 54 panes and an agent running somewhere,
+  `last_activity` moves on *something* almost every sweep — so in practice the
+  entire tree re-rendered on a two-second timer. Measured before the fix: a
+  socket message costing 251ms of React, `commit:pane` up to 198ms, and
+  `TerminalCell` re-rendering four times a second against one mounted terminal.
+  `sameSession()` is the allowlist lifted out, and a session whose fields all
+  match now keeps the object it already had — the same fix `nextWorkspaces` had
+  already been given, for the same reason. **Identity is the signal every
+  selector reads**, so anything rebuilding these objects wholesale undoes it.
+- **The sidebar re-rendered every pen on every sweep.** `SessionItem` was not
+  memoised, so one commit of the sidebar re-rendered the whole column — every
+  pen, several times a second, because one pane somewhere had new output. It is
+  `memo()`d now, and that only works because the props are all stable:
+  `workspace` keeps its object unless that pen changed, and `onConnect`/`send`
+  are `useCallback`s in App whose dependencies bottom out at `[]`. A pen whose
+  own data changed still re-renders — its own `useStore` selectors fire
+  regardless of the parent. Measured on a 7-pen flock: **2.9 pens re-render per
+  sweep instead of all 7**, and those are the ones that actually changed.
+  **Give that component a prop built inline at the call site and the memo is
+  off.**
+
+  Counting this needs care, because `useSharedTick(5_000)` re-renders every pen
+  every five seconds *by design*, to keep the relative timestamps honest. That
+  floor (pens x ticks x 2 for `StrictMode`) has to come out of the render count
+  before the remainder says anything about sweeps — subtract it and the
+  difference is the real signal; forget it and the memo looks like it does
+  nothing.
+- **The fence redraw is layout, not canvas.** The watchdog caught a 1058ms frame
+  blamed on `PenFence` from a `ResizeObserverCallback`, with one `penFence:draw`
+  at 209ms. The obvious suspect was the grass — the workspace pen covers the
+  whole main area, about 7,000 blades, each its own `stroke()`. It was the wrong
+  suspect: measured on a real page, 7,000 strokes cost **2.2ms**. What costs is
+  that each callback calls `getBoundingClientRect` and `getComputedStyle` *while
+  the layout is dirty* — **1.26ms and 1.54ms a call**, against ~0ms when it is
+  settled — and then assigns `cv.width`, dirtying the layout again for the next
+  pen. A column of pens pays a full style and layout recalculation each, in
+  sequence. Both observers now coalesce into one frame. The grass batching
+  stayed (7,000 draw calls became ten, a measured 1.3x) but it is **not** the
+  fix, and the comment in `grass.ts` says so — a tempting story that measurement
+  does not support is worse than no comment at all.
+- **Every mounted *pen* re-rendered on a click.** `PaneTerminal` keeps up to a
+  dozen pens mounted and renders a `TerminalGrid` for each; none of them was
+  memoised, so clicking a pen in the sidebar re-rendered all twelve rather than
+  the two involved in the switch. This is what the browser kept blaming
+  148–208ms frames on — `DIV#root.onclick`, which is precisely the "clicking
+  feels unreactive" the whole exercise started from. `TerminalGrid` takes one
+  string, so memoising it is free; a pen whose own contents changed still
+  re-renders, because its `useStore` selector fires regardless of the parent.
+- **Every mounted pane re-rendered with the grid.** Every sheep in a pen stays
+  mounted (all but one under `display: none`), and `TerminalCell` was not
+  memoised — so one render of `TerminalGrid` re-rendered every pane in the pen,
+  terminal chrome and tool split included. The watchdog caught `commit:pane` at
+  **25ms of every second** with the app idle. It is `memo()`d now, which needed
+  the handlers fixed first: `onActivate={() => setActiveCell(i)}` builds a new
+  function on every render, so the memo could never have held. Both callbacks
+  take the pane index instead, and the grid passes its `useCallback`s straight
+  through. `TerminalTiles` keeps inline handlers on purpose — it closes by id,
+  not index, and four scratch shells are not worth a lookup table.
+- **A clock re-rendered the whole sidebar.** `useSharedTick(5_000)` sat on
+  `SessionItem`, so every five seconds every pen re-rendered its entire subtree
+  — pane cards, agent marks, context counts and a 44x38 SVG sheep each — to
+  refresh a string like "48s". The tick now lives on `PaneAge`, a component that
+  renders nothing but that string, so the re-render happens where the change is.
+  The timer is still shared, which is the point of the hook: forty of these are
+  one interval and one tick. **A component that subscribes to a clock should be
+  the smallest thing the clock changes.** It subscribes to `sessionLastEvent`
+  itself for the same reason: that moves on every output message an agent
+  produces — 22 a second, measured — and while the card held the subscription,
+  every one of those re-rendered the card's name, agent mark, context count and
+  sheep to change a string.
+- **Every keystroke did work for a reader that no longer exists.** `sendInput`
+  ran `stripEscapeSequences` over the data, rebuilt a per-session input line
+  character by character, and broadcast it to every connected client as
+  `current_input`; the client copied its whole 54-entry map into the store and
+  woke every subscriber. **Nothing had rendered it since the commit that removed
+  the reader.** The server comment even says the broadcast "is work on the same
+  path a keystroke travels, so it showed up as input lag" — it had been
+  coalesced once already, when the right answer was that it should not exist.
+  Gone: `inputBuffers`, `publishCurrentInput`, `INPUT_PUBLISH_MS`, the protocol
+  message, the store field and its diagnostics row. Note what made it findable:
+  the data said a span called `ws:current_input` was costing real time, and a
+  grep said nothing read it. **Dead state is invisible until something counts
+  it.**
+- **`last_activity` is not last activity** — found while chasing the renders it
+  was assumed to cause. The server sets it from `sess.createdAt`, and the
+  restore paths stamp that with `Date.now()`, so after a restart all 54 sessions
+  carry an identical value and it never changes again. Verified against the live
+  API: 54 sessions, **one** distinct value, unchanged across samples. Two things
+  follow. The age on every pane card, and the ordering in the New Session
+  dialog, are both measuring time-since-server-start. And the perf story built
+  on it was wrong twice over — first "it must stay for correctness", then "it
+  churns every sweep"; it is in fact constant, so it costs nothing and removing
+  it bought nothing. That change was reverted. **The bug is real and unfixed**:
+  fixing it means choosing what counts as activity and stamping that.
+- **Every pane that went busy wrote the store on its own.** `updateActivity`
+  arms a 2200ms timer per pane and each one wrote the whole `sessionBusy` map by
+  itself. Agents start work together — a sweep of hook reports, a fan-out, a
+  restart — so the timers fire together; but each is its own task, so **React
+  cannot batch them**. Fifteen panes going busy meant fifteen full store writes
+  and fifteen full commits back to back. Found by the watchdog as a 412ms frame
+  carrying 169ms of script and blamed on `src/store.ts [TimerHandler:setTimeout]`
+  — not a click and not the sweep, which is why it had stayed hidden behind
+  those two all day. A 0ms flush now collects whatever fires in the same turn
+  into one write; the delay and the result are unchanged. A pane that finishes
+  while the flush is pending is taken back out of it, or it would be written as
+  busy just after saying it had stopped.
+- **Hidden panes did full React work — this was what made clicking slow.**
+  Every sheep in a pen stays mounted under `display: none`, and they re-rendered
+  with everything else: **11 `commit:split` per sweep when at most one split is
+  ever on screen**, and `commit:split` was ~90% of `commit:pane` (the durations
+  nest). That was the click cost — 180–230ms, scaling with how much you had
+  open, and for hours it was *every single entry* in the worst-frames list.
+
+  Two wrong turns are worth keeping. The first was "unmount the hidden ones",
+  which would close `PreviewPane`'s live browser view and discard `FilesPane`
+  and `GitDiffPane` scroll and expansion on every pen switch — the trade
+  [One pane on screen](#one-pane-on-screen) refuses. The second was mine: I
+  wrote that `memo` could not help because the components subscribe for
+  themselves. **That was false.** `GitDiffPane`, `FilesPane`, `GithubPane` and
+  `AgentPane` subscribe to the store *not at all*; only `PreviewPane` does. They
+  re-rendered because `TerminalCell` did, and nothing more.
+
+  So the fix is a `useMemo` holding the split element still — five lines, no
+  unmount, no state lost. Measured after: `commit:split` 796 commits to **19**,
+  `commit:pane` 13.9 to **3.7 ms/sec** with its worst commit 201ms to **46ms**,
+  long tasks 799 to **28 ms/min**, and `DIV#root.onclick` gone from the worst
+  frames entirely. **An inline lambda added to that block turns all of it off
+  silently** — the dependencies are listed rather than `eslint-disable`d for
+  exactly that reason.
+- **The browser pane's own loop was the app's biggest cost.** With a browser
+  pane on screen, `nativeBrowser:tick` reached **77.8ms of every second**, of
+  which the 4x4 hit test was **58.9ms — 5.9% of the main thread**, at 0.79ms a
+  pass. The same sixteen `elementFromPoint` calls cost 0.14ms on a quiet page:
+  what makes them expensive here is that eleven terminals are writing into a
+  20,000-node document, so the layout is dirty on nearly every frame and each
+  pass pays a full recalculation. Both things this loop watches for are now
+  gated: a box moves only when the layout changes, and an overlay appears only
+  because somebody did something, so after ten still frames *and* 800ms with no
+  keystroke, click or scroll it runs one frame in six. Any input or any movement
+  snaps it back to every frame, so a drag is still followed and an overlay is
+  still caught in the frame after the key that opened it. **Plain typing does not
+  count as input here**, and that is the difference between the gate engaging
+  half the time and nearly always: every global shortcut in `App.tsx` starts
+  with `if (!e.metaKey) return`, and every other overlay opens from a pointer, so
+  the characters going into a terminal — most of the keyboard traffic in this
+  app — cannot put anything over the pane. **The ceiling**: an
+  overlay opened with no input at all — by a timer or a server message — could
+  sit under the native view for up to six frames. Nothing does that today.
+- **Following the box was the forced layout, not the hit test.** With a browser
+  pane on screen, `nativeBrowser:tick` reached **27.9ms of every second** — the
+  single biggest span in the app — and `nativeBrowser:covered` was only 8.2 of
+  it. The rest was one `getBoundingClientRect` per frame, which forces a layout
+  flush, on a document of ~20,000 nodes with terminals streaming into it. The
+  box is now re-measured every frame only while it is actually moving, and every
+  third frame once it has held still for ten; a box moves when the layout
+  changes, and layout changes are rare next to frames. **The hit test still runs
+  every frame**, against the remembered box — an overlay opening does not move
+  the pane, and a native view sitting on top of a dialog for three frames is a
+  flicker anyone would see.
+- **A dead backend meant a blank window.** `bootstrap()` awaited
+  `initializePreferences()` with no catch, so an unreachable server at load time
+  threw and nothing was ever rendered — no spinner, no error, until somebody
+  reloaded. It retries instead. It must never *proceed* without the profile:
+  that is the path where the store starts from an empty layout and persists its
+  emptiness over the real pens.
 
 ## The terminal font, and the cache that outlives it
 
@@ -1088,8 +1569,9 @@ branch named `retain-extraction-mode-docs`, is the pane working on PR 3993 —
 nothing in its name or its branch says so, and `prRefs` does.
 
 The **transcripts** come from ripgrep over the agents' own JSONL: Claude's
-`~/.claude/projects/<slug>/<uuid>.jsonl` and Codex's
-`~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`. One run over every pane's
+`~/.claude/projects/<slug>/<uuid>.jsonl`, Codex's
+`~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` and Pi's
+`~/.pi/agent/sessions/<slug of cwd>/<ts>_<id>.jsonl`. One run over every pane's
 file rather than one per pane — measured at 30–90 ms for 102 MB across 24 panes,
 which is what makes searching on every keystroke reasonable.
 
@@ -1101,6 +1583,9 @@ Rules that are easy to get wrong:
 - **Only conversation counts.** `transcriptLineText` keeps `user` and
   `assistant` rows and drops everything else — Claude's `attachment`, `system`
   and tool-result rows, Codex's `developer` rows carrying the skills preamble.
+  Pi needs no filtering beyond the role: it files a tool result under a role of
+  its own (`toolResult`) and injects AGENTS.md and its rules into the `system`
+  row, so there is no envelope wearing a user's clothes.
   Without that, a search for "skills" matches every Codex pane on a preamble
   nobody wrote. Sidechain rows are dropped too: a subagent's exchange belongs
   to the subagent.
@@ -1235,6 +1720,47 @@ on the same rail; it is last because it is the only one of the four that is not
 about a change. The state is still called `split` — the oldest of the group and
 the value already persisted in `sheepit:pane-views` — which is a legacy name to
 document, not to rename.
+
+### The file viewer pays for a grammar at a time
+
+`FileView` is lazy-loaded, and for a while that lazy chunk was **1.76 MB**.
+The Files pane auto-opens a file when it mounts, so that whole chunk stood
+between pressing *Files* and seeing anything — which is what "the file browser
+is slow" was. The server was never in it: `readdir` plus a `stat` per entry
+answers a 353-entry directory in 5 ms.
+
+It was two highlighters and an editor, all eager:
+
+- **react-syntax-highlighter's barrel entry bundles refractor's ~290 language
+  grammars** — 632 KB measured, to colour one file in one language. The
+  `prism-async-light` build loads refractor's core and then the single grammar
+  the open file needs. There is no registration to keep in step; the package
+  ships a loader per language. Its cost is visible in `dist/`: ~290 tiny
+  chunks, one per grammar, and none of them fetched until a file wants one.
+- **CodeMirror and its 17 language modes are 1.1 MB**, and nothing needs them
+  until you press Edit. They live in `CodeEditor.tsx` behind a `lazy()`.
+
+What is left is 94 KB. Two rules follow:
+
+- **The extension→language map lives in `ui/src/lang.ts`**, not in `FileView`.
+  Both halves read it, and a lazy editor importing it from the viewer would
+  pull the viewer back in behind it.
+- **Import the deep ESM path, not the barrel.** A later `import … from
+  'react-syntax-highlighter'` anywhere puts all 290 grammars back in whatever
+  chunk it lands in, silently. `vite-env.d.ts` declares the deep path, which
+  the package itself does not type.
+
+### A `.csv` is read as a table
+
+`CsvTable` draws .csv/.tsv in the View slot — sortable header, a filter, a row
+count — and the raw text is still one click away under Edit. The parser is
+twenty lines in `ui/src/csv.ts` rather than a dependency: quotes, `""` escapes,
+newlines inside a field and CRLF is the whole of RFC 4180 that matters here.
+The delimiter is guessed from the header line rather than the extension, since
+a tab-delimited `.csv` is a common export. Sorting is numeric when both cells
+parse as numbers, and blanks sink to the end in both directions so a sparse
+column still shows its values first. It renders at most 2000 rows — a ceiling
+marked in the code, not a windowing library.
 
 ### The GitHub view asks `gh`, and `gh` has two traps
 
