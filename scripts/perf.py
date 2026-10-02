@@ -119,7 +119,16 @@ def watch():
             time.sleep(POLL)
             continue
 
-        if not hot_reload(d):
+        # Work done while the window is off screen is not a responsiveness
+        # problem: nothing is being painted, so nobody waits for it. Agents keep
+        # producing output behind a window you are not looking at, and the long
+        # tasks that causes are real work but not a stutter anyone had. Measured
+        # here as snapshots with onScreenSeconds 0 and fps 0 still carrying
+        # 350ms+ of long task.
+        on_screen = d.get("onScreenSeconds", d.get("seconds", 0))
+        watched = on_screen >= max(5, d.get("seconds", 0) * 0.1)
+
+        if not hot_reload(d) and watched:
             if d.get("worstLongTaskMs", 0) > LONG_MS:
                 fire("longtask", f"long task {d['worstLongTaskMs']}ms "
                                  f"(worst frame {d.get('worstFrameMs')}ms)")
@@ -134,7 +143,7 @@ def watch():
             if worst.get("blockingMs", 0) > 100 and worst.get("durationMs", 0) > 400:
                 fire("loaf", f"{worst['durationMs']}ms frame — {worst['script']} "
                              f"({worst['scriptMs']}ms script) [{worst.get('invoker')}]")
-        if d.get("longTaskMsPerMin", 0) > BLOCK_PER_MIN:
+        if watched and d.get("longTaskMsPerMin", 0) > BLOCK_PER_MIN:
             fire("blocking", f"main thread blocked {d['longTaskMsPerMin']}ms/min")
 
         for s in d.get("spans", []):
