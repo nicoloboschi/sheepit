@@ -34,7 +34,7 @@ POLL = 60
 LONG_MS = 200            # above the known click cost — see the note above
 BLOCK_PER_MIN = 600      # sustained main-thread blocking
 SPAN_MS_PER_SEC = 5.0    # a span eating 0.5% of the main thread
-NEW_SPAN_MS_PER_SEC = 0.5  # a newly-seen span is only news if it costs something
+NEW_SPAN_MS_PER_SEC = 1.0  # a newly-seen span is only news if it costs something
 COOLDOWN = 600           # do not repeat one finding more often than this
 
 # What a span costs when it is doing its job. `nativeBrowser:tick` only runs
@@ -137,7 +137,14 @@ def watch():
                 # simply had not happened yet — `ws:attention` is a sheep
                 # bleating — and announcing those as discoveries is how a watch
                 # fills up with things nobody can act on.
-                if not first and d["seconds"] > 120 and s["msPerSec"] >= NEW_SPAN_MS_PER_SEC:
+                # A span listed in EXPECTED is one we already know about — it is
+                # "new" only in the sense that it had not run since this process
+                # started, which `nativeBrowser:tick` does every time a browser
+                # pane comes on screen. For those the cost ceiling below is the
+                # question; first sighting is not.
+                known = name in EXPECTED
+                if not first and not known and d["seconds"] > 120 \
+                        and s["msPerSec"] >= NEW_SPAN_MS_PER_SEC:
                     fire(f"new:{name}", f"new span '{name}' — {s['msPerSec']} ms/sec, "
                                         f"max {s['maxMs']}ms")
             if s["msPerSec"] > EXPECTED.get(name, SPAN_MS_PER_SEC):
