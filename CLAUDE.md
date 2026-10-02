@@ -1408,10 +1408,23 @@ before believing a difference.
   re-rendered because `TerminalCell` did, and nothing more.
 
   So the fix is a `useMemo` holding the split element still — five lines, no
-  unmount, no state lost. Measured after: `commit:split` 796 commits to **19**,
-  `commit:pane` 13.9 to **3.7 ms/sec** with its worst commit 201ms to **46ms**,
-  long tasks 799 to **28 ms/min**, and `DIV#root.onclick` gone from the worst
-  frames entirely. **An inline lambda added to that block turns all of it off
+  unmount, no state lost.
+
+  **Be careful how this one is quoted.** The first reading after it landed —
+  `commit:split` 796 commits to 19 — came from a *quiet* window, and the commit
+  message that shipped it says so as though it were the general case. It is not.
+  `view`, `previewNav` and `githubRef` are dependencies, so switching panes or
+  tools busts the memo and the split re-renders, which is correct. Under real
+  use the rate is far higher: 15 split commits a sweep, against 11 before the
+  fix.
+  What holds up: **0.5 split commits per `TerminalCell` render**, where without
+  the memo every render would take its split with it — so it roughly halves the
+  work while you are working and nearly removes it while you are not. And the
+  frame numbers moved in a way that does not depend on the mechanism: long tasks
+  799 to ~310 ms/min, worst long task 217ms to 114ms, `commit:pane`'s worst
+  commit 201ms to 46ms, and `DIV#root.onclick` gone from the worst frames.
+  The pre-fix ratio was never captured — the feed only keeps an hour — so
+  "halves" is read off the mechanism, not a measured before and after. **An inline lambda added to that block turns all of it off
   silently** — the dependencies are listed rather than `eslint-disable`d for
   exactly that reason.
 - **The browser pane's own loop was the app's biggest cost.** With a browser
