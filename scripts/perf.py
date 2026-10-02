@@ -114,7 +114,14 @@ def watch():
                 fire("longtask", f"long task {d['worstLongTaskMs']}ms "
                                  f"(worst frame {d.get('worstFrameMs')}ms)")
             worst = (d.get("loaf") or [{}])[0]
-            if worst.get("durationMs", 0) > 400:
+            # `blockingDuration` is the part of the frame the main thread was
+            # actually busy for, and it is the only half anyone feels. A long
+            # frame with none of it blocked nobody: the commonest cause is the
+            # window being occluded and coming back, where the browser reports
+            # one animation frame spanning the whole hidden stretch. Seen at
+            # 895ms with blocking=0, in a snapshot whose `visibleSecs` was 2.6
+            # of 9.2 — which is the same fact said twice.
+            if worst.get("blockingMs", 0) > 100 and worst.get("durationMs", 0) > 400:
                 fire("loaf", f"{worst['durationMs']}ms frame — {worst['script']} "
                              f"({worst['scriptMs']}ms script) [{worst.get('invoker')}]")
         if d.get("longTaskMsPerMin", 0) > BLOCK_PER_MIN:
