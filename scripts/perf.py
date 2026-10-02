@@ -40,11 +40,18 @@ COOLDOWN = 600           # do not repeat one finding more often than this
 # What a span costs when it is doing its job. `nativeBrowser:tick` only runs
 # while a browser pane is on screen, and following a moving box per frame is the
 # whole point of it — that is a floor, not a regression.
-# `nativeBrowser:tick` and its hit test are deliberately absent: their cost per
-# call is a forced layout, so it scales with how big the document is — 0.9ms at
-# 15,000 nodes, 1.19ms at 22,000 — and a fixed ms/sec ceiling for them drifts
-# upward every time another pane is opened. What can actually regress there is
-# the *gate* (see the ratio check below), not the size of your DOM.
+# Spans with no cost ceiling at all. Their cost per call is a forced layout, so
+# it scales with how big the document is — 0.9ms at 15,000 nodes, 1.19ms at
+# 22,000 — and any fixed ms/sec ceiling drifts upward every time another pane is
+# opened. What can regress for these is the *gate* (the ratio check below), not
+# the size of your DOM.
+#
+# This has to be an explicit list, not an omission: leaving a span out of
+# EXPECTED does not exempt it, it drops it to the stricter generic ceiling. That
+# mistake was made here once and the span promptly fired at a *lower* threshold
+# than it had before.
+NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered"}
+
 EXPECTED = {
     "commit:pane": 12.0,
     "commit:sidebar": 12.0,
@@ -150,7 +157,7 @@ def watch():
                         and s["msPerSec"] >= NEW_SPAN_MS_PER_SEC:
                     fire(f"new:{name}", f"new span '{name}' — {s['msPerSec']} ms/sec, "
                                         f"max {s['maxMs']}ms")
-            if s["msPerSec"] > EXPECTED.get(name, SPAN_MS_PER_SEC):
+            if name not in NO_CEILING and s["msPerSec"] > EXPECTED.get(name, SPAN_MS_PER_SEC):
                 fire(f"hot:{name}", f"'{name}' at {s['msPerSec']} ms/sec "
                                     f"(n={s['n']}, max {s['maxMs']}ms)")
 
