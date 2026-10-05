@@ -63,6 +63,10 @@ NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered", "click",
 
 EXPECTED = {
     "commit:pane": 12.0,
+    # Nests inside commit:pane and is a subset of it, so it gets the same
+    # ceiling. Left out it would fall to the stricter generic one and fire at a
+    # lower threshold than its own parent — the mistake NO_CEILING documents.
+    "commit:cell": 12.0,
     "commit:sidebar": 12.0,
     "commit:split": 12.0,
 }

@@ -124,14 +124,19 @@ describe('useStore', () => {
     })
 
     it('keeps identity when only cpu or memory moved', () => {
-      useStore.getState().renderSessions([{ ...makeSession('$0', 'shell'), cpuPercent: 1, memMb: 10 }])
+      // One base object, reused. `makeSession` stamps `last_activity: Date.now()`,
+      // so calling it twice differs in more than cpu and memory whenever the
+      // millisecond ticks between the two calls — which made this test fail
+      // about one run in three and had nothing to do with what it is testing.
+      const base = makeSession('$0', 'shell')
+      useStore.getState().renderSessions([{ ...base, cpuPercent: 1, memMb: 10 }])
       const before = useStore.getState().sessionMap['$0']
 
       // These move every sweep for any busy process. Comparing them invalidated
       // 38 of 55 sessions every two seconds and re-rendered every pane card,
       // for two numbers nothing in the UI displays. If this test fails because
       // someone put them back in `sameSession`, read the comment there first.
-      useStore.getState().renderSessions([{ ...makeSession('$0', 'shell'), cpuPercent: 99, memMb: 512 }])
+      useStore.getState().renderSessions([{ ...base, cpuPercent: 99, memMb: 512 }])
 
       expect(useStore.getState().sessionMap['$0']).toBe(before)
     })

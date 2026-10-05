@@ -1738,8 +1738,16 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
              // a missing one here does not crash — it quietly freezes the split.
              startSplitDrag, setView, setGithubRef, setPreviewUrl, openFileRef]);
 
+  // One pane's own commit, so an expensive `commit:pane` can be divided by the
+  // panes that caused it. The outer Profiler in App wraps the whole main area,
+  // which was enough while the problem was breadth — too many panes rendering —
+  // and is not enough now that it is depth: a click re-renders only 2.8 cells
+  // (`perclick:TerminalCell`) and still costs 137ms, so what is wanted is the
+  // cost of *one*. Durations nest: `commit:cell` is inside `commit:pane` and
+  // contains `commit:split:<view>`.
   return (
-    <>
+    <Profiler id="cell" onRender={recordSplitCommit}>
+      <>
       <div
         ref={setPaneDropRef}
         className="flex-1 min-h-0 min-w-0"
@@ -1914,7 +1922,8 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
           and vertical rows are what terminal content is short of. */}
       </div>{/* /inner wrapper */}
       </div>{/* /outer wrapper */}
-    </>
+      </>
+    </Profiler>
   );
 }
 
