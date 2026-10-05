@@ -113,12 +113,27 @@ describe('useStore', () => {
       useStore.getState().renderSessions([makeSession('$0', 'shell')])
       const before = useStore.getState().sessions
 
-      const busier = { ...makeSession('$0', 'shell'), cpuPercent: 42 }
-      useStore.getState().renderSessions([busier])
+      // A rendered field, deliberately. This used to assert on `cpuPercent`,
+      // which is no longer an identity signal at all — see below.
+      const renamed = { ...makeSession('$0', 'shell'), name: 'renamed' }
+      useStore.getState().renderSessions([renamed])
       const after = useStore.getState()
 
       expect(after.sessions).not.toBe(before)
-      expect(after.sessions[0]!.cpuPercent).toBe(42)
+      expect(after.sessions[0]!.name).toBe('renamed')
+    })
+
+    it('keeps identity when only cpu or memory moved', () => {
+      useStore.getState().renderSessions([{ ...makeSession('$0', 'shell'), cpuPercent: 1, memMb: 10 }])
+      const before = useStore.getState().sessionMap['$0']
+
+      // These move every sweep for any busy process. Comparing them invalidated
+      // 38 of 55 sessions every two seconds and re-rendered every pane card,
+      // for two numbers nothing in the UI displays. If this test fails because
+      // someone put them back in `sameSession`, read the comment there first.
+      useStore.getState().renderSessions([{ ...makeSession('$0', 'shell'), cpuPercent: 99, memMb: 512 }])
+
+      expect(useStore.getState().sessionMap['$0']).toBe(before)
     })
 
     it('still updates when a session appears or disappears', () => {

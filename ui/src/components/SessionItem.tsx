@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo } from 'react';
+import { useEffect, useRef, useState, useCallback, memo } from 'react';
 import { perf } from '../perf';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
@@ -145,7 +145,19 @@ function PanePlaceholder({ tight, gridArea }: { tight?: boolean; gridArea?: stri
   );
 }
 
-function PaneCard({
+/** Memoised, and that is the whole point of the handlers above being
+ *  `useCallback`s: a pen holds 5.7 cards on average, and without this every
+ *  one of their bodies — the agent mark, the context count, the age and a 26px
+ *  SVG sheep each — re-rendered whenever its pen did. Measured: 16.4 card
+ *  renders a second against 2.87 pen renders, which is exactly 5.7 cards per
+ *  pen and so accounts for every card render by its parent rather than by its
+ *  own subscriptions. The three `useStore` calls inside are all narrow
+ *  per-session ones, so a card whose own session changed still re-renders.
+ *
+ *  **An inline handler at the call site turns this off silently** — the same
+ *  trap `TerminalCell`'s memo hit, where `onActivate={() => setActiveCell(i)}`
+ *  meant the memo could never hold. */
+function PaneCardInner({
   sessionId, gridId, cellIdx, active, unseen, tight, onActivate, gridArea,
 }: {
   sessionId: string;
@@ -327,6 +339,13 @@ function PaneCard({
  *  dragged over its siblings. `rectSortingStrategy` handles a wrapping list
  *  as happily as it handled the grid.
  */
+const PaneCard = memo(PaneCardInner);
+
+/** A card's `onActivate` must be referentially stable or its memo is off, so
+ *  the drag preview — which cannot be activated — shares one noop rather than
+ *  building a new empty function per render. */
+const noop = (): void => {};
+
 function PaneGrid({
   gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot, onAddSheep,
 }: {
@@ -422,7 +441,7 @@ export function WorkspaceCardPreview({ workspace }: { workspace: Workspace }): R
         activeCell={workspace.activeCell}
         isRowActive={false}
         unseenCells={[]}
-        onActivate={() => {}}
+        onActivate={noop}
       />
     </div>
   );
@@ -580,6 +599,20 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
 
   const cellIds = workspace.cells;
   const collapsed = !!workspace.collapsed;
+
+  // Both of these are what `PaneCard`'s memo rests on. They were inline
+  // lambdas, so every pen render handed its cards a new function and the memo
+  // could never have held. `onConnect` and `send` are `useCallback`s in App
+  // that bottom out at `[]`, and a workspace id does not change, so these are
+  // stable for the life of the pen.
+  const activatePane = useCallback((cellIdx: number) => {
+    onConnect(workspace.id);
+    useStore.getState().setActivePane(workspace.id, cellIdx);
+  }, [onConnect, workspace.id]);
+  const addSheep = useCallback(() => {
+    void addSheepToPen(workspace.id, send);
+  }, [workspace.id, send]);
+
   const fields = useStore(s => s.fields);
   const fieldOrder = useStore(s => s.fieldOrder);
 
@@ -672,11 +705,8 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
           isRowActive={isActive}
           unseenCells={unseenCells}
           previewExtraSlot={dragOver}
-          onAddSheep={() => { void addSheepToPen(workspace.id, send); }}
-          onActivate={(cellIdx) => {
-            onConnect(workspace.id);
-            useStore.getState().setActivePane(workspace.id, cellIdx);
-          }}
+          onAddSheep={addSheep}
+          onActivate={activatePane}
           />
         </div>
         )}

@@ -341,7 +341,26 @@ const LEGACY_LAST_KEY     = 'sheepit-last-session';
  */
 function sameSession(p: Session, s: Session): boolean {
   return p.id === s.id && p.name === s.name && p.path === s.path
-    && p.cpuPercent === s.cpuPercent && p.memMb === s.memMb
+    // `cpuPercent` and `memMb` are deliberately NOT here, and leaving them in
+    // was costing the whole sidebar. They move on every sweep for any process
+    // that is doing anything, so they invalidated **38 of 55 sessions every two
+    // seconds** — measured with `ident:sessionNew` — which handed every pane
+    // card a new `sessionMap[id]` and re-rendered it. That defeated
+    // `PaneCard`'s memo and `SessionItem`'s alike: the props were stable, the
+    // subscriptions were not.
+    //
+    // **Nothing renders either number.** The pane bar's CPU and memory
+    // readouts were removed deliberately (see "Pane chrome"), and the only
+    // references left in the UI are this comparison and the type. So they were
+    // pure cost: two values nobody displays, re-rendering forty cards a
+    // sweep. Same shape as the `current_input` broadcast — dead state is
+    // invisible until something counts it.
+    //
+    // They still arrive on the wire and still sit on the session, so a pane
+    // may carry a slightly stale figure. That is the trade, and it is free
+    // while nothing shows them. **If something ever displays them, it must not
+    // be fixed by adding them back here** — that reinstates the sweep-wide
+    // re-render for a readout. Give it its own narrow subscription.
     && p.isClaudeCode === s.isClaudeCode && p.isCodex === s.isCodex
     && p.isOpencode === s.isOpencode && p.isAntigravity === s.isAntigravity
     && p.isCopilot === s.isCopilot && p.isGrok === s.isGrok && p.isCursor === s.isCursor
@@ -938,7 +957,13 @@ const useStore = create<StoreState>((set, get) => ({
       // whose allowlisted fields all match keeps the object it already had.
       .map(s => {
         const p = prevById.get(s.id);
-        return p && sameSession(p, s) ? p : s;
+        const kept = !!p && sameSession(p, s);
+        // Whether identity survives is the single thing every memo downstream
+        // rests on, and it was being asserted rather than measured. Counted so
+        // "the sidebar re-renders every sweep" can be told apart from "the
+        // sidebar's props changed every sweep".
+        perf.count(kept ? 'ident:sessionKept' : 'ident:sessionNew');
+        return kept ? p : s;
       });
     // Built from the identity-preserved list, so `sessionMap[id]` keeps its
     // reference for every pane that did not change. Building it from the raw
@@ -970,7 +995,9 @@ const useStore = create<StoreState>((set, get) => ({
       // runs every 2 seconds against every workspace; minting fresh objects
       // regardless invalidated every selector downstream, so the whole sidebar
       // re-rendered on a timer even when the session list was identical.
-      nextWorkspaces[wsId] = (!shrunk && nextActive === ws.activeCell)
+      const wsKept = !shrunk && nextActive === ws.activeCell;
+      perf.count(wsKept ? 'ident:penKept' : 'ident:penNew');
+      nextWorkspaces[wsId] = wsKept
         ? ws
         : { ...ws, cells: prunedCells, activeCell: nextActive };
       nextWorkspaceOrder.push(wsId);

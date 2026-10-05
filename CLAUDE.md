@@ -1473,6 +1473,45 @@ commit trips two ceilings and reads as two findings.
   every frame**, against the remembered box — an overlay opening does not move
   the pane, and a native view sitting on top of a dialog for three frames is a
   flicker anyone would see.
+- **Two numbers nobody displays re-rendered the whole sidebar.** `sameSession`
+  compared `cpuPercent` and `memMb`, which move on every sweep for any process
+  doing anything — so **38 of 55 sessions got a fresh object every two
+  seconds**, handing every pane card a new `sessionMap[id]`. The pane bar's CPU
+  and memory readouts were deliberately removed long ago, and the only
+  references left in the UI were that comparison and the type declaration: the
+  cost was forty cards re-rendering a sweep for values nothing draws. Same
+  shape as the `current_input` broadcast, and found the same way — by counting
+  it (`ident:sessionKept` / `ident:sessionNew`). Measured after: sessions
+  rebuilt per sweep 38.0 → 9.2 (the rest are really changing), `render:PaneCard`
+  126.7 → 66.7, `render:SessionItem` 22.2 → 11.7, `commit:sidebar` 7.29 → 2.77
+  ms/sec and its worst commit 85.1ms → 44.4ms. **If something ever shows these
+  numbers, do not fix it by putting them back here** — that reinstates a
+  sweep-wide re-render for one readout; give it its own narrow subscription.
+- **Whether identity survives is now measured, not asserted.** Every memo in
+  the sidebar rests on `sessionMap[id]` and `workspaces[id]` keeping their
+  references, and that was a claim in a comment. `ident:*` counts it per sweep,
+  which is what made the above findable and what separates "the sidebar
+  re-renders every sweep" from "the sidebar's props changed every sweep" —
+  two very different bugs that look identical from a render counter. It also
+  cleared the pens: `ident:penKept` is 7.0 of 7 with `penNew` at 0, so
+  `nextWorkspaces` has been doing its job all along.
+- **`PaneCard` is memoised, and that needed two inline handlers fixed first.**
+  A pen holds 5.7 cards on average and none of them was memoised, so each card
+  body — agent mark, context count, age and a 26px SVG sheep — re-rendered
+  whenever its pen did. `onActivate` and `onAddSheep` were built inline at the
+  `PaneGrid` call site, so the memo could never have held; they are
+  `useCallback`s now, the same prerequisite `TerminalCell`'s memo needed. Worth
+  recording how this read before the cause above was found: the memo landed and
+  changed **nothing** — cards per pen render stayed at 5.71, exactly the 40/7
+  cards that exist — because the cards were never re-rendering from their
+  parent. That ratio is the trap: it is identical whether every pen re-renders
+  or only some, so it cannot tell you which, and an absolute rate against the
+  sweep count is what settled it.
+- **Fast Refresh does not establish a new `memo` boundary.** Wrapping a mounted
+  component in `memo` and watching the numbers not move proves nothing until the
+  page has actually reloaded — page ids in `pages[]` are how you tell, since
+  they are regenerated per load. A whitespace edit to `perf.ts` forces the
+  reload, because that file reloads the window on HMR by design.
 - **A dead backend meant a blank window.** `bootstrap()` awaited
   `initializePreferences()` with no catch, so an unreachable server at load time
   threw and nothing was ever rendered — no spinner, no error, until somebody
