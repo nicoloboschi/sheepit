@@ -1240,6 +1240,22 @@ measurement of Electron versus the browser — it is a measurement of five thing
 versus one. `holding` is on every snapshot for exactly this reason: check it
 before believing a difference.
 
+**Node count is not the sidebar's size.** `holding` carries `pens` and `sheep`
+as well, because `commit:sidebar` is routinely the most expensive span in the
+app and the node count actively misleads about it: a 4,425-node page and a
+23,000-node one had the *same* 7 pens and 40 sheep, since 40 pane cards are a
+small share of a document that is mostly terminal. A 93ms sidebar commit was
+read as an outlier on a small page when it was a full sidebar all along.
+
+**A span's ms/sec is a rate, so it needs a sample to be a rate over.** Two
+samples where it is not one, and both have produced false alarms: a page that
+has just loaded, where mounting the pen, the sidebar and the fences is a
+one-off burst that divides into ~30 ms/sec of `commit:pane` over a 31-second
+window; and a window nobody is looking at, where React still commits on the
+sweep but nothing is painted. `scripts/perf.py` gates the cost ceilings on
+both. Note also that **`commit:split` nests inside `commit:pane`**, so one slow
+commit trips two ceilings and reads as two findings.
+
 ### What it found first
 
 - **A hidden browser pane used to poll.** `NativeBrowserSurface` followed its

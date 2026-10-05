@@ -35,6 +35,7 @@ LONG_MS = 200            # above the known click cost — see the note above
 BLOCK_PER_MIN = 600      # sustained main-thread blocking
 SPAN_MS_PER_SEC = 5.0    # a span eating 0.5% of the main thread
 NEW_SPAN_MS_PER_SEC = 1.0  # a newly-seen span is only news if it costs something
+MIN_RATE_SECS = 120       # below this a ms/sec is a burst, not a rate
 COOLDOWN = 600           # do not repeat one finding more often than this
 
 # What a span costs when it is doing its job. `nativeBrowser:tick` only runs
@@ -172,6 +173,24 @@ def watch():
         if watched and d.get("longTaskMsPerMin", 0) > BLOCK_PER_MIN:
             fire("blocking", f"main thread blocked {d['longTaskMsPerMin']}ms/min")
 
+        # A span's ms/sec is a *rate*, and a rate needs a sample to be a rate
+        # over. Two samples it is never true of:
+        #
+        #   * A page that has just loaded. Mounting the pen, the sidebar and
+        #     the fences is a one-off burst — measured at a 94ms commit — and
+        #     over a 31-second window that divides into 30 ms/sec of
+        #     `commit:pane`, which reads exactly like a regression and is a
+        #     page opening. Seen as four alerts at once, two of them the same
+        #     commit twice (`commit:split` nests inside `commit:pane`, so one
+        #     slow commit trips both ceilings).
+        #   * A window nobody is looking at, which is the same reason the
+        #     long-task checks above are gated on `watched`: React still
+        #     commits on the sweep, but nothing is painted and nobody waited.
+        #
+        # So the ceilings want the same two gates. `MIN_RATE_SECS` matches the
+        # discovery guard below rather than being a second number to keep.
+        rate_is_real = watched and d["seconds"] >= MIN_RATE_SECS
+
         for s in d.get("spans", []):
             name = s["name"]
             if name not in seen:
@@ -188,12 +207,12 @@ def watch():
                 # pane comes on screen. For those the cost ceiling below is the
                 # question; first sighting is not.
                 known = is_known(name)
-                if not first and not known and d["seconds"] > 120 \
+                if not first and not known and d["seconds"] >= MIN_RATE_SECS \
                         and s["msPerSec"] >= NEW_SPAN_MS_PER_SEC:
                     fire(f"new:{name}", f"new span '{name}' — {s['msPerSec']} ms/sec, "
                                         f"max {s['maxMs']}ms")
             ceiling = ceiling_for(name)
-            if ceiling is not None and s["msPerSec"] > ceiling:
+            if rate_is_real and ceiling is not None and s["msPerSec"] > ceiling:
                 fire(f"hot:{name}", f"'{name}' at {s['msPerSec']} ms/sec "
                                     f"(n={s['n']}, max {s['maxMs']}ms)")
 
