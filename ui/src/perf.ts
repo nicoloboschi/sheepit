@@ -225,9 +225,42 @@ export function commit(id: string, ms: number): void {
   bump(spans, `commit:${id}`, ms);
 }
 
+/** Renders since the last `takeRenders()`, for attributing a burst to its cause.
+ *
+ * A total render count cannot say what a *click* or a *message* re-rendered,
+ * and a per-sweep rate cannot either — `render:TerminalCell` runs on the sweep
+ * as well, so "13 of 31 cells per sweep" says nothing about how many a pane
+ * switch touches. Reasoning from one to the other produced several wrong
+ * answers before this existed.
+ *
+ * A tally rather than a snapshot of `counts`: the click path could afford to
+ * copy the whole map, and the websocket path cannot — `ws:output` arrives
+ * ~12,000 times in eight minutes, so a Map copy per message would cost more
+ * than anything it found. This is one extra `Map.set` per render and one
+ * `clear()` per message. */
+const renderTally = new Map<string, number>();
+
+/** Take the renders counted since the last call, and start a fresh tally. */
+export function takeRenders(): [string, number][] {
+  const out = [...renderTally];
+  renderTally.clear();
+  return out;
+}
+
 /** Count something that has no duration: a render, an IPC send, a store write. */
 export function count(name: string, by = 1): void {
   counts.set(name, (counts.get(name) ?? 0) + by);
+  if (name.startsWith('render:')) {
+    renderTally.set(name, (renderTally.get(name) ?? 0) + by);
+  }
+}
+
+/** Record what a labelled piece of work re-rendered, as `by:<label>:<component>`.
+ *
+ *  Only called when that work was slow enough to be worth explaining, so the
+ *  names stay few and the cost stays where the problem is. */
+export function attributeRenders(label: string): void {
+  for (const [name, n] of takeRenders()) count(`by:${label}:${name.slice(7)}`, n);
 }
 
 /**
@@ -418,15 +451,11 @@ export function startPerf(): void {
     // well, so "13 of 31 cells render per sweep" says nothing about how many a
     // switch re-renders, and reasoning from the one to the other is how several
     // wrong conclusions got drawn before this existed.
-    const before = new Map(counts);
+    takeRenders();
     setTimeout(() => {
-      bump(spans, `click:${label}`, performance.now() - at);
-      for (const [name, n] of counts) {
-        const delta = n - (before.get(name) ?? 0);
-        if (delta > 0 && name.startsWith('render:')) {
-          count(`perclick:${name.slice(7)}`, delta);
-        }
-      }
+      const ms = performance.now() - at;
+      bump(spans, `click:${label}`, ms);
+      attributeRenders(`click:${label}`);
     }, 0);
   }, true);
 
@@ -505,7 +534,8 @@ export function hotspots(limit = 12): { name: string; n: number; totalMs: number
     .sort((a, b) => b.totalMs - a.totalMs).slice(0, limit);
 }
 
-export const perf = { span, count, commit, live, hotspots, startPerf };
+export const perf = { span, count, commit, live, hotspots, startPerf,
+                      takeRenders, attributeRenders };
 
 if (typeof window !== 'undefined') {
   (window as unknown as { sheepitPerf: typeof perf }).sheepitPerf = perf;

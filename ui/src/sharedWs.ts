@@ -191,11 +191,25 @@ function connect(): void {
     perf.count('ws:msg');
 
     const type = msg.type as string;
+    // Only a slow dispatch is explained, and only renders are counted.
+    //
+    // An `activity` message — one pane flipping busy — has been measured at
+    // **191.7ms**, with the sidebar committing 145.7ms of it, and a span cannot
+    // say what re-rendered to make that happen. `ws:output` arrives ~12,000
+    // times in eight minutes, so the tally is cleared per message (cheap) and
+    // only read when the dispatch crossed EXPLAIN_MS (rare). Below that the
+    // renders are left in the tally and folded into the next explained message,
+    // which is wrong by a few counts and much cheaper than being exact about
+    // messages nobody is waiting on.
+    const EXPLAIN_MS = 30;
+    perf.takeRenders();
+    const at = performance.now();
     const endDispatch = perf.span(`ws:${type}`);
     try {
       dispatch(msg, type);
     } finally {
       endDispatch();
+      if (performance.now() - at > EXPLAIN_MS) perf.attributeRenders(`ws:${type}`);
     }
   };
 

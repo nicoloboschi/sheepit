@@ -126,7 +126,6 @@ def report(shell="", minutes=""):
     for s in d["spans"][:14]:
         print(f"  {s['name']:26} n={s['n']:7} avg={s['avgMs']:8}ms max={s['maxMs']:8}ms "
               f"ms/sec={s['msPerSec']}")
-    perclick = [c for c in d["counts"] if c["name"].startswith("perclick:")]
     clicks = [s for s in d["spans"] if s["name"].startswith("click:")]
     if clicks:
         print("\nWHAT A CLICK COSTS (the label comes from what was under the pointer;"
@@ -134,10 +133,12 @@ def report(shell="", minutes=""):
         for s in sorted(clicks, key=lambda x: -x["maxMs"]):
             print(f"  {s['name']:22} n={s['n']:4} avg={s['avgMs']:8}ms max={s['maxMs']:8}ms")
         n = sum(s["n"] for s in clicks)
-        if perclick and n:
-            print("  renders per click (StrictMode doubles these):")
-            for c in sorted(perclick, key=lambda x: -x["n"]):
-                print(f"    {c['name'][9:]:20} {c['n'] / n:7.1f}")
+
+    by = [c for c in d["counts"] if c["name"].startswith("by:")]
+    if by:
+        print("\nWHAT A SLOW THING RE-RENDERED (by:<cause>:<component>)")
+        for c in sorted(by, key=lambda x: -x["n"])[:14]:
+            print(f"  {c['name'][3:]:44} {c['n']:7}")
 
     print("\nCOUNTS")
     for c in d["counts"][:10]:
