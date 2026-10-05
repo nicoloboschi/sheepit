@@ -238,12 +238,25 @@ export function commit(id: string, ms: number): void {
  * ~12,000 times in eight minutes, so a Map copy per message would cost more
  * than anything it found. This is one extra `Map.set` per render and one
  * `clear()` per message. */
-const renderTally = new Map<string, number>();
+/** One tally per consumer, and that is the whole point of the key.
+ *
+ * There was a single shared tally, and it quietly corrupted every number it
+ * produced. The click path takes it in a `setTimeout(0)` after the click, while
+ * the websocket path clears it on *every* message — twelve thousand of them in
+ * eight minutes — and reads it whenever a dispatch runs long. So each consumer
+ * was taking renders the other had caused, or having its own cleared before it
+ * could read them, and a pane-card click was reported as re-rendering 16.7
+ * TerminalCells with 9 mounted. The cost of separating them is one extra
+ * `Map.set` per render. */
+const tallies: Record<RenderSlot, Map<string, number>> = { click: new Map(), ws: new Map() };
 
-/** Take the renders counted since the last call, and start a fresh tally. */
-export function takeRenders(): [string, number][] {
-  const out = [...renderTally];
-  renderTally.clear();
+export type RenderSlot = 'click' | 'ws';
+
+/** Take the renders this slot has counted since its own last call. */
+export function takeRenders(slot: RenderSlot): [string, number][] {
+  const t = tallies[slot];
+  const out = [...t];
+  t.clear();
   return out;
 }
 
@@ -251,7 +264,7 @@ export function takeRenders(): [string, number][] {
 export function count(name: string, by = 1): void {
   counts.set(name, (counts.get(name) ?? 0) + by);
   if (name.startsWith('render:')) {
-    renderTally.set(name, (renderTally.get(name) ?? 0) + by);
+    for (const t of Object.values(tallies)) t.set(name, (t.get(name) ?? 0) + by);
   }
 }
 
@@ -259,8 +272,8 @@ export function count(name: string, by = 1): void {
  *
  *  Only called when that work was slow enough to be worth explaining, so the
  *  names stay few and the cost stays where the problem is. */
-export function attributeRenders(label: string): void {
-  for (const [name, n] of takeRenders()) count(`by:${label}:${name.slice(7)}`, n);
+export function attributeRenders(slot: RenderSlot, label: string): void {
+  for (const [name, n] of takeRenders(slot)) count(`by:${label}:${name.slice(7)}`, n);
 }
 
 /**
@@ -451,11 +464,10 @@ export function startPerf(): void {
     // well, so "13 of 31 cells render per sweep" says nothing about how many a
     // switch re-renders, and reasoning from the one to the other is how several
     // wrong conclusions got drawn before this existed.
-    takeRenders();
+    takeRenders('click');
     setTimeout(() => {
-      const ms = performance.now() - at;
-      bump(spans, `click:${label}`, ms);
-      attributeRenders(`click:${label}`);
+      bump(spans, `click:${label}`, performance.now() - at);
+      attributeRenders('click', `click:${label}`);
     }, 0);
   }, true);
 

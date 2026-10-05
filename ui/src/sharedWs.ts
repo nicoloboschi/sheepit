@@ -202,14 +202,14 @@ function connect(): void {
     // which is wrong by a few counts and much cheaper than being exact about
     // messages nobody is waiting on.
     const EXPLAIN_MS = 30;
-    perf.takeRenders();
+    perf.takeRenders('ws');
     const at = performance.now();
     const endDispatch = perf.span(`ws:${type}`);
     try {
       dispatch(msg, type);
     } finally {
       endDispatch();
-      if (performance.now() - at > EXPLAIN_MS) perf.attributeRenders(`ws:${type}`);
+      if (performance.now() - at > EXPLAIN_MS) perf.attributeRenders('ws', `ws:${type}`);
     }
   };
 

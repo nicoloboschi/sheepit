@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { span, count, commit, live, startPerf } from '../perf'
+import { span, count, commit, live, startPerf, takeRenders } from '../perf'
 
 // The checks behind the one place the UI measures itself. The span bookkeeping
 // is what every later finding is read off, so a double count or a lost
@@ -53,5 +53,33 @@ describe('perf spans', () => {
     startPerf()
     startPerf()
     expect((window as unknown as Record<string, unknown>).__sheepitPerfStarted).toBe(true)
+  })
+})
+
+describe('render attribution', () => {
+  it('gives each consumer its own tally', () => {
+    // The two consumers used to share one tally, so each took renders the other
+    // had caused — which reported a pane-card click as re-rendering 16.7
+    // TerminalCells when 9 were mounted. Taking one slot must not disturb the
+    // other.
+    takeRenders('click')
+    takeRenders('ws')
+
+    count('render:Thing')
+    count('render:Thing')
+
+    expect(takeRenders('click')).toEqual([['render:Thing', 2]])
+    // The ws slot still holds them: the click's take did not empty it.
+    expect(takeRenders('ws')).toEqual([['render:Thing', 2]])
+    // Both are now empty, independently.
+    expect(takeRenders('click')).toEqual([])
+    expect(takeRenders('ws')).toEqual([])
+  })
+
+  it('counts only renders, not every counter', () => {
+    takeRenders('click')
+    count('ws:bytes', 999)
+    count('render:Only')
+    expect(takeRenders('click')).toEqual([['render:Only', 1]])
   })
 })
