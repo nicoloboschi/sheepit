@@ -227,6 +227,34 @@ export function count(name: string, by = 1): void {
   counts.set(name, (counts.get(name) ?? 0) + by);
 }
 
+/**
+ * What the app is holding: terminals, browser panes, DOM nodes.
+ *
+ * Measured, because this is the one place the instrumentation can perturb what
+ * it measures. Three whole-document queries — two `querySelectorAll` and a
+ * `getElementsByTagName('*')` over 17,000+ nodes — inside a snapshot that is
+ * built from a `requestAnimationFrame`. A 255ms frame blocking 200ms, carrying
+ * 77ms of style and layout, was attributed to `perf.ts`'s own rAF; this is the
+ * only thing in here expensive enough to be a candidate.
+ *
+ * So it is timed as `perf:holding` and it answers for itself in its own data.
+ * If that span is ever a meaningful share of a snapshot, sample it every Nth
+ * roll instead of every one — the counts are context, not a measurement
+ * anything depends on.
+ */
+function holdingCounts(): { terminals: number; browserPanes: number; domNodes: number } {
+  const end = span('perf:holding');
+  try {
+    return {
+      terminals: document.querySelectorAll('.xterm').length,
+      browserPanes: document.querySelectorAll('.live-browser-surface').length,
+      domNodes: document.getElementsByTagName('*').length,
+    };
+  } finally {
+    end();
+  }
+}
+
 function snapshot(): PerfSnapshot {
   const now = performance.now();
   const secs = Math.max(0.001, (now - windowStart) / 1000);
@@ -238,6 +266,11 @@ function snapshot(): PerfSnapshot {
     for (const [k, v] of m) out[k] = v;
     return out;
   };
+  // Before the object literal, not spread inside it: `spans` is serialised in
+  // the middle of that literal, so a span recorded by a later field is copied
+  // out already-cleared and can never be seen. Its own measurement was
+  // invisible for exactly that reason.
+  const holding = holdingCounts();
   return {
     at: Date.now(),
     page: PAGE_ID,
@@ -252,9 +285,7 @@ function snapshot(): PerfSnapshot {
     longTasks, longTaskMs: Math.round(longTaskMs), worstLongTaskMs: Math.round(worstLongTaskMs),
     spans: asRecord(spans),
     counts: asRecord(counts),
-    terminals: document.querySelectorAll('.xterm').length,
-    browserPanes: document.querySelectorAll('.live-browser-surface').length,
-    domNodes: document.getElementsByTagName('*').length,
+    ...holding,
     heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null,
     dpr: window.devicePixelRatio,
     loaf: [...loaf],
