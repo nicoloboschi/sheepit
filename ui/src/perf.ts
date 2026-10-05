@@ -323,6 +323,30 @@ function roll(): void {
 }
 
 /** Start measuring. Idempotent, and called once from main.tsx. */
+/** A name for the thing that was clicked, for `click:*` spans.
+ *
+ * Walks up to the nearest element carrying a class we recognise. The list is
+ * deliberately short and hand-written: a label built from whatever classes an
+ * element happens to have turns one button into a dozen differently-named
+ * spans, and the question being asked is "which *kind* of click is slow", which
+ * has about ten answers.
+ */
+const CLICK_PARTS = [
+  'session-item', 'pane-card', 'tool-rail', 'pane-bar', 'workspace-bar',
+  'field-selector', 'flock-sheep-hit', 'xterm', 'live-browser-surface',
+  'floating-panel', 'sidebar-header', 'pen-body',
+];
+
+function clickLabel(target: EventTarget | null): string {
+  let el = target instanceof Element ? target : null;
+  for (let i = 0; el && i < 12; i++, el = el.parentElement) {
+    const cls = el.className;
+    if (typeof cls !== 'string') continue;
+    for (const part of CLICK_PARTS) if (cls.includes(part)) return part;
+  }
+  return 'other';
+}
+
 export function startPerf(): void {
   if (typeof window === 'undefined' || alreadyStarted()) return;
   markStarted();
@@ -360,6 +384,23 @@ export function startPerf(): void {
   if (askMain) {
     setInterval(() => { void askMain().then(m => { lastMain = m; }).catch(() => {}); }, WINDOW_MS);
   }
+
+  // Which click, not just "a click".
+  //
+  // A long animation frame blames `DIV#root.onclick` — true, and useless: every
+  // click in the app is a click on `#root`, because that is where React listens.
+  // So the click is labelled here from what was actually under the pointer, and
+  // timed over the whole task rather than over any one handler. React treats a
+  // click as a discrete event and flushes the render synchronously before the
+  // task ends, so a `setTimeout(…, 0)` is the first moment after all of it —
+  // handlers, render, commit and the layout the commit forced. Wrapping a
+  // handler instead would have measured the cheapest part and missed the render
+  // that the handler only scheduled.
+  window.addEventListener('click', (e) => {
+    const label = clickLabel(e.target);
+    const at = performance.now();
+    setTimeout(() => { bump(spans, `click:${label}`, performance.now() - at); }, 0);
+  }, true);
 
   try {
     new PerformanceObserver((list) => {

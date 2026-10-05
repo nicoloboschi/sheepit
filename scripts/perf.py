@@ -50,7 +50,10 @@ COOLDOWN = 600           # do not repeat one finding more often than this
 # EXPECTED does not exempt it, it drops it to the stricter generic ceiling. That
 # mistake was made here once and the span promptly fired at a *lower* threshold
 # than it had before.
-NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered"}
+# `click:*` is a diagnostic, not a budget. Its ms/sec is how much the user
+# clicked, which is not something that can regress; what matters about a click is
+# its *max*, and the long-task and frame checks above already catch that.
+NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered", "click"}
 
 EXPECTED = {
     "commit:pane": 12.0,
@@ -203,7 +206,7 @@ def watch():
         ticks = next((x["n"] for x in d.get("spans", []) if x["name"] == "nativeBrowser:tick"), 0)
         if frames > 2000 and ticks / frames > 0.5:
             fire("browsergate", f"browser loop ran on {round(ticks / frames * 100)}% of frames "
-                                f"(gated it is ~17-30%) — the quiet gate has stopped engaging")
+                                f"(gated it is well under 20%) — the quiet gate has stopped engaging")
 
         m = d.get("main")
         if m and m.get("stalls", 0) > 0:

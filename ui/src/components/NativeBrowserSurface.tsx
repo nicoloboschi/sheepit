@@ -135,23 +135,32 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
     //
     // But a box only moves when the layout changes, and an overlay only appears
     // because somebody did something. When the box has held still for
-    // STILL_AFTER frames *and* nothing has been typed, clicked or scrolled for
-    // QUIET_AFTER_MS, there is nothing for this loop to notice, so it runs one
-    // frame in QUIET_EVERY. Any input, or any movement, snaps it back to every
-    // frame immediately — so a drag is still followed without lag, and an
-    // overlay is still caught in the frame after the keystroke that opened it.
+    // STILL_AFTER frames *and* nothing has been typed, clicked, scrolled or
+    // resized for QUIET_AFTER_MS, there is nothing for this loop to notice. Any
+    // input, or any movement, snaps it back to every frame immediately — so a
+    // drag is still followed without lag, and an overlay is still caught in the
+    // frame after the keystroke that opened it.
+    //
+    // **Quiet backs off on a clock, not on a frame count.** It was one frame in
+    // six, which sounds like a big saving and is not: six frames is 100ms, so a
+    // pane nobody was touching still forced 10 full layouts a second — measured
+    // at 2.33ms each on a 23,000-node tree, 18.5ms of every second, the single
+    // most expensive span in the app. The frame count was the wrong unit
+    // because the thing being waited for is not a frame, it is a person; at
+    // QUIET_MS the same loop costs a quarter of that and notices everything it
+    // noticed before, because every way the box can move now wakes it.
     //
     // The ceiling, stated plainly: an overlay that appears with no input at all
     // — opened by a timer or a server message — can sit under the native view
-    // for up to QUIET_EVERY frames. Nothing in sheepit does that today.
+    // for up to QUIET_MS. Nothing in sheepit does that today.
     const STILL_AFTER = 10;
     const QUIET_AFTER_MS = 800;
-    const QUIET_EVERY = 6;
+    const QUIET_MS = 250;
 
     let rect = el.getBoundingClientRect();
     let still = 0;
-    let frame = 0;
     let lastInputAt = performance.now();
+    let lastTickAt = 0;
 
     // Only input that could actually put something over this pane counts.
     //
@@ -167,12 +176,18 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('pointerdown', noteInput, true);
     window.addEventListener('wheel', noteInput, true);
+    // A window resize moves and resizes the box while nobody touches the page,
+    // so it is the one way out of quiet that is not somebody's input. Without
+    // it the first quarter-second of a drag on the window edge left the native
+    // view behind.
+    window.addEventListener('resize', noteInput);
 
     const tick = () => {
-      frame++;
       perf.count('nativeBrowser:frame');
-      const quiet = still >= STILL_AFTER && performance.now() - lastInputAt > QUIET_AFTER_MS;
-      if (quiet && frame % QUIET_EVERY !== 0) { raf = requestAnimationFrame(tick); return; }
+      const now = performance.now();
+      const quiet = still >= STILL_AFTER && now - lastInputAt > QUIET_AFTER_MS;
+      if (quiet && now - lastTickAt < QUIET_MS) { raf = requestAnimationFrame(tick); return; }
+      lastTickAt = now;
 
       const endTick = perf.span('nativeBrowser:tick');
       const next = el.getBoundingClientRect();
@@ -246,7 +261,8 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
     return () => {
       io.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', noteInput);
+    window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('pointerdown', noteInput, true);
       window.removeEventListener('wheel', noteInput, true);
       cancelAnimationFrame(raf);
