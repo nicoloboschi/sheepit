@@ -1473,6 +1473,43 @@ commit trips two ceilings and reads as two findings.
   every frame**, against the remembered box — an overlay opening does not move
   the pane, and a native view sitting on top of a dialog for three frames is a
   flicker anyone would see.
+- **Where it got to, measured on one loaded window.** Against a morning
+  baseline of 23,132 nodes and a later reading at **25,254** — so the after is
+  the bigger document:
+
+  | | before | after |
+  |---|---|---|
+  | main thread blocked | 801 ms/min | **129 ms/min** |
+  | worst frame | 649ms | **197ms** |
+  | slow frames | 65.6/min | **21.7/min** |
+  | `nativeBrowser:tick` | 18.54 ms/sec | **1.17** |
+  | browser loop ran on | 31% of frames | **12%** |
+  | `commit:pane` | 13.56 ms/sec | **2.97** |
+  | `commit:sidebar` | 6.69 ms/sec | **3.12** |
+
+  `ident:*` on the same window: 9,857 sessions kept identity against 153
+  rebuilt, and every field responsible was one that is actually drawn —
+  `ctxTokens` 139, `gitDirty` 6, `name` 5, `gitBranch` / `prNum` / `prRefs` one
+  each. No dead churn left.
+
+- **The refit was not the cost, and the span is why we know.** A 551ms frame
+  blamed 326ms of script on `TerminalCell`'s show-fit, which looked like the
+  pane switch paying for an xterm reflow. Measured across 62 real switches:
+  **0.31ms average, 1.5ms worst.** FitAddon no-ops when the dimensions already
+  match, which is the common case, so that frame was a one-off — a first show
+  or a window resize — and not a cost anybody pays twice. Worth keeping as the
+  cleanest example of why a span goes in before a fix does.
+
+- **What is left is switching pane or pen, and it costs the same from either
+  input.** `click:pane-card` averages 72.75ms and peaks at 108.7ms,
+  `click:pen-body` 121.5ms, and the worst frames are three
+  `App.tsx [DOMWindow.onkeydown]` at 85–104ms of script — ⌘↑/↓ doing the same
+  work the click does. Clicking into a terminal is 14.5ms, so this is the
+  switch itself, not input handling in general. That is the next thing to look
+  at, and the `click:*` spans are what name it: a long frame only ever says
+  `DIV#root.onclick`, which is true of every click in the app because that is
+  where React listens.
+
 - **Two numbers nobody displays re-rendered the whole sidebar.** `sameSession`
   compared `cpuPercent` and `memMb`, which move on every sweep for any process
   doing anything — so **38 of 55 sessions got a fresh object every two
