@@ -62,6 +62,9 @@ export interface PerfSnapshot {
   terminals: number;
   browserPanes: number;
   domNodes: number;
+  /** How big the sidebar is — see `holdingCounts`. */
+  pens: number;
+  sheep: number;
   heapMb: number | null;
   dpr: number;
   /** The worst long animation frames, with what the browser blamed them on.
@@ -245,13 +248,23 @@ export function count(name: string, by = 1): void {
  * If this ever does become a meaningful share of a snapshot, sample it every
  * Nth roll — the counts are context, not something a measurement depends on.
  */
-function holdingCounts(): { terminals: number; browserPanes: number; domNodes: number } {
+function holdingCounts(): {
+  terminals: number; browserPanes: number; domNodes: number; pens: number; sheep: number;
+} {
   const end = span('perf:holding');
   try {
     return {
       terminals: document.querySelectorAll('.xterm').length,
       browserPanes: document.querySelectorAll('.live-browser-surface').length,
       domNodes: document.getElementsByTagName('*').length,
+      // The sidebar's own size. `commit:sidebar` is routinely the most
+      // expensive span in the app, and without these two its duration cannot
+      // be read against anything — a 93ms commit of 7 pens and a 93ms commit
+      // of 40 is the difference between an outlier and a per-pen cost. Node
+      // count does not answer it: a pen folded to one line still has a row,
+      // and most of the document is terminal.
+      pens: document.querySelectorAll('.session-item').length,
+      sheep: document.querySelectorAll('.pane-card').length,
     };
   } finally {
     end();

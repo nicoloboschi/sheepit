@@ -38,6 +38,7 @@ interface PerfSnapshot {
   longTasks: number; longTaskMs: number; worstLongTaskMs: number;
   spans: Record<string, PerfStat>; counts: Record<string, number>;
   terminals: number; browserPanes: number; domNodes: number;
+  pens?: number; sheep?: number;
   heapMb: number | null; dpr: number;
   loaf?: { at: number; durationMs: number; blockingMs: number; styleAndLayoutMs: number;
            script: string; scriptMs: number; invoker: string }[];
@@ -82,7 +83,8 @@ export function foldPerf(snaps: PerfSnapshot[], shell: string, page = '') {
     const mine = snaps.filter(s => (s.page ?? '?') === id);
     const last = mine[mine.length - 1]!;
     return { page: id, shell: last.shell, windows: mine.length, domNodes: last.domNodes,
-             terminals: last.terminals, browserPanes: last.browserPanes };
+             terminals: last.terminals, browserPanes: last.browserPanes,
+             pens: last.pens, sheep: last.sheep };
   });
   return {
     windows: use.length,
@@ -135,7 +137,8 @@ export function foldPerf(snaps: PerfSnapshot[], shell: string, page = '') {
     })(),
     holding: last && {
       terminals: last.terminals, browserPanes: last.browserPanes,
-      domNodes: last.domNodes, heapMb: last.heapMb, dpr: last.dpr,
+      domNodes: last.domNodes, pens: last.pens, sheep: last.sheep,
+      heapMb: last.heapMb, dpr: last.dpr,
     },
   };
 }
