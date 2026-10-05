@@ -1668,8 +1668,11 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    * setters, `openFileRef` is a ref and `startSplitDrag` is a `useCallback`. **An
    * inline lambda added to this block turns the whole thing off**, silently.
    */
+  // Named per view, because "the split is slow" is not actionable: the six
+  // tools are a diff, a file tree, a code viewer, a browser, a pull request and
+  // a shell, and they have nothing in common but a box.
   const splitEl = useMemo(() => isSplit ? (
-        <Profiler id="split" onRender={recordSplitCommit}>
+        <Profiler id={`split:${view}`} onRender={recordSplitCommit}>
           <div
             onMouseDown={startSplitDrag}
             className={`terminal-resize-handle terminal-resize-handle-${stacked ? 'vertical' : 'horizontal'}`}
