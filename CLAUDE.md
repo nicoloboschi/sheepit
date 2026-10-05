@@ -1473,6 +1473,45 @@ commit trips two ceilings and reads as two findings.
   every frame**, against the remembered box — an overlay opening does not move
   the pane, and a native view sitting on top of a dialog for three frames is a
   flicker anyone would see.
+- **What a click still costs, and the one thing it correlates with.** A
+  pane-card click is 126–171ms and re-renders **every mounted dnd-kit consumer,
+  every time**: 40 of 40 `PaneCard`s, 31 of 31 `TerminalCell`s, 7 of 7
+  `SessionItem`s. The component that does *not* is `TerminalGrid`, at 1.0 per
+  click — and it is the only one of the four with no `useDroppable` or
+  `useSortable` in it. `App` renders 1.0 and `PaneTerminal` 1.3, so this is not
+  the tree re-rendering from the top; it is context, which `memo` cannot stop.
+
+  **The handler identity is not the cause, and that was tested rather than
+  assumed.** Three of `DndContext`'s four props (`onDragStart`, `onDragEnd`,
+  `onDragCancel`) were plain declarations, so App handed it new functions on
+  every render — the same shape as the two memo bugs above. Wrapping all three
+  in `useCallback` changed **nothing**: still 100% of consumers, still 126ms.
+  dnd-kit keeps its handlers in refs. The change was reverted rather than left
+  in place, because a `useCallback` whose comment explains a cause it does not
+  address is worse than the plain function.
+
+  Also ruled out: the pointer sensor already carries
+  `activationConstraint: { distance: 6 }`, so a plain click never activates a
+  drag. Whatever changes the context does so without a drag starting.
+
+  Where to look next, in order of how lazy: isolate `DndContext` so an App
+  render does not re-render it; or give the sortable lists stable `items`
+  arrays (`PaneGrid` builds `sortableIds` fresh every render, which changes
+  `SortableContext`'s value); or drop dnd-kit for the two drags that actually
+  exist. Do not start by memoising anything — `memo` cannot stop a context
+  change, which is the whole shape of this bug.
+
+- **Measurement caveats worth re-reading before quoting any of this.** The
+  figures above come from a dev build, where React is several times slower and
+  `StrictMode` renders everything twice — every per-click count here is halved
+  for that. Numbers taken while the machine is loaded (agents running, builds
+  going) have shown `commit:sidebar` at 698ms and `commit:split:working` at
+  966ms, which are real but not representative. And **always narrow to one
+  `?page=`**: eight pages were reporting at one point, and a fold across them
+  describes none of them — dividing their combined `by:*` totals by one page's
+  click count is how "2.8 TerminalCells per click" got reported when the true
+  figure was all of them.
+
 - **Where it got to, measured on one loaded window.** Against a morning
   baseline of 23,132 nodes and a later reading at **25,254** — so the after is
   the bigger document:
