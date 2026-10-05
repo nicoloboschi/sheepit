@@ -270,6 +270,34 @@ function relTime(at: string | number): string {
   return `${v} ${unit}${v === 1 ? '' : 's'} ago`;
 }
 
+/**
+ * The "loaded …" label, and the only thing in this pane that runs on a clock.
+ *
+ * The label has to keep counting — frozen at whatever it said when the answer
+ * landed, it becomes the opposite of the thing it is for, a panel open for an
+ * hour insisting it loaded a moment ago. But the interval used to live on
+ * `GithubPane`, which is 900 lines of list, detail, diff and comments, and all
+ * of it re-rendered every fifteen seconds to move one string. Measured:
+ * `commit:split:split-github` at 7.57 ms/sec, averaging 13.84ms a commit and
+ * the single most expensive tool in a pane.
+ *
+ * Same fix as `PaneAge` in SessionItem, for the same reason: **a component that
+ * subscribes to a clock should be the smallest thing the clock changes.**
+ *
+ * "loaded 0 seconds ago" is noise dressed as precision, so it says `new` until
+ * the first bump and only then starts counting — the threshold is the tick
+ * interval itself, and any smaller leaves a gap reading "0 seconds ago" again.
+ */
+function LoadedAgo({ at }: { at: number }): React.ReactElement {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => bump(n => n + 1), 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{Date.now() - at < 15_000 ? 'loaded new' : `loaded ${relTime(at)}`}</>;
+}
+
+
 /** A body is Markdown written by somebody else, so its links leave for the
  *  real browser rather than navigating this panel somewhere it cannot return
  *  from — the same rule the terminal follows for a printed URL. */
@@ -536,15 +564,6 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
   const ghOnScreen = usePaneOnScreen(sessionId);
   usePoll(useCallback(() => { loadList(); loadItem(); }, [loadList, loadItem]),
     FRESH_MS, sessionId, ghOnScreen);
-  // The "loaded …" label has to keep counting. Frozen at whatever it said when
-  // the answer landed it becomes the opposite of the thing it is for — a panel
-  // that has been open for an hour insisting it loaded a moment ago.
-  const [, bumpClock] = useState(0);
-  useEffect(() => {
-    if (itemAt === null) return;
-    const t = setInterval(() => bumpClock(n => n + 1), 15_000);
-    return () => clearInterval(t);
-  }, [itemAt]);
   // A different reference starts at the top and on its first file — otherwise
   // a short issue opens halfway down, where the last PR's diff was.
   useEffect(() => {
@@ -734,11 +753,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
           title={`Fetched from GitHub at ${new Date(itemAt).toLocaleString()}`}
           style={{ fontSize: 11.5, color: 'var(--muted-foreground)' }}
         >
-          {/* "loaded 0 seconds ago" is noise dressed as precision. It says
-              `new` until the clock's first bump and only then starts
-              counting, so the threshold is the tick interval itself — any
-              smaller and there would be a gap reading "0 seconds ago" again. */}
-          {Date.now() - itemAt < 15_000 ? 'loaded new' : `loaded ${relTime(itemAt)}`}
+          <LoadedAgo at={itemAt} />
         </span>
       )}
       <div style={{ flex: 1 }} />
