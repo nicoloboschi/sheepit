@@ -412,7 +412,22 @@ export function startPerf(): void {
   window.addEventListener('click', (e) => {
     const label = clickLabel(e.target);
     const at = performance.now();
-    setTimeout(() => { bump(spans, `click:${label}`, performance.now() - at); }, 0);
+    // Every counter's value as the click starts, so the deltas below say what
+    // the click *did* rather than what the app does generally. A sweep rate
+    // cannot answer that: `render:TerminalCell` runs on the two-second sweep as
+    // well, so "13 of 31 cells render per sweep" says nothing about how many a
+    // switch re-renders, and reasoning from the one to the other is how several
+    // wrong conclusions got drawn before this existed.
+    const before = new Map(counts);
+    setTimeout(() => {
+      bump(spans, `click:${label}`, performance.now() - at);
+      for (const [name, n] of counts) {
+        const delta = n - (before.get(name) ?? 0);
+        if (delta > 0 && name.startsWith('render:')) {
+          count(`perclick:${name.slice(7)}`, delta);
+        }
+      }
+    }, 0);
   }, true);
 
   try {
