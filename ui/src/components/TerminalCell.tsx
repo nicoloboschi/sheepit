@@ -1750,6 +1750,13 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
       <>
       <div
         ref={setPaneDropRef}
+        // Counted as `holding.cells`. `holding.terminals` counts `.xterm`
+        // elements, which is not the same number — a cell whose terminal has not
+        // initialised has none, and `TerminalTiles` mounts cells for side and
+        // scratch shells too. Without this, "14 cell renders with 9 terminals"
+        // cannot be told apart from "every mounted cell rendered once", and
+        // those point at different bugs.
+        data-pane=""
         className="flex-1 min-h-0 min-w-0"
         style={{
           position: 'relative',

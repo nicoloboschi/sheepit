@@ -65,6 +65,8 @@ export interface PerfSnapshot {
   /** How big the sidebar is — see `holdingCounts`. */
   pens: number;
   sheep: number;
+  /** Mounted `TerminalCell`s, which is not `terminals`. */
+  cells: number;
   heapMb: number | null;
   dpr: number;
   /** The worst long animation frames, with what the browser blamed them on.
@@ -296,6 +298,7 @@ export function attributeRenders(slot: RenderSlot, label: string): void {
  */
 function holdingCounts(): {
   terminals: number; browserPanes: number; domNodes: number; pens: number; sheep: number;
+  cells: number;
 } {
   const end = span('perf:holding');
   try {
@@ -311,6 +314,7 @@ function holdingCounts(): {
       // and most of the document is terminal.
       pens: document.querySelectorAll('.session-item').length,
       sheep: document.querySelectorAll('.pane-card').length,
+      cells: document.querySelectorAll('[data-pane]').length,
     };
   } finally {
     end();
