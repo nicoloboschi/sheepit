@@ -54,7 +54,12 @@ COOLDOWN = 600           # do not repeat one finding more often than this
 # `click:*` is a diagnostic, not a budget. Its ms/sec is how much the user
 # clicked, which is not something that can regress; what matters about a click is
 # its *max*, and the long-task and frame checks above already catch that.
-NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered", "click"}
+NO_CEILING = {"nativeBrowser:tick", "nativeBrowser:covered", "click",
+               # Same reasoning as `click`: how much of the main thread a
+               # pane switch costs is how often you switch panes. What
+               # matters is one refit's duration, which the long-task and
+               # frame checks already catch.
+               "pane:refit"}
 
 EXPECTED = {
     "commit:pane": 12.0,

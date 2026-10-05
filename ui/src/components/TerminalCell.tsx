@@ -1359,9 +1359,23 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     const frames = showFitRafRef.current;
     frames.a = requestAnimationFrame(() => {
       frames.b = requestAnimationFrame(() => {
-        safeFit();
-        sendResize();
-        termRef.current?.focus();
+        // Timed because this was the one hot path in the app with no span on
+        // it, so it could only ever appear as a long-frame blame — seen as a
+        // 551ms frame carrying 326ms of script attributed to this file, with
+        // xterm's own renderer repainting in the frame after it. What costs is
+        // `safeFit`: a pane coming out of `display: none` has no size, so its
+        // cols and rows can differ from what its terminal holds, and changing
+        // them reflows every line of the scrollback. FitAddon no-ops when the
+        // dimensions match, so a switch that does not change the size is
+        // already cheap and this will show that as a near-zero span.
+        const endFit = perf.span('pane:refit');
+        try {
+          safeFit();
+          sendResize();
+          termRef.current?.focus();
+        } finally {
+          endFit();
+        }
       });
     });
     return () => {
