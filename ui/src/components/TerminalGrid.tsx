@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, memo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import TerminalCell from './TerminalCell';
 import PenFence from './PenFence';
+import { perf } from '../perf';
 import useStore from '../store';
 import * as sharedWs from '../sharedWs';
 
@@ -28,6 +29,13 @@ interface TerminalGridProps {
  * the same sheep without leaving the keyboard.
  */
 function TerminalGridInner({ sessionId: workspaceId }: TerminalGridProps) {
+  // Counted because the memo below is load-bearing and was unverifiable. A
+  // pane-card click re-renders 17.4 TerminalCells with only 14 mounted, which
+  // is either this grid re-rendering for every mounted pen (so its memo is
+  // failing) or the cells re-rendering individually. One number separates
+  // those, and guessing between them is how this file's comment came to assert
+  // something nothing measured.
+  perf.count('render:TerminalGrid');
   const ws = useStore(useShallow(s => {
     const w = s.workspaces[workspaceId];
     if (!w) return null;

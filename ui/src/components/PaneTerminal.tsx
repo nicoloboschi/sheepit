@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { perf } from '../perf';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { addSheepToPen } from '../store';
 import SessionStatsBar from './SessionStatsBar';
@@ -19,6 +20,11 @@ interface PaneTerminalProps {
 }
 
 export default function PaneTerminal({ sessionId, send }: PaneTerminalProps): JSX.Element {
+  // The grid's parent. If this re-renders and TerminalGrid's memo holds, the
+  // count below stays near 1 per click while render:TerminalGrid stays near 2 —
+  // the two pens involved in a switch. Divergence names which of the two is at
+  // fault without having to reason about either.
+  perf.count('render:PaneTerminal');
   // Keep visited workspaces mounted (hidden) for instant switching. Each id
   // in this list is a workspace id (what `sessionId` holds after the workspace
   // refactor), not a backend session id.
