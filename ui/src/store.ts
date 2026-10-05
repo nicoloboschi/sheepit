@@ -339,6 +339,32 @@ const LEGACY_LAST_KEY     = 'sheepit-last-session';
  * `busy` is deliberately absent: it rides the activity message into
  * `sessionBusy` and is never read off these objects.
  */
+/** Which allowlisted field actually moved, as a `ident:field:<name>` count.
+ *
+ * `sameSession` returning false says a session was rebuilt but not why, and
+ * "why" is the whole question: a field that moves every sweep and is rendered
+ * nowhere costs the sidebar a full re-render, which is exactly what
+ * `cpuPercent` and `memMb` were doing to 38 of 55 sessions. Called only on a
+ * mismatch, so it is a handful of comparisons a sweep rather than per session.
+ *
+ * Deliberately a separate list from `sameSession`'s expression: this one is for
+ * reading, and a single chained `&&` cannot say which link broke. If you add a
+ * field to the allowlist, add it here too or its churn is invisible — which is
+ * the failure this exists to prevent. */
+function countChangedField(p: Session, s: Session): void {
+  const fields: (keyof Session)[] = [
+    'id', 'name', 'path', 'isClaudeCode', 'isCodex', 'isOpencode', 'isAntigravity',
+    'isCopilot', 'isGrok', 'isCursor', 'isPi', 'isHermes', 'gitBranch', 'gitDirty',
+    'prNum', 'prState', 'last_activity', 'isHeadless', 'ctxTokens', 'ctxLimit',
+    'sideOf', 'fresh',
+  ];
+  for (const f of fields) {
+    if (p[f] !== s[f]) { perf.count(`ident:field:${f}`); return; }
+  }
+  // Not a scalar, so it is the only one left worth naming separately.
+  perf.count('ident:field:prRefs');
+}
+
 function sameSession(p: Session, s: Session): boolean {
   return p.id === s.id && p.name === s.name && p.path === s.path
     // `cpuPercent` and `memMb` are deliberately NOT here, and leaving them in
@@ -958,6 +984,8 @@ const useStore = create<StoreState>((set, get) => ({
       .map(s => {
         const p = prevById.get(s.id);
         const kept = !!p && sameSession(p, s);
+        if (!p) perf.count('ident:noPrev');
+        if (p && !kept) countChangedField(p, s);
         // Whether identity survives is the single thing every memo downstream
         // rests on, and it was being asserted rather than measured. Counted so
         // "the sidebar re-renders every sweep" can be told apart from "the

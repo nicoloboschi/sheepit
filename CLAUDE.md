@@ -1481,12 +1481,32 @@ commit trips two ceilings and reads as two findings.
   references left in the UI were that comparison and the type declaration: the
   cost was forty cards re-rendering a sweep for values nothing draws. Same
   shape as the `current_input` broadcast, and found the same way — by counting
-  it (`ident:sessionKept` / `ident:sessionNew`). Measured after: sessions
-  rebuilt per sweep 38.0 → 9.2 (the rest are really changing), `render:PaneCard`
-  126.7 → 66.7, `render:SessionItem` 22.2 → 11.7, `commit:sidebar` 7.29 → 2.77
-  ms/sec and its worst commit 85.1ms → 44.4ms. **If something ever shows these
+  it (`ident:sessionKept` / `ident:sessionNew`). Measured on **warm** pages
+  after: sessions rebuilt per sweep **38.0 → 0.3**, `render:SessionItem`
+  **22.2 → 4.4**, `render:PaneCard` **126.7 → 25.3**, `commit:sidebar`
+  7.29 → 2.77 ms/sec and its worst commit 85.1ms → 44.4ms. The one remaining
+  rebuild is `ctxTokens` on a pane whose agent is replying, which is exactly
+  what should invalidate a card.
+
+  **Read these only on warm pages.** The first reading after the fix said 9.2
+  rebuilds per sweep and was quoted as "the rest are really changing". It was
+  not: `ident:noPrev` was also 9.2, and 12 sweeps × 9.2 is 110, which is
+  exactly 2 reloaded pages × 55 sessions being met for the first time. A
+  freshly loaded page has no previous session objects at all, so every cold
+  start pays one full rebuild of everything and smears across a short window.
+  `ident:noPrev` is kept precisely so that case is distinguishable from churn —
+  without it the cold start is indistinguishable from a real bug, and was
+  mistaken for one. **If something ever shows these
   numbers, do not fix it by putting them back here** — that reinstates a
   sweep-wide re-render for one readout; give it its own narrow subscription.
+- **Name the field, not just the fact.** `sameSession` returning false says a
+  session was rebuilt and not why, and why is the whole question — a field that
+  moves every sweep and is rendered nowhere costs the sidebar a full re-render.
+  `countChangedField` reports the culprit as `ident:field:<name>`, called only
+  on a mismatch. It is a second list from `sameSession`'s chained `&&`, which
+  cannot say which link broke; **a field added to the allowlist must be added
+  there too**, or its churn is invisible, which is the failure the counter
+  exists to prevent.
 - **Whether identity survives is now measured, not asserted.** Every memo in
   the sidebar rests on `sessionMap[id]` and `workspaces[id]` keeping their
   references, and that was a claim in a comment. `ident:*` counts it per sweep,
