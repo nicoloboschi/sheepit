@@ -59,6 +59,29 @@ EXPECTED = {
 }
 
 
+def ceiling_for(name):
+    """The cost ceiling for a span, or None if it has none.
+
+    Span names are hierarchical — `commit:split:split-github` is one of the
+    `commit:split` family — so a table keyed on exact names goes stale the
+    moment a span is given a more specific name. That has already happened
+    twice here; match on the prefix so renaming a span does not silently move
+    it to the stricter default.
+    """
+    for key in sorted(NO_CEILING, key=len, reverse=True):
+        if name == key or name.startswith(key + ":"):
+            return None
+    for key in sorted(EXPECTED, key=len, reverse=True):
+        if name == key or name.startswith(key + ":"):
+            return EXPECTED[key]
+    return SPAN_MS_PER_SEC
+
+
+def is_known(name):
+    """Whether this span is one we already expect, by name or by family."""
+    return any(name == k or name.startswith(k + ":") for k in set(EXPECTED) | NO_CEILING)
+
+
 def fetch(url):
     try:
         with urllib.request.urlopen(url, timeout=8) as r:
@@ -161,12 +184,13 @@ def watch():
                 # started, which `nativeBrowser:tick` does every time a browser
                 # pane comes on screen. For those the cost ceiling below is the
                 # question; first sighting is not.
-                known = name in EXPECTED
+                known = is_known(name)
                 if not first and not known and d["seconds"] > 120 \
                         and s["msPerSec"] >= NEW_SPAN_MS_PER_SEC:
                     fire(f"new:{name}", f"new span '{name}' — {s['msPerSec']} ms/sec, "
                                         f"max {s['maxMs']}ms")
-            if name not in NO_CEILING and s["msPerSec"] > EXPECTED.get(name, SPAN_MS_PER_SEC):
+            ceiling = ceiling_for(name)
+            if ceiling is not None and s["msPerSec"] > ceiling:
                 fire(f"hot:{name}", f"'{name}' at {s['msPerSec']} ms/sec "
                                     f"(n={s['n']}, max {s['maxMs']}ms)")
 
