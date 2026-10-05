@@ -230,17 +230,20 @@ export function count(name: string, by = 1): void {
 /**
  * What the app is holding: terminals, browser panes, DOM nodes.
  *
- * Measured, because this is the one place the instrumentation can perturb what
- * it measures. Three whole-document queries — two `querySelectorAll` and a
- * `getElementsByTagName('*')` over 17,000+ nodes — inside a snapshot that is
- * built from a `requestAnimationFrame`. A 255ms frame blocking 200ms, carrying
- * 77ms of style and layout, was attributed to `perf.ts`'s own rAF; this is the
- * only thing in here expensive enough to be a candidate.
+ * Timed, and the answer is in: **4.14ms per snapshot, 0.12 ms/sec** at 14,000
+ * nodes — three whole-document queries, once every ten seconds. It is kept
+ * measured rather than assumed, because this is the one place the
+ * instrumentation could perturb what it measures, and that is a question worth
+ * having answered in the data instead of re-argued.
  *
- * So it is timed as `perf:holding` and it answers for itself in its own data.
- * If that span is ever a meaningful share of a snapshot, sample it every Nth
- * roll instead of every one — the counts are context, not a measurement
- * anything depends on.
+ * It was suspected of causing a 255ms frame that blocked 200ms, which the
+ * browser attributed to `perf.ts`'s own `requestAnimationFrame`. It was not:
+ * 0.12 ms/sec cannot do that. Long-animation-frame attribution names *a*
+ * script in the frame, not the expensive one, and that distinction has been
+ * got wrong four times in this file's history. Measure before believing it.
+ *
+ * If this ever does become a meaningful share of a snapshot, sample it every
+ * Nth roll — the counts are context, not something a measurement depends on.
  */
 function holdingCounts(): { terminals: number; browserPanes: number; domNodes: number } {
   const end = span('perf:holding');
