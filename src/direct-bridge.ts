@@ -8,7 +8,6 @@
  */
 
 import * as net from 'net';
-import { isDog } from './sheepdog.js';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -990,9 +989,24 @@ export class DirectBridge {
             const text = (this.pendingNotes.get(key) ?? '') + note.text;
             if (!note.done) { this.pendingNotes.set(key, text); return; }
             this.pendingNotes.delete(key);
-            if (text.trim()) {
-              this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message: text });
-            }
+            if (!text.trim()) return;
+            // **A bell from an agent that reports its own state is not a
+            // bleat.** Claude Code rings OSC 9 with "Claude is waiting for your
+            // input" when a turn ENDS and nobody has come back — and Codex
+            // rings it with the model's closing message, which is the same
+            // fact. Both were published as attention, so a pane that had simply
+            // finished went red; with a dozen of them on screen the one colour
+            // that means "come here now" stopped meaning anything.
+            //
+            // Whether an agent is *blocked* is a question its hooks answer
+            // exactly — PermissionRequest, Pi's ui_prompt_start — so for a pane
+            // that has ever reported a state, the hooks own it and the bell is
+            // just "something happened here": the busy->false flip marks it
+            // unread, which is what it is. The bell is still attention for a
+            // pane with no reporter in it (a plain shell, a marks-only agent),
+            // where it is the only signal there is.
+            if (this.agentState.has(id)) return;
+            this.pubsub.publish('__sessions__', { type: 'attention', session_id: id, message: text });
           };
           // PTY reads can split every supported notification protocol. Reassemble
           // OSC 9/777 here, then let the existing OSC 99 stream parser handle
@@ -1156,10 +1170,6 @@ export class DirectBridge {
    *  UserPromptSubmit hooks today, Codex is expected to post the same shapes
    *  through its own notify mechanism. Returns false for an unknown session so
    *  the caller can answer 404 rather than accumulate state for a dead pane. */
-  /** Told when a pane starts waiting on a human. Set by the server to feed the
-   *  sheepdog; unset when there is nobody to tell. */
-  onAgentWaiting: ((sessionId: string, name: string, path: string, question?: string) => void) | null = null;
-
   setAgentState(sessionId: string, state: AgentState, source: string, turn?: { prompt?: string; response?: string }): boolean {
     if (!this.sessions.has(sessionId)) return false;
 
@@ -1218,14 +1228,6 @@ export class DirectBridge {
       this.pubsub.publish('__sessions__', {
         type: 'attention', session_id: sessionId, message: 'needs your input',
       });
-      // ...and the sheepdog, if there is one. Announced from here rather than
-      // from the HTTP handler so every route into 'waiting' is covered — a
-      // hook report, an OSC 9 bell from the app itself — instead of only the
-      // one endpoint somebody remembered to edit.
-      const sess = this.sessions.get(sessionId);
-      try {
-        this.onAgentWaiting?.(sessionId, sess?.name ?? sessionId, sess?.path ?? '', turn?.prompt);
-      } catch { /* a listener must never break a state report */ }
     }
 
     // Publish immediately: waiting for the next sweep would give back the very
@@ -1369,11 +1371,10 @@ export class DirectBridge {
 
   /** What the agent in this pane last reported, as a plain word.
    *
-   *  The sheepdog's whole job is deciding which pane needs a human, and
-   *  'waiting' is the one state no amount of watching output can infer — an
+   *  `waiting` is the one state no amount of watching output can infer — an
    *  agent sitting on a permission prompt prints nothing and burns no CPU. It
    *  is only knowable because the hooks say so, which is why this is exposed
-   *  rather than derived. Stale reports read as 'unknown', not as 'idle': not
+   *  rather than derived. Stale reports read as `unknown`, not as `idle`: not
    *  hearing from a pane is different from hearing that it is done. */
   agentStateOf(sessionId: string): AgentState {
     return this.freshAgentState(sessionId) ?? 'unknown';
@@ -1901,7 +1902,7 @@ export class DirectBridge {
         isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isHermes: procs?.isHermes ?? false,
         isPi: procs?.isPi ?? false,
-        isDog: isDog(sess.id), isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
+        isAntigravity: procs?.isAntigravity ?? false, isCopilot: procs?.isCopilot ?? false, isGrok: procs?.isGrok ?? false, isCursor: procs?.isCursor ?? false,
         cpuPercent: procs?.cpuPercent ?? 0, memMb: procs?.memMb ?? 0,
         isHeadless: sess.isHeadless, sideOf: sess.sideOf, ...git,
         // Hook-reported, newest first. `git` above carries the PR of the

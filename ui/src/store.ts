@@ -16,8 +16,6 @@ export interface Session {
   isCodex?: boolean;
   isHermes?: boolean;
   isPi?: boolean;
-  /** This pane is the sheepdog — drawn as a dog, never counted as a sheep. */
-  isDog?: boolean;
   isOpencode?: boolean;
   isAntigravity?: boolean;
   isCopilot?: boolean;
@@ -144,12 +142,6 @@ export interface StoreState {
   workspaces: Record<string, Workspace>;
   /** Stable iteration order for the sidebar list. */
   workspaceOrder: string[];
-  /** Session id shown in the floating picture-in-picture dialog, or null.
-   *  The headless pane lives here: it has no pen, and it is something you
-   *  keep an eye on *while* reading another pane, so it floats over the pen
-   *  rather than standing in it. */
-  pipSessionId: string | null;
-
   /**
    * What each open browser pane is showing, reported by the pane itself.
    *
@@ -280,7 +272,6 @@ export interface StoreState {
   /** Move a pen into a field, optionally at a position within it. */
   moveWorkspaceToField: (workspaceId: string, fieldId: string, beforeWorkspaceId?: string | null) => void;
 
-  setPip: (sessionId: string | null) => void;
   navigateSession: (direction: 'up' | 'down') => { workspaceId: string; paneIndex?: number } | null;
 
   // ── Global terminal font size (applies to every pane) ────────────────────
@@ -912,7 +903,6 @@ const useStore = create<StoreState>((set, get) => ({
   fields: _initialWorkspaces.fields ?? {},
   fieldOrder: _initialWorkspaces.fieldOrder ?? [],
   selectedFieldId: null,
-  pipSessionId: null,
   browserUrls: {},
   browserNav: null,
   fontSize: loadFontSize(),
@@ -958,18 +948,9 @@ const useStore = create<StoreState>((set, get) => ({
     const { currentSessionId, workspaces, workspaceOrder } = get();
 
     const liveSessionIds = new Set(sessions.map(s => s.id));
-    // Two kinds of pane never get a pen, and so never appear in the sidebar:
-    // the headless singleton, and the sheepdog. The dog is not one of the
-    // flock — it is the thing watching the flock — and a row for it in the
-    // list would be a sheep-shaped hole in every count beside it. Both are
-    // still in `sessionMap`, and both are reached from the top bar and shown
-    // in the floating panel. See PipTerminal in App.tsx.
-    const workspaceSessions = sessions.filter(s => !s.isHeadless && !s.isDog);
-    // Which sessions may occupy a cell. Distinct from `liveSessionIds`, which
-    // is every session there is: the dog is real, it just has no pen.
-    // Pruning against this — rather than only filtering the sessions that get
-    // *given* a pen — is what evicts a pane that has just been made the dog
-    // from the pen it was already sitting in. Promotion is not a restart.
+    // Headless panes never get a pen, and so never appear in the sidebar.
+    // They are still in `sessionMap` and are reached from the Terminals panel.
+    const workspaceSessions = sessions.filter(s => !s.isHeadless);
     const pennableSessionIds = new Set(workspaceSessions.map(s => s.id));
 
     const sorted = [...workspaceSessions].sort((a, b) =>
@@ -1140,7 +1121,6 @@ const useStore = create<StoreState>((set, get) => ({
       sessionLastEvent: nextLastEvent,
       workspaces: nextWorkspaces,
       workspaceOrder: nextWorkspaceOrder,
-      ...(prev.pipSessionId && !liveSessionIds.has(prev.pipSessionId) ? { pipSessionId: null } : {}),
     });
   },
 
@@ -1733,9 +1713,6 @@ const useStore = create<StoreState>((set, get) => ({
     set({ workspaces: nextWorkspaces });
   },
 
-  setPip(sessionId: string | null) {
-    set({ pipSessionId: sessionId });
-  },
 
   setBrowserUrl(sessionId: string, url: string | null) {
     set(s => {

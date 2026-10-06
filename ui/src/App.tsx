@@ -22,8 +22,6 @@ import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
-import TerminalCell from './components/TerminalCell';
-import FloatingPanel from './components/FloatingPanel';
 // Deferred: the Knowledge dialog carries MDXEditor, which nothing else uses
 // and most sessions never open.
 const KnowledgeDialog = lazy(() => import('./components/KnowledgeDialog'));
@@ -43,9 +41,7 @@ import {
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
   Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search, Check,
-  Dog,
 } from 'lucide-react';
-import { useSheepdog } from './useSheepdog';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
 import { tildefy } from './utils';
@@ -692,8 +688,6 @@ export default function App() {
               send={send}
             />
           </Profiler>
-          <PipTerminal send={send} />
-
           <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
         </div>
 
@@ -726,45 +720,6 @@ export default function App() {
   );
 }
 
-/** The sheepdog's panel.
- *
- *  It belongs to no pen and is not what you are working *in* — it is the
- *  animal watching the flock, something you keep beside the work, so it floats
- *  over the pen rather than standing in it.
- *
- *  It used to share this one slot with the headless shell, so raising one put
- *  the other away. The scratch terminals have their own panel now (see
- *  `TerminalsDialog`) and this is the dog's alone. */
-function PipTerminal({ send }: { send: (msg: Record<string, unknown>) => void }) {
-  const sessionId = useStore(s => s.pipSessionId);
-  const live      = useStore(s => !!(sessionId && s.sessionMap[sessionId]));
-  if (!sessionId || !live) return null;
-  return (
-    <FloatingPanel
-      // Dragged by the pane's own bar — the one strip that is chrome rather
-      // than terminal, and the reason this panel draws no header of its own.
-      dragHandle=".pane-bar-row"
-      onClose={() => useStore.getState().setPip(null)}
-      width={520}
-      height={340}
-      minWidth={360}
-      minHeight={240}
-    >
-      <TerminalCell
-        sessionId={sessionId}
-        gridId={`__headless__:${sessionId}`}
-        paneIndex={0}
-        isActive
-        onActivate={() => {}}
-        onClose={() => {
-          useStore.getState().setPip(null);
-          send({ type: 'close_session', session_id: sessionId });
-        }}
-      />
-    </FloatingPanel>
-  );
-}
-
 // ── MobileTopBar ──────────────────────────────────────────────────────────────
 
 interface MobileTopBarProps {
@@ -784,7 +739,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const selectedFieldId  = useStore(s => s.selectedFieldId);
   const workspaceIdx     = currentSessionId ? workspaceOrder.indexOf(currentSessionId) : -1;
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
-  const sheepdog         = useSheepdog();
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     swipeTouchRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
@@ -917,22 +871,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             onChange={handleFileUpload}
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
           />
-
-          {/* The sheepdog, on the phone too. Its whole point is checking the
-              flock from somewhere else, and the desktop bar that carried it
-              is hidden at this width. Same hook, same rules, same colour when
-              the dog is calling. */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            title={sheepdog.label}
-            aria-label={sheepdog.label}
-            style={sheepdog.dog?.state === 'alerting' ? { color: 'var(--bleating)' } : undefined}
-            onClick={sheepdog.toggle}
-          >
-            <Dog size={15} />
-          </Button>
 
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>
             <DropdownMenuTrigger asChild>

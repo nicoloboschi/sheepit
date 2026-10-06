@@ -25,7 +25,6 @@ unless the surrounding code is already being rewritten.
 | **Workspace** | A sidebar row. An ordered, **unbounded** collection of panes sharing a name — of which it shows exactly **one** at a time. Identified by a synthetic `workspaceId` that is never any session's id. |
 | **Field** | A user-made group of workspaces. Identified by `fieldId`. Membership lives on the workspace (`Workspace.fieldId`); every pen starts in the default field, and the sidebar shows one field at a time. |
 | **Shown pane** | The one pane of a workspace that is on screen. `workspaces[id].cells[activeCell]`. Every other pane in the pen is as much in the background as a pane in any other pen — see [One pane on screen](#one-pane-on-screen). |
-| **Sheepdog** | The one pane appointed to watch the others (`dogSessionId` in `config.json`, `Session.isDog`). It is a pane, and it is **never a sheep** — see [The sheepdog](#the-sheepdog). |
 | **Active pane** | Same thing as the shown pane: with one pane on screen, focused and shown cannot differ. Drives the Git/Files/Search tabs. |
 | **Active workspace** | The workspace shown in the main area (sidebar selection). Stored as `currentSessionId` (legacy name; really means this). |
 
@@ -61,10 +60,18 @@ The activity dot carries all four:
 
 | dot | means |
 |---|---|
-| teal, pulsing | bleating — wants your input |
-| meadow, steady | grazing — a command is running |
-| amber, filled | idle, with output you have not read (`sessionHasUnseen`) |
+| red, pulsing | bleating — wants your input |
+| amber, steady | grazing — a command is running |
+| green, filled | idle, with output you have not read (`sessionHasUnseen`) |
 | hollow ring | idle, and you have seen it |
+
+**A sheep is only drawn for the two states that are doing nothing.** In a pen
+card, bleating is a **raised red hand** and grazing is an **amber spinner**;
+the animal appears for unread (green, hopping) and idle (wool, lying down). One
+of those two is a *request* and the other is *progress*, and a hand and a
+spinner say both in the vocabulary every other piece of software on the machine
+uses — where a 28px sheep said them by bobbing its head three pixels. See
+`SheepStatus.tsx`, which keeps its name and now draws three different things.
 
 The two live states take precedence: a sheep that is still working shows that
 it is working, unread or not. Bleating wins over grazing when both would apply, so the two
@@ -80,19 +87,6 @@ glyph is the signal and it is unchanged; only the motion is scoped.
 Write `sheep`/`pen` in UI copy and `pane`/`workspace` in code — including on
 the wire, where the server and its API keep the plain names. A comment
 explaining a UI string may use either, whichever makes the sentence clearer.
-
-### The sheepdog — user-facing
-
-| UI word | Means | Where |
-|---|---|---|
-| **The dog** | The pane watching the flock | `Session.isDog` |
-| **Watching** | Nothing wants you | `DogStatus` state `watching` |
-| **Alerting** | A sheep is bleating, and the dog is telling you | `alerting` |
-| **Working** | The dog's own agent is mid-turn | `working` |
-
-**The dog is not a sheep.** `useFlockCounts`, `useFlockSheep` and the pasture
-all skip it (`isDogPane` in `flock.ts`), or "27 sheep" would be twenty-six
-sheep and a dog. It is drawn by `DogStatus`, not `SheepStatus`.
 
 ### Terms to avoid
 - ❌ "root pane" / "primary pane" → ✅ **pane** (every pane in a pen is equal; there is no anchor)
@@ -120,9 +114,13 @@ dusk on near-black olive surfaces. Green is now the brand *and* carries
 distinguishes a state is the second colour: **amber** for wants-attention and
 warnings, **terracotta** for errors and deletions.
 
-Do not reintroduce blue or teal as a brand color. The remaining cool tone,
-`--bleating`, is a moss teal used for one thing only: a pane that is waiting on
-you.
+Do not reintroduce blue or teal as a brand color — including for
+`--bleating`, which was a moss teal and is now **red**. A pane that is
+*stopped*, waiting on a person, is the most urgent thing sheepit has to say,
+and it was saying it in a colour that read as one more shade of the pasture.
+Red is what the rest of the machine uses for "blocked on you"; a flock that
+invents its own word for that is a flock whose loudest signal has to be
+learned. The token still means that one thing and nothing else.
 
 ### Tokens
 
@@ -173,9 +171,13 @@ particular:
   green card behind every row you scan. The **focused pane** inside it
   (`.pane-card-active`) is a lift for the same reason — it is the most common
   thing on screen, so it must not be a coloured fill, leaving those to
-  bleating and unread, which want something from you. It carries a brand
-  **outline** instead: outline is the one property no state variant sets, so
-  the focused sheep stays marked whether it is bleating, unread or fresh.
+  bleating and unread, which want something from you. It carries the same
+  **brand rail** down its left edge instead (`.pane-card-active::after`), one
+  level down from the pen's: a shape no state variant draws, so the focused
+  sheep stays marked whether it is bleating, unread or fresh. It was a brand
+  outline, which across a wall of pens was one more coloured edge among the
+  tinted ones — a bleating card and a selected card both read as "an edge of a
+  different colour", which is exactly the confusion the rail exists to end.
 - The **grass stays green** — the footer strip and the floor of every pen. That
   is a picture of something, and it reads better against grey than it did
   against olive.
@@ -197,8 +199,8 @@ particular:
 | `--success`                | `#9CBC7F`                                   | healthy / additions / clean tree |
 | `--warning`                | `#D9B84A`                                   | amber — dirty tree, unseen output|
 | `--destructive`            | `#E0907B`                                   | terracotta — errors, deletions   |
-| `--bleating`               | `#8EBFA2`                                   | **only** for "wants your input"  |
-| `--grazing`                | `#9CBC7F`                                   | running; also the grass strip    |
+| `--bleating`               | `#E2584A`                                   | **only** for "wants your input"  |
+| `--grazing`                | `#9CBC7F`                                   | **the grass**, not the running mark |
 
 ### Folding, and the fields pens stand in
 
@@ -576,10 +578,47 @@ title's subtitle since the two chrome bars merged, so the card said the same
 thing twice and charged a row per sheep for it. The full path is still on the
 card's `title`.
 
-The **sheep shrank to 26px** (22px in a tight card), from 42px. That is the one
-change here with a real cost — the animal's posture and glyph are the point of
-it — and it is paid because the full-size animal is still in the pane bar,
-where you are already looking, and because a pen is now a list of them.
+**The mark at the end of the info row is a sheep only half the time.** The four
+states are drawn by three different things, at 34px (28px in a tight card):
+
+| state | mark | card |
+|---|---|---|
+| bleating | a **raised red hand**, waving | red tint, the loudest in the pen |
+| grazing | an **amber spinner** | amber tint, the weakest of the three |
+| unread | a **green sheep**, hopping | green tint |
+| idle | a **wool sheep**, lying down | no tint |
+
+The animal is a picture of a pane *at rest*, and it was being asked to carry
+two states it is bad at. "A command is running" is progress, and progress is
+drawn as a spinner everywhere: it says *still going* by moving continuously,
+where a grazing sheep said it by bobbing its head three pixels. "This pane is
+blocked on you" is a request, and a request is drawn as a raised hand. Both
+beat an animal at 28px, and both are already understood.
+
+The grazing sheep's grass glyph and the bleating sheep's baa went with them.
+The idle `zzz` is the **pane bar's alone**: in a card it is three 3px strokes
+above a 28px animal — specks, not glyphs, which read as dirt on the card.
+
+**Only the unread sheep moves**, and it hops: there is something in that pane
+to come and collect, and what the corner of the eye catches down a column of
+forty cards is displacement, not posture. Idle — much the commonest state — has
+no animation at all, which is the same bargain that took the `zzz` out of the
+cards; see [Measuring the UI](#measuring-the-ui--one-place-always-on).
+
+**Unread is green because nothing is wrong.** A finished turn is the good
+outcome; the two colours that mean trouble are spent on the pane that is stuck
+and the pane still working. Its fleece is dyed, idle's is not — a wall of white
+animals is a wall of identical shapes until you stop on one, and the commonest
+state has nothing to say.
+
+**All three live states tint the card now, at three strengths** — red loudest,
+green next, amber weakest. Grazing used to carry no tint at all, on the grounds
+that tinting the commonest state made most of the sidebar glow; at 11% it reads
+as "this one is going" rather than as a highlight, and the spinner is what
+actually says it. A slow amber band crossing a busy card was built and taken
+out: it was a second moving thing for a fact the spinner had already delivered,
+and the commonest live state is the worst place to spend an infinite animation
+per card.
 
 The sheep stays the last item **in** the info row rather than floating over the
 card's corner: floating it meant every row above had to reserve a gutter, which
@@ -693,8 +732,6 @@ columns would put all three panes in their narrow layout at once.
   so there is no second list to disagree with the server's, and nothing to
   persist — these are real PTYs the daemon keeps, so they survive a server
   restart and reopening the panel finds them.
-- **`pipSessionId` is the sheepdog's alone** again. The dog and the headless
-  shell shared that one slot, so raising either put the other away.
 - A scratch terminal's `gridId` is `__headless__:<id>`, matching no workspace
   on purpose. Anything reading a pane's pen from it must cope with the miss —
   `isLastSheep` in `PaneHeader` did not, and called every scratch shell the
@@ -955,9 +992,7 @@ Three things in it are worth the words:
   can ask what it has been told. Its hooks are real (`hermes hooks`) but they
   are declared in the `config.yaml` that also holds the user's model and
   provider, under their own event names, behind a first-use consent allowlist
-  — so wiring a reporter into them means editing that file, which is the one
-  thing [the sheepdog's own setup](#its-own-hermes-profile) is careful never
-  to do.
+  — so wiring a reporter into them means editing that file.
 
 **What was silently empty on a Codex pane**, until the fields were read under
 the names Codex actually uses: its **turns** (it writes `task_complete`, where
@@ -983,9 +1018,48 @@ The events are **not** the same set:
 | turn starts | `UserPromptSubmit` | `UserPromptSubmit` |
 | still working | `PreToolUse` / `PostToolUse` | `PreToolUse` / `PostToolUse` |
 | turn ends | `Stop` | `Stop` |
-| **waiting on you** | `Notification` | `PermissionRequest` — wired, see below |
+| **waiting on you** | `Notification` — **two events in one name**, see below | `PermissionRequest` — wired, see below |
 | session starts / cleared | `SessionStart` (`startup`, `clear`) | `SessionStart` (`startup`, `resume`, `clear`, `compact`) |
 | session ends | `SessionEnd` | `SessionEnd` |
+
+### `Notification` is two different events wearing one name
+
+Claude Code fires it for a permission prompt **and** about sixty seconds after
+a turn *ends* when nobody has come back:
+
+| the payload's `message` | what it is |
+|---|---|
+| `Claude needs your permission to use Bash` | blocked on you — a sheep bleating |
+| `Claude is waiting for your input` | the turn finished and you have not looked — **unread** |
+
+Both were reported as `waiting`, so every pane that finished and sat for a
+minute turned red. With a dozen of them on screen the one colour that means
+"come here now" stopped meaning anything, which is the whole cost: a signal
+that fires when nothing is wrong is a signal you learn to ignore.
+
+`report-state.mjs` downgrades the second to `idle` — the same thing `Stop`
+already said — on the message text (`NOT_BLOCKED`). It reports it rather than
+dropping it, so the trace can still tell a hook that fired from one that was
+never wired. `src/__tests__/report-state.test.ts` drives the real file the way
+Claude Code drives it; a hook reporting the *wrong* state looks exactly like a
+hook that is working, so nothing but a check catches it.
+
+**The same mistake was in the bell, and it is the bigger half.** Counted over
+the 63 live ring buffers on one machine: `Claude is waiting for your input`
+**108** times, `Claude needs your permission` **2**, one Codex closing message.
+Fifty to one, and all 111 were published as attention. (Nothing *renders* a
+bell — it is an invisible escape sequence, so this is not something anyone can
+see going wrong by watching a pane; count it in the rings.)
+
+OSC 9 is how an agent says *I am done* —
+Claude Code rings it with that same "waiting for your input" line, Codex with
+the model's closing message — and every one of them was published as
+attention. Whether an agent is *blocked* is a question its hooks answer
+exactly, so `handleNotification` now ignores the bell as an attention source
+for any pane that has ever reported a state: the busy→false flip marks it
+unread, which is what it is. A pane with **no reporter** in it (a plain shell,
+a marks-only agent) still bleats on a bell, because there it is the only
+signal there is.
 
 Codex has **no `Notification` event at all**. Its full set is `PreToolUse`,
 `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
@@ -1685,8 +1759,9 @@ git for.
 
 What is left on the byte stream is *protocol*, and that stays: OSC 7 (the
 shell reporting its cwd), OSC 9 / 777 / 99 (the app raising a notification →
-bleating), OSC 9;4 progress, and the DEC private modes that have to survive a
-reconnect. Those are applications reporting in a defined format, which is a
+unread, or bleating when nothing is reporting hooks for that pane — see
+[`Notification` is two different events](#notification-is-two-different-events-wearing-one-name)),
+OSC 9;4 progress, and the DEC private modes that have to survive a reconnect. Those are applications reporting in a defined format, which is a
 different thing from guessing.
 
 ### PR and issue references
@@ -2445,137 +2520,6 @@ escalation over the preview iframe — and not one over sheepit itself, which
 hands the same caller a shell on the same machine as the same user. The shell
 is the bigger key. Do not add a way to reach the browser that does not come
 through sheepit's own front door.
-
-## The sheepdog
-
-**It has no pen.** Like the headless singleton, the dog is filtered out of
-`workspaceSessions` in `renderSessions`, so it never gets a workspace and never
-appears in the sidebar — it is the animal watching the flock, not one of it.
-Its presentation is the **floating panel** (`PipTerminal` in `App.tsx`),
-raised from the dog button in the workspace bar — a thing you keep an eye on
-*while* working in a pen, rather than something that takes the pen's one slot.
-Note that cells are pruned against
-`pennableSessionIds` rather than `liveSessionIds`: promoting a pane that
-already sits in a pen has to evict it from that pen, and promotion is not a
-restart.
-
-One pane can be appointed the **sheepdog**: an agent whose job is the other
-panes. It is an ordinary session running `hermes`, and that is the whole
-design — it gets a PTY like everything else, so the daemon keeps it alive
-across a restart; it appears in the flock, so you can open it and take over by
-typing; its own hooks report its state. What makes it *the dog* is one id in
-`config.json` (`dogSessionId`, via `POST /api/sheepdog`), which the session
-list carries back as `isDog`.
-
-**Two things deliberately do not live in sheepit.** Hermes already speaks
-Telegram, Discord and Slack, and already schedules work in plain language, so
-neither a bot nor a cron belongs here — the server stays a terminal
-multiplexer. What sheepit owes the dog is the one thing only sheepit knows:
-what every other pane is doing.
-
-### Its own Hermes profile
-
-The dog runs `hermes -p sheepit-sheepdog`, in a profile sheepit creates
-(`ensureHermesProfile`). Hermes profiles live in `~/.hermes/profiles/<name>/`
-and are fully isolated — own model, credentials, memories, sessions, cron and
-`SOUL.md` — which is the whole reason to use one: appointing a dog must not
-give every other Hermes on the machine a shell-opening toolset, and a week of
-watching the flock must not land in the profile you ask ordinary questions in.
-
-What sheepit does, and does not do:
-
-- **`hermes profile create` does the parts we should not hand-roll** — the
-  registry entry, the directory layout, the `~/.local/bin/<name>` wrapper. It
-  runs unattended.
-- **The MCP server is appended to the profile's `config.yaml` by hand**, and
-  only when the profile declares no `mcp_servers` at all. `hermes mcp add`
-  connects and lists the tools it found, then stops on an interactive
-  *"Enable all 8 tools?"* prompt, so it cannot be driven from the server.
-  Rewriting a config Hermes generated would take its model and provider with
-  it, and merging YAML by hand is how you corrupt somebody's setup.
-- **The dog's job is appended to `SOUL.md`**, never written over it. That file
-  opens with Hermes' own account of itself, which is its identity; the sheepdog
-  section is a job on top. Both files carry a `sheepit:generated` marker —
-  delete the line and the file is the user's, and sheepit stops touching it.
-- The command is `hermes -p <name>`, not the wrapper script, which would mean
-  depending on `~/.local/bin` being on PATH in whatever shell the pane runs.
-
-**The published docs disagree with the binary in three places that matter**, so
-check `hermes --help` before trusting any of this: the subcommand is `hermes
-profile` (singular, not `profiles`); `-p` is real but absent from the top-level
-usage; and `SOUL.md` **is** per-profile, where the docs say it is loaded only
-from `HERMES_HOME`.
-
-### The MCP server
-
-`src/mcp.ts` mounts a **Streamable HTTP** MCP endpoint at `/mcp` on the
-server's own port. Hermes takes a remote server as a `url:` in
-`~/.hermes/config.yaml`, so there is no subprocess to spawn and no second
-lifetime to manage; `GET /api/sheepdog` generates the config block, because a
-wrong `url:` fails silently — the harness simply has no tools and nothing says
-so. Written by hand rather than pulled from the SDK, for the same reason
-`live-browser.ts` speaks CDP by hand: the surface actually used is
-`initialize`, `tools/list` and `tools/call`.
-
-A client may want its answer as JSON or as SSE; both are implemented, because
-different clients ask for different ones. There is no session state, so a
-server restart costs the client nothing.
-
-Rules that are easy to get wrong:
-
-- **Reading a pane means reading the agent's transcript, never the terminal.**
-  `read_pane` returns the exchanges the agent recorded. Scrollback is bytes to
-  render — escape sequences, redrawn spinners, half-built frames — and handing
-  that to a model produces confident nonsense. The rule that [nothing reads
-  the terminal as text](#nothing-reads-the-terminal-as-text) holds here.
-- **`structuredContent` must be a JSON object** — never an array or a
-  primitive. Real clients validate it (Hermes uses pydantic) and reject the
-  whole call. `list_flock` and `who_needs_me` answer with arrays and
-  `typeof [] === 'object'`, so every list call failed in Hermes while curl said
-  it worked; `toStructuredContent` wraps anything that is not a plain object as
-  `{ result }`. **curl is not a client** — verify a new tool with
-  `hermes -p sheepit-sheepdog -z "call <tool>"`, not by eye.
-- **The dog is filtered out of its own view.** `list_flock` excludes it, or it
-  reports on its own reporting.
-- **Composite answers go through the HTTP API over loopback.** `search_flock`
-  and `pane_git` are assembled in `api.ts` out of ripgrep, `gh` and a
-  coalescing cache; reimplementing them would give the dog a second opinion
-  that drifts from the one the UI shows.
-- **The write tools are meant to be filtered away.** Hermes supports
-  `tools: { include: [...] }` per server. Ship a dog the read half first. An
-  agent reachable from a chat app, holding a tool that opens shells, that also
-  reads other agents' transcripts and pull-request text — both of which can
-  contain instructions written by someone else — is prompt injection with a
-  shell on the end.
-
-### Telling the dog without it asking
-
-**Off unless `dogNotify: true` is set in `config.json`, and that switch is
-deliberately separate from appointing a dog.** Appointing one says "this pane
-is the dog". It must not by itself start moving text between sessions — what
-the dog is told includes the waiting pane's own prompt, so one session's
-content lands inside another agent's context. That is something to opt into,
-not something to discover.
-
-This is written down because it went wrong: a dog left appointed after a test
-armed the whole path, and the first sign of it was a pane starting to talk
-about another pane's work. "Appointed" and "allowed to be typed into" are two
-different permissions.
-
-
-A schedule is right for "check the deploy and brief me". It is wrong for "tell
-me when something bleats", which sheepit knows the instant the hooks say so.
-`DirectBridge.onAgentWaiting` fires from inside `setAgentState` — not from the
-HTTP handler, so every route into `waiting` is covered including an OSC 9 bell
-— and `DogPost` in `src/sheepdog.ts` types it into the dog's pane.
-
-Typing is the only channel into a running agent, and it has one property worth
-more than elegance: **you can watch it happen**. Open the dog's pane and the
-messages are in the scrollback. The rules are the ones `AGENT_RESUME_COMMANDS`
-already had to learn — wait for the pane to go quiet, give up at a deadline
-because a spinner never settles, and **cancel if a human is typing**, since
-past that point they are driving. Five sheep bleating in one second is one
-message, not five interruptions.
 
 ## The PTY proxy — keep it empty
 

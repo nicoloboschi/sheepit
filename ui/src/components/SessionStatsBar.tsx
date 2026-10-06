@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Plus, BookOpen, Search, SquarePlus, TerminalSquare, Settings, Dog, FolderOpen, Github, ListPlus } from 'lucide-react';
+import { Minus, Plus, BookOpen, Search, SquarePlus, TerminalSquare, Settings, FolderOpen, Github, ListPlus } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
-import { useSheepdog } from '../useSheepdog';
 import SettingsDialog from './SettingsDialog';
 import FilesDialog from './FilesDialog';
 import GithubDialog from './GithubDialog';
@@ -26,7 +25,6 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
   const adjustFontSize    = useStore(s => s.adjustFontSize);
   const resetFontSize     = useStore(s => s.resetFontSize);
   const renameWorkspace   = useStore(s => s.renameWorkspace);
-  const sheepdog          = useSheepdog();
   // Publish where the bar ends, for anything that floats under it.
   const barRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -42,7 +40,6 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
   const knowledgeOpen     = useStore(s => s.knowledgeOpen);
   const setKnowledgeOpen  = useStore(s => s.setKnowledgeOpen);
   const headlessCount = useStore(s => s.sessions.filter(session => session.isHeadless).length);
-  const pipSessionId = useStore(s => s.pipSessionId);
   // Display name for the active workspace: its title, else its root pane's name.
   const workspaceName = useStore(s => {
     const ws = sessionId ? s.workspaces[sessionId] : undefined;
@@ -250,24 +247,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
     () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
   );
 
-  /* The sheepdog sits beside New session because that is what it makes: a
-     pane, with Hermes started in it, appointed as the dog. Appointing an
-     existing pane is still on a pen's own menu — but nobody's first sheepdog
-     should have to be assembled by hand. Once there is one, this goes to it,
-     and it turns the colour of a bleating sheep when the dog is calling. */
-  // Pressed means *this panel is up*, not "a dog exists" — the same thing the
-  // other panel buttons mean, and what makes double-clicking a panel away read
-  // as the button popping out.
-  const sheepdogButton = action(
-    'sheepdog',
-    <Dog size={14} style={sheepdog.dog?.state === 'alerting' ? { color: 'var(--bleating)' } : undefined} />,
-    sheepdog.label,
-    sheepdog.toggle,
-    !!sheepdog.dog && pipSessionId === sheepdog.dog.sessionId,
-  );
-
   const newSessionButtons = onCreateSession && <>
-    {sheepdogButton}
     {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
     {/* The scratch terminals, in their own panel — up to four of them. It
         opens the panel rather than making a shell: with more than one, "open"

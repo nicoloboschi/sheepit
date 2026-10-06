@@ -25,7 +25,27 @@ import { readFileSync, openSync, fstatSync, readSync, closeSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const STATE = process.argv[2];
+let STATE = process.argv[2];
+
+/** Claude Code's `Notification` fires for two different things, and only one of
+ *  them is a sheep bleating.
+ *
+ *    "Claude needs your permission to use Bash"   → blocked on you. Red.
+ *    "Claude is waiting for your input"           → fired ~60s after a turn
+ *                                                   ENDS, because nobody has
+ *                                                   come back yet. Not blocked;
+ *                                                   just finished and unread.
+ *
+ *  The second one was being reported as `waiting`, so every pane that finished
+ *  and sat there for a minute turned red — a dozen of them at once, none of
+ *  them actually asking for anything, which is exactly how a signal that means
+ *  "come here now" stops meaning anything. It is downgraded to `idle`, the
+ *  same thing `Stop` already said: the pane goes unread, which is true.
+ *
+ *  Reported rather than dropped, so the hook trace still shows the event
+ *  arriving — a hook that fired and a hook that was never wired must not look
+ *  the same. See The hook trace in CLAUDE.md. */
+const NOT_BLOCKED = /waiting for (your )?input/i;
 // Overridden per-agent below once the payload has been read; the env var is
 // an escape hatch for anything invoking this script directly.
 let SOURCE = process.env.SHEEPIT_AGENT_SOURCE || 'agent';
@@ -140,6 +160,13 @@ async function run(raw) {
 
     let payload = {};
     try { payload = JSON.parse(raw) ?? {}; } catch { /* optional */ }
+
+    // See NOT_BLOCKED. A permission ask is a block; an "are you still there"
+    // nudge after a finished turn is not.
+    if (STATE === 'waiting' && typeof payload.message === 'string'
+        && NOT_BLOCKED.test(payload.message)) {
+      STATE = 'idle';
+    }
 
     // Which agent is reporting. Codex carries turn_id on every event, Claude
     // Code carries none — last_assistant_message is not usable for this, since

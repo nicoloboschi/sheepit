@@ -145,9 +145,24 @@
   --success:                #9CBC7F;
   --warning:                #D9B84A;
   /* Flock status colours — see /CLAUDE.md. bleating = wants you, grazing =
-     working away on its own. */
+     working away on its own.
+
+     **--bleating is RED.** It was a moss teal, chosen so the one cool tone
+     left in a green app could mean this one thing. It read as another shade
+     of the pasture: a pane that is *stopped*, waiting on a person, is the
+     single most urgent thing sheepit has to say, and it was saying it in a
+     colour the eye had to be taught. Red is what everything else on the
+     machine uses for "blocked, waiting on you", and a flock that invents its
+     own word for that is a flock whose loudest signal has to be learned.
+
+     **--grazing stays green, and is NOT the running indicator.** It is the
+     grass: PenFence and FlockGrass read it straight off the computed style to
+     draw every blade in the app. The *activity* "a command is running" is
+     amber (--warning), carried by the pane card's spinner and shimmer — see
+     .pane-state-grazing. Changing this token to amber would turn the field
+     yellow. */
   --fence: color-mix(in srgb, var(--warning) 26%, var(--muted-foreground));
-  --bleating:               #8EBFA2;
+  --bleating:               #E2584A;
   --grazing:                #9CBC7F;
 
   /* Chrome — the sidebar and the bars along the top of things. These are
@@ -207,7 +222,7 @@
   --success:                #41702c;
   --warning:                #8a6410;
   --fence: color-mix(in srgb, var(--warning) 26%, var(--muted-foreground));
-  --bleating:               #1f6b52;
+  --bleating:               #C03A2B;
   --grazing:                #41702c;
   --session-active-bg:      #e7f0dd;
   --dark-surface-gradient:  linear-gradient(135deg, #ffffff 0%, #f2f5ee 100%);
@@ -954,10 +969,10 @@
   background: var(--bleating);
   animation: sheep-dot-pulse 1.6s ease-in-out infinite;
 }
-.sheep-dot-grazing { background: var(--grazing); }
+.sheep-dot-grazing { background: var(--warning); }
 .sheep-dot-unread {
-  background: var(--warning);
-  box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 60%, transparent);
+  background: var(--success);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--success) 60%, transparent);
 }
 /* Seen, and nothing running: present but empty, which is the whole point —
    you can count the sheep without any of them asking for anything. */
@@ -1242,11 +1257,24 @@
   background: color-mix(in srgb, #ffffff 9%, var(--accent));
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: none;
-  /* …plus a brand outline. The lift alone read too much like a bleating card.
-     Outline, not border/box-shadow, because no state variant below sets it —
-     so the focused sheep stays marked whether it is bleating, unread or fresh. */
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
+}
+/* …plus a solid brand rail down the left edge — the same shape the selected
+   pen uses in the column, one level down. It was a 2px brand outline, which
+   at a glance across a wall of pens was another coloured edge among the
+   tinted ones: a bleating card and a selected card both read as "an edge of
+   a different colour". A rail is a shape no state variant draws, so the
+   focused sheep stays marked whether it is bleating, unread or fresh.
+   A pseudo-element rather than a border or an inset shadow: the border
+   carries the state tints and the shadow is taken by needs-attention. */
+.pane-card-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 7px 0 0 7px;
+  background: var(--primary);
 }
 /* On a pale page a lift is a step DOWN in lightness; adding white there would
    erase the card instead of raising it. */
@@ -1256,30 +1284,63 @@
 }
 
 /* ── A tinted box means YOU have something to do ───────────────────────────
-   Grazing deliberately does NOT tint the card. It is the most common state by
-   far, so tinting it made most of the sidebar glow and left a tint meaning
-   nothing in particular. It also did not need the help: the grazing sheep has
-   a silhouette and a glyph no other state uses. (It used to collide with the
+   All three live states tint the card now, at three strengths: red loudest
+   (a pane that is stuck), green next (a finished turn to collect), amber
+   weakest (still working — much the commonest, and the one state that wants
+   nothing from you). Grazing used to carry no tint at all, on the grounds that
+   tinting the commonest state made most of the sidebar glow; at 11% it reads
+   as "this one is going" rather than as a highlight, and the spinner beside
+   the name is what actually says it. (It used to collide with the
    active card as well, back when selection was green; selection is a neutral
    lift now, so the tints below are the only coloured fills in the pen.)
 
-   So the two halves say different things. The BOX is about you: teal when a
-   sheep is bleating for input, amber when a pane finished and you have not
-   read it. The SHEEP is about the pane: what it is doing right now. A busy
-   pane is quiet furniture until it wants something. */
+   So the two halves say different things. The BOX is about you: red when a
+   sheep is bleating for input, green when a pane finished and you have not
+   read it. The MARK is about the pane: a hand, a spinner, or a sheep. A busy
+   pane is quiet furniture until it wants something.
+
+   Grazing gets a fill too now, but the weakest of the three — it is the one
+   that is not asking for anything. See .pane-card-busy below. */
 .pane-card-needs-attention:not(.pane-card-active) {
   background: linear-gradient(120deg,
     color-mix(in srgb, var(--bleating) 18%, var(--accent)),
     color-mix(in srgb, var(--bleating) 5%,  var(--accent)));
-  border-color: rgba(142, 191, 162, 0.40);
-  box-shadow: inset 0 1px rgba(182, 214, 194, 0.08), 0 3px 12px rgba(0, 0, 0, 0.12);
+  border-color: color-mix(in srgb, var(--bleating) 55%, transparent);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.07), 0 3px 12px rgba(0, 0, 0, 0.12);
 }
 .pane-card-active.pane-card-needs-attention {
   background: linear-gradient(120deg,
     color-mix(in srgb, var(--bleating) 25%, var(--accent)),
     color-mix(in srgb, var(--bleating) 14%, var(--accent)));
-  border-color: rgba(142, 191, 162, 0.55);
-  box-shadow: inset 0 1px rgba(182, 214, 194, 0.10);
+  border-color: color-mix(in srgb, var(--bleating) 70%, transparent);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.09);
+}
+
+/* ── Grazing: a plain amber tint ──────────────────────────────────────────
+   The spinner beside the name already says "going" — it is the one mark on
+   the card that moves, and movement is what progress is made of. The card only
+   has to say *which* ones are working, which a fill does.
+
+   A slow amber band crossing the card was tried and taken out: a second moving
+   thing for a fact the spinner had already delivered, and the commonest live
+   state in the sidebar is the worst place to spend an infinite animation per
+   card (see Measuring the UI in CLAUDE.md).
+
+   Weaker than the other two tints on purpose. Grazing is much the commonest
+   live state — this is most of the sidebar, most of the time — and it is the
+   one state that wants nothing from you. Red and green are louder because
+   they are asking. */
+.pane-card-busy:not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--warning) 11%, var(--accent)),
+    color-mix(in srgb, var(--warning) 3%,  var(--accent)));
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+.pane-card-busy.pane-card-active:not(.pane-card-needs-attention) {
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--warning) 17%, var(--accent)),
+    color-mix(in srgb, var(--warning) 8%,  var(--accent)));
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
 }
 
 /* ── Fresh: an empty pen, waiting for you ─────────────────────────────────
@@ -1308,23 +1369,24 @@
 }
 
 /* ── Unread: the whole card goes amber ─────────────────────────────────────
-   Bleating and unread deliberately share one animation — both mean "look at
-   me", so both rear up the same way — which means the animal alone can no
-   longer tell them apart. The card carries the difference instead, and a
-   tinted box is a stronger signal at sidebar scale than any 34px animal:
-   you see it without looking at it. Scoped below the two live states so a
+   Bleating and unread share one pose — both mean "look at me", so both rear
+   up the same way — and are told apart by colour and by motion: bleating is
+   teal and moves, unread is amber and holds still. The card's tint says the
+   same thing a second time, which is the point: a tinted box is a stronger
+   signal at sidebar scale than any animal, because you see it without
+   looking at it. Scoped below the two live states so a
    pane that is still working keeps showing that it is working. */
 .pane-card-unseen:not(.pane-card-busy):not(.pane-card-needs-attention) {
   background: linear-gradient(120deg,
-    color-mix(in srgb, var(--warning) 18%, var(--accent)),
-    color-mix(in srgb, var(--warning) 6%,  var(--accent)));
-  border-color: rgba(217, 184, 74, 0.42);
+    color-mix(in srgb, var(--success) 14%, var(--accent)),
+    color-mix(in srgb, var(--success) 4%,  var(--accent)));
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
 }
 .pane-card-unseen.pane-card-active:not(.pane-card-busy):not(.pane-card-needs-attention) {
   background: linear-gradient(120deg,
-    color-mix(in srgb, var(--warning) 26%, var(--accent)),
-    color-mix(in srgb, var(--warning) 13%, var(--accent)));
-  border-color: rgba(217, 184, 74, 0.58);
+    color-mix(in srgb, var(--success) 20%, var(--accent)),
+    color-mix(in srgb, var(--success) 10%, var(--accent)));
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
 }
 
 /* The agent mark, inline in the info row beside the PR. It used to be a chip
@@ -1340,6 +1402,55 @@
   color: var(--muted-foreground);
 }
 .pane-card-tight .pane-card-badge { width: 13px; height: 13px; }
+
+/* ══ THE OTHER TWO MARKS ═══════════════════════════════════════════════════
+   Bleating and grazing are not drawn as animals. See SheepStatus.tsx: one is a
+   request and one is progress, and a hand and a spinner say those two in the
+   vocabulary the rest of the machine already uses. Both sit where the sheep
+   sits — last in the info row — and both are smaller than it, which costs
+   nothing because the row's height is pinned to --sheep-w either way. */
+.pane-state {
+  flex: 0 0 auto;
+  margin-left: 5px;
+  margin-right: -2px;
+  pointer-events: none;
+}
+
+/* BLEATING — a raised hand, waving. Red, and the loudest thing in the pen. */
+.pane-state-bleating {
+  width: calc(var(--sheep-w, 34px) * 0.56);
+  height: calc(var(--sheep-w, 34px) * 0.56);
+  fill: var(--bleating);
+  overflow: visible;
+}
+.pane-hand {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: pane-hand-wave 1.15s ease-in-out infinite;
+}
+@keyframes pane-hand-wave {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  20%           { transform: rotate(-15deg); }
+  40%           { transform: rotate(15deg); }
+}
+
+/* GRAZING — a ring with a gap, turning. A border rather than an SVG: three
+   declarations, no markup, and the gap is the transparent half of the box. */
+.pane-state-grazing {
+  display: block;
+  width: calc(var(--sheep-w, 34px) * 0.44);
+  height: calc(var(--sheep-w, 34px) * 0.44);
+  border: 2px solid color-mix(in srgb, var(--warning) 22%, transparent);
+  border-top-color: var(--warning);
+  border-right-color: var(--warning);
+  border-radius: 50%;
+  animation: pane-spin 0.85s linear infinite;
+}
+@keyframes pane-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-hand, .pane-state-grazing { animation: none; }
+}
 
 /* ══ THE SHEEP ═════════════════════════════════════════════════════════════
    Each pane is drawn as the animal it is named after, by SheepStatus.tsx.
@@ -1363,28 +1474,43 @@
   flex: 0 0 auto;
   margin-left: 5px;
   margin-right: -2px;
-  width: var(--sheep-w, 26px);
-  height: calc(var(--sheep-w, 26px) * 38 / 44);
+  width: var(--sheep-w, 34px);
+  height: calc(var(--sheep-w, 34px) * 38 / 44);
   /* The emitted glyphs live in the top 8 units of the viewBox and must be
      free to sit over the card's own padding. */
   overflow: visible;
   pointer-events: none;
   --tint: var(--muted-foreground);
-  --wool: #e9ece4;
-  --wool-shade: #b9c2ae;
+  --wool-base: #e9ece4;
+  --wool-shade-base: #b9c2ae;
+  --wool: var(--wool-base);
+  --wool-shade: var(--wool-shade-base);
   --skin: #3a4034;
   --sheep-leg: #4a5142;
 }
 :root[data-theme='light'] .sheep {
-  --wool: #ffffff;
-  --wool-shade: #9aa78d;
+  --wool-base: #ffffff;
+  --wool-shade-base: #9aa78d;
   --skin: #4d5544;
   --sheep-leg: #5f6a54;
+}
+
+/* ── The fleece wears the state's colour ───────────────────────────────────
+   Posture is the design, and it is what survives at full size — but a card is
+   scanned, not read, and a wall of white animals is a wall of identical shapes
+   until you stop on one. An unread sheep is dyed green, so the state arrives
+   as colour first and the silhouette confirms it.
+
+   Idle is deliberately NOT dyed: its tint is the muted foreground, and the
+   commonest state on screen has nothing to say. It stays wool, and dimmer. */
+.sheep-unread {
+  --wool: color-mix(in srgb, var(--tint) 72%, var(--wool-base));
+  --wool-shade: color-mix(in srgb, var(--tint) 92%, var(--wool-shade-base));
 }
 /* Quad packs four cards into ~100px each at the default sidebar width, so
    the animal comes down with them — and the text gutter comes with it. */
 /* Smaller again once a pen holds enough sheep that the list is the cost. */
-.pane-grid-list .pane-card-tight { --sheep-w: 22px; }
+.pane-grid-list .pane-card-tight { --sheep-w: 28px; }
 
 .sheep .sheep-fleece circle {
   fill: var(--wool);
@@ -1410,175 +1536,51 @@
 .sheep .sheep-legs { transform-box: fill-box; transform-origin: 50% 0; }
 .sheep .sheep-tail { transform-box: fill-box; transform-origin: 5% 20%; }
 
-/* Every emitted glyph starts hidden; exactly one state turns each one on. */
-.sheep .sheep-grass, .sheep .sheep-baa, .sheep .sheep-zzz { opacity: 0; }
-.sheep .sheep-grass path {
-  stroke: var(--grazing); stroke-width: 1.2; stroke-linecap: round; fill: none;
-  transform-box: fill-box; transform-origin: 50% 100%;
-}
-.sheep .sheep-baa { fill: var(--bleating); }
+/* The zzz is the last glyph left — grazing's grass and bleating's baa went
+   with the two sheep that emitted them. */
+.sheep .sheep-zzz { opacity: 0; }
 
-/* ── The sheepdog ───────────────────────────────────────────────────────────
-   Shares the sheep's box, tokens and glyph headroom (see DogStatus.tsx), so a
-   pen holding a dog and three sheep is one drawing. What differs is the coat
-   colour — a dog the colour of wool would read as a sheep at 32px — and that
-   its states describe the FLOCK, not itself. */
-.sheep.dog {
-  --coat: #8a7f6a;
-  --coat-shade: #5d5545;
-  --coat-dark: #2f3329;
-}
-:root[data-theme='light'] .sheep.dog {
-  --coat: #9b8f77;
-  --coat-shade: #6d6450;
-  --coat-dark: #3c4034;
-}
-.dog .dog-coat ellipse {
-  fill: var(--coat);
-  stroke: var(--coat-shade);
-  stroke-width: 0.7;
-}
-.dog .dog-legs line { stroke: var(--coat-shade); stroke-width: 1.9; stroke-linecap: round; }
-.dog .dog-tail { stroke: var(--coat); }
-.dog .dog-skull { fill: var(--coat); }
-.dog .dog-ear { fill: var(--coat-shade); transform-box: fill-box; transform-origin: 50% 100%; }
-.dog .dog-muzzle { fill: var(--coat-shade); }
-.dog .dog-nose { fill: var(--coat-dark); }
-.dog .dog-eye { fill: var(--coat-dark); }
-.dog .dog-brow { fill: var(--coat-shade); opacity: 0.55; }
-.dog .dog-body { transform-box: fill-box; transform-origin: 78% 96%; }
-.dog .dog-head { transform-box: fill-box; transform-origin: 70% 90%; }
-.dog .dog-tail { transform-box: fill-box; transform-origin: 0% 90%; }
-.dog .dog-bark, .dog .dog-dust { opacity: 0; }
-.dog .dog-bark { fill: var(--bleating); }
-.dog .dog-dust { fill: var(--muted-foreground); opacity: 0; }
-
-/* WATCHING — sitting still. Only the ear moves, and rarely: a dog that
-   fidgets constantly reads as anxious, and this one is meant to read as
-   competent. */
-.dog.dog-watching { --tint: var(--muted-foreground); }
-.dog.dog-watching .dog-ear { animation: dog-ear-flick 7s ease-in-out infinite; }
-
-/* ALERTING — up, barking, tail high. The halo comes on because this is the
-   one state that wants to be seen from across a wall of panes. */
-.dog.dog-alerting { --tint: var(--bleating); }
-.dog.dog-alerting .sheep-halo { opacity: 0.5; animation: sheep-halo-pulse 1.05s ease-in-out infinite; }
-.dog.dog-alerting .sheep-ground { opacity: 0.35; }
-.dog.dog-alerting .dog-body { animation: dog-bounce 0.85s ease-in-out infinite; }
-.dog.dog-alerting .dog-head { animation: dog-bark-head 0.85s ease-in-out infinite; }
-.dog.dog-alerting .dog-bark { animation: dog-bark 0.85s ease-out infinite; }
-.dog.dog-alerting .dog-tail { animation: dog-wag 0.42s ease-in-out infinite alternate; }
-
-/* WORKING — off doing something, tail wagging, dust at the paw. */
-.dog.dog-working { --tint: var(--grazing); }
-.dog.dog-working .sheep-ground { opacity: 0.3; }
-.dog.dog-working .dog-tail { animation: dog-wag 0.55s ease-in-out infinite alternate; }
-.dog.dog-working .dog-dust { animation: dog-dust 1.1s ease-out infinite; }
-.dog.dog-working .dog-head { animation: dog-sniff 2.2s ease-in-out infinite; }
-
-@keyframes dog-ear-flick {
-  0%, 88%, 100% { transform: rotate(0deg); }
-  92%           { transform: rotate(-16deg); }
-  96%           { transform: rotate(4deg); }
-}
-@keyframes dog-bounce {
-  0%, 100% { transform: translateY(0); }
-  45%      { transform: translateY(-1.6px); }
-}
-@keyframes dog-bark-head {
-  0%, 100% { transform: rotate(0deg); }
-  40%      { transform: rotate(-9deg); }
-}
-@keyframes dog-bark {
-  0%       { opacity: 0; transform: translate(2px, 2px) scale(0.6); }
-  30%      { opacity: 0.95; }
-  100%     { opacity: 0; transform: translate(-3px, -3px) scale(1.15); }
-}
-@keyframes dog-wag {
-  from { transform: rotate(-13deg); }
-  to   { transform: rotate(15deg); }
-}
-@keyframes dog-sniff {
-  0%, 100% { transform: rotate(0deg); }
-  50%      { transform: rotate(-5deg) translateY(0.6px); }
-}
-@keyframes dog-dust {
-  0%   { opacity: 0.5; transform: translate(0, 0) scale(0.7); }
-  100% { opacity: 0; transform: translate(3px, -2px) scale(1.3); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dog .dog-ear, .dog .dog-body, .dog .dog-head, .dog .dog-tail,
-  .dog .dog-bark, .dog .dog-dust, .dog .sheep-halo { animation: none !important; }
-  .dog.dog-alerting .dog-bark { opacity: 0.9; }
-}
 .sheep .sheep-zzz path {
   stroke: var(--muted-foreground); stroke-width: 1.35; fill: none;
   stroke-linejoin: round; stroke-linecap: round;
 }
 
-/* ── GRAZING — a command is running ────────────────────────────────────────
-   Head buried in the grass, chewing fast. The speed is the point: a grazing
-   sheep is the only state that means "right now, something is happening",
-   and a slow bob read as idling. */
-.sheep-grazing { --tint: var(--grazing); }
-.sheep-grazing .sheep-halo { opacity: 0.30; }
-.sheep-grazing .sheep-ground { opacity: 0.55; }
-.sheep-grazing .sheep-body { transform: rotate(5deg); }   /* shoulders down, rump up */
-.sheep-grazing .sheep-head { animation: sheep-graze-bob 0.62s ease-in-out infinite; }
-.sheep-grazing .sheep-tail { animation: sheep-tail-swish 0.5s ease-in-out infinite; }
-.sheep-grazing .sheep-grass { opacity: 0.95; }
-.sheep-grazing .sheep-grass path { animation: sheep-grass-sway 0.9s ease-in-out infinite; }
-.sheep-grazing .sheep-grass path:nth-child(2) { animation-delay: -0.3s; }
-.sheep-grazing .sheep-grass path:nth-child(3) { animation-delay: -0.6s; }
-@keyframes sheep-graze-bob {
-  0%, 100% { transform: rotate(48deg) translate(-0.5px, 3px); }
-  50%      { transform: rotate(58deg) translate(-1.2px, 4.4px); }
-}
-@keyframes sheep-grass-sway {
-  0%, 100% { transform: rotate(0); }
-  50%      { transform: rotate(-16deg); }
+/* ── UNREAD — finished, and you have not read it ───────────────────────────
+   The only sheep that moves. It is up on its hind feet and hopping: there is
+   something in this pane to come and collect, and displacement is what the
+   corner of the eye catches in a column of forty cards.
+
+   Green, because nothing is wrong — a finished turn is the good outcome, and
+   the two colours that mean trouble are spent elsewhere: red on a pane that is
+   stuck, amber on one still working.
+
+   **Grazing and bleating draw no sheep at all any more.** A spinner and a
+   raised hand say "running" and "blocked on you" better than an animal can at
+   28px, and they say it in the vocabulary every other piece of software on the
+   machine uses. See SheepStatus.tsx; the two sheep states left are the two
+   that are not doing anything. */
+.sheep-unread { --tint: var(--success); }
+.sheep-unread .sheep-halo { opacity: 0.42; animation: sheep-halo-pulse 1.05s ease-in-out infinite; }
+.sheep-unread .sheep-head { transform: rotate(-30deg) translate(1px, -2.6px); }
+.sheep-unread .sheep-ear-far { opacity: 0.85; }
+.sheep-unread .sheep-body { animation: sheep-hop 0.78s cubic-bezier(.3,0,.5,1) infinite; }
+.sheep-unread .sheep-tail { animation: sheep-tail-swish 0.55s ease-in-out infinite; }
+@keyframes sheep-hop {
+  0%, 62%, 100% { transform: rotate(-7deg) translateY(0); }
+  28%           { transform: rotate(-9deg) translateY(-5px); }
 }
 @keyframes sheep-tail-swish {
   0%, 100% { transform: rotate(-9deg); }
   50%      { transform: rotate(9deg); }
 }
-
-/* ── BLEATING and UNREAD share one animation ───────────────────────────────
-   Both rear back onto their hind feet with the head thrown up. What tells
-   them apart is not the animal: bleating puffs a baa, and unread tints its
-   whole card amber (.pane-card-unseen below). Two states that both mean
-   "look at me" should move the same way; the card carries the difference. */
-.sheep-bleating { --tint: var(--bleating); }
-.sheep-unread   { --tint: var(--warning); }
-.sheep-bleating .sheep-halo,
-.sheep-unread .sheep-halo { opacity: 0.42; animation: sheep-halo-pulse 1.05s ease-in-out infinite; }
-.sheep-bleating .sheep-body,
-.sheep-unread .sheep-body { animation: sheep-rear 1.05s ease-in-out infinite; }
-.sheep-bleating .sheep-head,
-.sheep-unread .sheep-head { animation: sheep-head-lift 1.05s ease-in-out infinite; }
-.sheep-bleating .sheep-tail,
-.sheep-unread .sheep-tail { animation: sheep-tail-swish 0.55s ease-in-out infinite; }
-.sheep-bleating .sheep-ear-far,
-.sheep-unread .sheep-ear-far { opacity: 0.85; }
-/* the baa is bleating's alone */
-.sheep-bleating .sheep-baa { animation: sheep-baa-puff 1.05s ease-out infinite; }
-@keyframes sheep-rear {
-  0%, 100% { transform: rotate(-7deg) translateY(0); }
-  35%      { transform: rotate(-14deg) translateY(-1.6px); }
-}
-@keyframes sheep-head-lift {
-  0%, 100% { transform: rotate(-30deg) translate(1px, -2.6px); }
-  35%      { transform: rotate(-52deg) translate(2px, -5px); }
-}
-@keyframes sheep-baa-puff {
-  0%   { opacity: 0; transform: translate(0, 0) scale(0.5); }
-  22%  { opacity: 0.95; }
-  100% { opacity: 0; transform: translate(-3px, -7px) scale(1.4); }
-}
 @keyframes sheep-halo-pulse {
   0%, 100% { opacity: 0.42; }
   50%      { opacity: 0.16; }
 }
+/* The idle `zzz` is the full-size animal's alone. In a pen card it is three
+   3px strokes above a 28px sheep — specks, not glyphs, and they read as dirt
+   on the card. The pane bar still draws it, where it is a shape. */
+.pane-grid-list .sheep-idle .sheep-zzz { opacity: 0; }
 
 /* ── IDLE, SEEN — asleep on its feet, or rather off them ───────────────────
    Legs tuck away entirely and the body settles onto the ground. It is the
@@ -1667,7 +1669,7 @@
   gap: 6px;
   margin-top: auto;
   padding-top: 1px;
-  min-height: calc(var(--sheep-w, 26px) * 38 / 44);
+  min-height: calc(var(--sheep-w, 34px) * 38 / 44);
   font-size: 11px;
   font-family: var(--font-mono);
   min-width: 0;
@@ -2738,7 +2740,7 @@
 
 /* The native `resize: both` handle was technically enough, but it hid behind
    the panel contents and only worked from one corner. The explicit handles make
-   every floating view — Files, GitHub, Knowledge, scratch terminals and the dog
+   every floating view — Files, GitHub, Knowledge and scratch terminals
    — resize from any edge without adding another dependency. */
 .floating-panel-resize {
   position: absolute;

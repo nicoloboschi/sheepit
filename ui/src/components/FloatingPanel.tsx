@@ -5,8 +5,8 @@ import { X } from 'lucide-react';
 /**
  * A panel that floats over everything.
  *
- * The things it holds are *globals* — the headless shell, the sheepdog, the
- * file browser, Knowledge. None of them belong to a pane, and none of them is
+ * The things it holds are *globals* — scratch terminals, the file browser and
+ * Knowledge. None of them belong to a pane, and none of them is
  * what you are working in: they are things you keep beside the work. A
  * full-screen dialog says the opposite, and taking the pen's own slot was worse
  * still, because then reading one pane and watching a shell were the same

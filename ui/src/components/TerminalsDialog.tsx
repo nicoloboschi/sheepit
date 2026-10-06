@@ -17,9 +17,8 @@ const MAX_HEADLESS = 4;
  *
  * A headless session is a shell with no pen: never in the flock, never
  * something you select, because the point of it is to be running while you
- * work somewhere else. There was exactly one, raised in the slot the sheepdog
- * also used — so opening it put the dog away, and that one shell had to be
- * both the build you are running and the log you are tailing.
+ * work somewhere else. There can be several, so one shell can be the build you
+ * are running while another is the log you are tailing.
  *
  * **These are the shells that belong to nobody.** A pane's own Terminals split
  * holds a different set, tagged with `sideOf`, and they are filtered out here:

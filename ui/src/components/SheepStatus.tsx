@@ -4,45 +4,54 @@
 import type { SheepState } from '../flock';
 export type { SheepState };
 
-const STATE_CLASS: Record<SheepState, string> = {
-  grazing:  'sheep-grazing',
-  bleating: 'sheep-bleating',
-  unread:   'sheep-unread',
-  idle:     'sheep-idle',
-};
-
 const STATE_LABEL: Record<SheepState, string> = {
   grazing:  'Grazing — a command is running',
   bleating: 'Bleating — waiting for your input',
-  unread:   'Idle — finished, and you have not read it yet',
+  unread:   'Finished, and you have not read it yet',
   idle:     'Idle',
 };
 
-/** The pane's activity, drawn as the animal it is named after.
+/** **A sheep is only drawn for the two states that are not doing anything.**
  *
- *  Three channels carry the state, because one is not enough at 34px in a
- *  sidebar holding twenty pens:
+ *  The animal is a picture of a pane at rest — standing in a field, or asleep
+ *  in it — and it was being asked to carry two states it is bad at. "A command
+ *  is running" is a *progress* fact, and the universal drawing of progress is
+ *  a spinner: it says "still going" by moving continuously, where a grazing
+ *  sheep said it by bobbing its head 3px. "This pane is blocked on you" is a
+ *  *request*, and the universal drawing of a request is a raised hand.
  *
- *    1. colour    — --grazing / --bleating / --warning / muted
- *    2. posture   — where the head is and whether the animal is standing
- *    3. a glyph   — grass, a baa puff, or z z z
+ *  So the four states are drawn by three different things:
  *
- *  The silhouettes are deliberately different shapes, not four tints of one:
- *  grazing leans forward onto its face, bleating and unread rear back onto
- *  their hind feet, and idle lies down with its legs tucked away — the only
- *  one of the four with no legs showing, which is what makes it readable at
- *  a glance in a folded pen.
+ *  | state    | drawn as            | colour |
+ *  |----------|---------------------|--------|
+ *  | bleating | a raised hand, waving | red  — the one state that is stuck |
+ *  | grazing  | a spinner            | amber — plus the card's moving shimmer |
+ *  | unread   | a sheep, hopping     | green — there is something to collect |
+ *  | idle     | a sheep, lying down  | wool  — nothing to say |
  *
- *  Bleating and unread share one animation on purpose; what separates them
- *  is that an unread pane tints its whole card amber (.pane-card-unseen).
+ *  Which is also why the colours moved. Red and a hand are what every other
+ *  piece of software on the machine uses for "stopped, waiting on you", and a
+ *  flock that invents its own vocabulary for that one state is a flock whose
+ *  most important signal has to be learned. The sheep keep the rest.
+ *
+ *  Two channels still carry the sheep's own two states — posture (hopping on
+ *  its hind feet, or lying with its legs tucked away) and the colour of the
+ *  fleece — because a wall of white animals is a wall of identical shapes
+ *  until you stop on one, and a card is scanned rather than read.
+ *
+ *  The baa puff and the idle `zzz` are the full-size animal's alone: in a pen
+ *  card they are 1px dots and 3px strokes above a 28px sheep, which read as
+ *  dirt on the card rather than as glyphs. The pane bar still draws the zzz.
  *
  *  The geometry lives in a 44×38 viewBox: the animal occupies the lower 30
- *  units and the top 8 are headroom for whichever glyph the state emits.
- *  All motion is CSS in style.css and stops under prefers-reduced-motion. */
+ *  units and the top 8 are headroom for the glyph. All motion is CSS in
+ *  style.css and stops under prefers-reduced-motion. */
 export default function SheepStatus({ state }: { state: SheepState }): React.ReactElement {
+  if (state === 'bleating') return <BleatingHand />;
+  if (state === 'grazing')  return <GrazingSpinner />;
   return (
     <svg
-      className={`sheep ${STATE_CLASS[state]}`}
+      className={`sheep sheep-${state}`}
       viewBox="0 0 44 38"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
@@ -96,18 +105,6 @@ export default function SheepStatus({ state }: { state: SheepState }): React.Rea
             </g>
           </g>
         </g>
-        {/* GRAZING: blades under the muzzle, springing back as it chews */}
-        <g className="sheep-grass">
-          <path d="M8.4 27 C 7.9 24.4 8.7 22.8 9.5 21.6" />
-          <path d="M11.5 27.4 C 11.3 25.2 12.3 23.6 13.3 22.6" />
-          <path d="M5.5 27.2 C 5.3 25.4 5.8 24.2 6.5 23.2" />
-        </g>
-      </g>
-      {/* BLEATING: three puffs leaving the muzzle */}
-      <g className="sheep-baa">
-        <circle cx="5.6" cy="18.6" r="1.7" />
-        <circle cx="3.1" cy="15.4" r="1.15" />
-        <circle cx="1.4" cy="12.8" r=".8" />
       </g>
       {/* IDLE: z z z drifting off a sleeping head */}
       <g className="sheep-zzz">
@@ -116,5 +113,49 @@ export default function SheepStatus({ state }: { state: SheepState }): React.Rea
         <path d="M4.2 1.8 h2.2 l-2.2 2.2 h2.2" />
       </g>
     </svg>
+  );
+}
+
+/** Blocked on you. A raised hand, waving — drawn rather than an emoji so it
+ *  can take the state's red; an emoji is whatever colour the font says, and
+ *  the whole point of this one is that it is the loudest thing in the pen.
+ *  Four fingers and a thumb at 16px is as much hand as survives the size. */
+function BleatingHand(): React.ReactElement {
+  return (
+    <svg
+      className="pane-state pane-state-bleating"
+      viewBox="0 0 20 20"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={STATE_LABEL.bleating}
+    >
+      <title>{STATE_LABEL.bleating}</title>
+      <g className="pane-hand">
+        {/* palm */}
+        <path d="M4.4 9.2 h9.5 a2.6 2.6 0 0 1 2.6 2.6 v2.1 a4.6 4.6 0 0 1 -4.6 4.6 h-3.4 a4.1 4.1 0 0 1 -4.1 -4.1 z" />
+        {/* fingers */}
+        <rect x="5.0" y="3.0" width="2.3" height="7.2" rx="1.15" />
+        <rect x="8.0" y="1.6" width="2.3" height="8.6" rx="1.15" />
+        <rect x="11.0" y="2.4" width="2.3" height="7.8" rx="1.15" />
+        <rect x="13.9" y="4.6" width="2.2" height="5.8" rx="1.1" />
+        {/* thumb */}
+        <path d="M4.6 9.6 L2.2 12.1 a1.15 1.15 0 0 0 1.6 1.6 l2.3 -2.3 z" />
+      </g>
+    </svg>
+  );
+}
+
+/** A command is running. The one state that is genuinely *progress*, drawn the
+ *  way progress is drawn everywhere: a ring with a gap, turning. The card
+ *  behind it carries a slow amber shimmer for the same fact at card scale —
+ *  a 14px ring is not something you see without looking at it. */
+function GrazingSpinner(): React.ReactElement {
+  return (
+    <span
+      className="pane-state pane-state-grazing"
+      role="img"
+      aria-label={STATE_LABEL.grazing}
+      title={STATE_LABEL.grazing}
+    />
   );
 }
