@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch } from 'lucide-react';
+import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -141,7 +141,7 @@ const ToolBlock = memo(function ToolBlock({ m }: { m: Extract<NativeMessage, { k
   const summary = toolSummary(m.name, m.input);
   const running = m.result === undefined;
   return (
-    <div className={`nat-tool${m.isError ? ' nat-tool-error' : ''}${running ? ' nat-tool-running' : ''}`}>
+    <div className={`nat-tool${m.isError ? ' nat-tool-error' : ''}${running ? ' nat-tool-running' : ''}`} data-mid={m.id}>
       <button className="nat-tool-head" onClick={() => setOpen(o => !o)}>
         <ChevronRight size={11} className={`nat-tool-chev${open ? ' nat-tool-chev-open' : ''}`} />
         {m.isError ? <AlertTriangle size={11} /> : <Wrench size={11} />}
@@ -398,7 +398,7 @@ const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
   const questions: any[] = Array.isArray(input.questions) ? input.questions : [];
 
   return (
-    <div className={`nat-choice${answered ? ' nat-choice-answered' : ''}`}>
+    <div className={`nat-choice${answered ? ' nat-choice-answered' : ''}`} data-mid={m.id}>
       <div className="nat-choice-head">
         {plan ? <ClipboardCheck size={12} /> : <ListChecks size={12} />}
         {plan ? 'Plan — needs your approval' : answered ? 'Asked you' : 'Asking you'}
@@ -545,6 +545,23 @@ function tookOf(ms: number): string {
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
+/**
+ * What a message is searched over.
+ *
+ * Everything the pane holds, not only the prose: the point of finding
+ * something in a conversation is usually "which command did I run", "what did
+ * that file say", "where did it edit this" — and all three live in tool calls.
+ * A tool's result is in here too, which is the half the terminal's own
+ * scrollback has and ⌘K does not.
+ */
+function searchText(m: NativeMessage): string {
+  switch (m.kind) {
+    case 'command': return `${m.name} ${m.args}`;
+    case 'tool': return `${m.name} ${typeof m.input === 'string' ? m.input : JSON.stringify(m.input ?? '')} ${m.result ?? ''}`;
+    default: return m.text;
+  }
+}
+
 const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
   m: NativeMessage;
   onOpenTerminal?: () => void;
@@ -553,19 +570,19 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
 }) {
   switch (m.kind) {
     case 'user':
-      return <div className="nat-msg nat-user" data-user-text={m.text}><UserBubble text={m.text} /></div>;
+      return <div className="nat-msg nat-user" data-mid={m.id} data-user-text={m.text}><UserBubble text={m.text} /></div>;
     case 'command':
       // The command, not its expansion — a skill's body is thousands of words
       // the agent received and you did not write.
       return (
-        <div className="nat-cmd">
+        <div className="nat-cmd" data-mid={m.id}>
           <span className="nat-cmd-name">{m.name}</span>
           {m.args && <span className="nat-cmd-args">{m.args}</span>}
         </div>
       );
     case 'assistant':
       return (
-        <div className="nat-msg nat-assistant">
+        <div className="nat-msg nat-assistant" data-mid={m.id}>
           <Markdown text={m.text} />
           {/* When it was said. The terminal ends a turn with "done 10:23 AM"
               and that is genuinely useful — it is how you tell a reply that
@@ -576,7 +593,7 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
       );
     case 'thinking':
       return (
-        <details className="nat-think">
+        <details className="nat-think" data-mid={m.id}>
           <summary><Brain size={11} /> thinking</summary>
           <div className="nat-text nat-think-body">{m.text}</div>
         </details>
@@ -590,7 +607,7 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
       // real content — it is what the agent is working from now — but it is
       // not a turn, so it does not get a bubble.
       return (
-        <details className="nat-compact">
+        <details className="nat-compact" data-mid={m.id}>
           <summary><Scissors size={11} /> Context compacted</summary>
           {/* The summary is Markdown the agent wrote — headings and lists,
               not a wall of asterisks. Same renderer as a reply. */}
@@ -598,7 +615,7 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
         </details>
       );
     case 'system':
-      return <div className={`nat-system${m.level === 'error' ? ' nat-system-error' : ''}`}>{m.text}</div>;
+      return <div className={`nat-system${m.level === 'error' ? ' nat-system-error' : ''}`} data-mid={m.id}>{m.text}</div>;
   }
 });
 
@@ -909,6 +926,80 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   );
 
   /**
+   * **Find in this conversation.** Not ⌘K, which asks a different question —
+   * *which sheep is working on this* — across every pane, from the server,
+   * over ripgrep. This one is "where in the pane I am reading did that
+   * happen", it is answered from the messages already in memory, and it
+   * matches tool calls and their results as well as the prose.
+   *
+   * Nothing is fetched and nothing is parsed: every message this view can
+   * show is already rendered (there is no windowing), so the match is a
+   * substring over an array and the jump is a `scrollIntoView` on the element
+   * carrying that message's id.
+   */
+  const [finding, setFinding] = useState(false);
+  const [query, setQuery] = useState('');
+  const [hitIdx, setHitIdx] = useState(0);
+  const findRef = useRef<HTMLInputElement>(null);
+
+  const hits = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return shown.filter(m => searchText(m).toLowerCase().includes(q)).map(m => m.id);
+  }, [shown, query]);
+
+  // Typing narrows, so the cursor goes back to the first match rather than
+  // sitting past the end of a shorter list.
+  useEffect(() => { setHitIdx(0); }, [query]);
+
+  /** Scroll to one match and mark it. Centred, because a message is read with
+   *  what surrounds it, and marked rather than flashed — with a list of hits
+   *  you want to see which one you are standing on. */
+  const goToHit = useCallback((i: number) => {
+    const id = hits[i];
+    const list = listRef.current;
+    if (!id || !list) return;
+    for (const el of Array.from(list.querySelectorAll('.nat-found'))) el.classList.remove('nat-found');
+    const el = list.querySelector<HTMLElement>(`[data-mid="${CSS.escape(id)}"]`);
+    if (!el) return;
+    atBottom.current = false;   // we are deliberately not at the tail now
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('nat-found');
+  }, [hits]);
+
+  // The first match is shown as soon as there is one, so typing walks the
+  // conversation rather than needing an Enter to start it.
+  useEffect(() => { if (finding && hits.length) goToHit(hitIdx); }, [finding, hits, hitIdx, goToHit]);
+
+  const step = useCallback((d: 1 | -1) => {
+    if (!hits.length) return;
+    setHitIdx(i => (i + d + hits.length) % hits.length);
+  }, [hits.length]);
+
+  const closeFind = useCallback(() => {
+    setFinding(false);
+    setQuery('');
+    for (const el of Array.from(listRef.current?.querySelectorAll('.nat-found') ?? [])) el.classList.remove('nat-found');
+    inputRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  /** ⌘F opens it, wherever the focus is in this pane — the composer holds it
+   *  nearly always, so a listener on the field alone would be the only one
+   *  that ever fired, and one on the window has to be gated on this being the
+   *  pane on screen or every mounted pane would answer at once. */
+  useEffect(() => {
+    if (!isActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== 'f') return;
+      e.preventDefault();
+      setFinding(true);
+      requestAnimationFrame(() => findRef.current?.select());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isActive]);
+
+  /**
    * How long each turn ran, keyed on the message that ends it.
    *
    * The terminal closes a turn with "Sautéed for 2m 28s", and that number is
@@ -1164,6 +1255,40 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         </button>
       )}
 
+      {/* Above the thread, beside the sticky question, for the same reason:
+          inside the scroller it would need to be sticky on a flex child that
+          also scrolls, with the list's padding showing through behind it. */}
+      {finding && (
+        <div className="nat-find">
+          <Search size={12} className="nat-find-icon" />
+          <input
+            ref={findRef}
+            className="nat-find-input"
+            value={query}
+            autoFocus
+            placeholder="Find in this conversation"
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+              // Enter walks the matches, Shift+Enter walks back — the contract
+              // every find bar has, so nothing here has to be learned.
+              else if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+              e.stopPropagation();
+            }}
+          />
+          <span className="nat-find-count">
+            {query.trim() ? (hits.length ? `${hitIdx + 1}/${hits.length}` : 'none') : ''}
+          </span>
+          <button className="nat-find-btn" title="Previous (Shift+Enter)" disabled={!hits.length} onClick={() => step(-1)}>
+            <ChevronDown size={12} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+          <button className="nat-find-btn" title="Next (Enter)" disabled={!hits.length} onClick={() => step(1)}>
+            <ChevronDown size={12} />
+          </button>
+          <button className="nat-find-btn" title="Close (Esc)" onClick={closeFind}><X size={12} /></button>
+        </div>
+      )}
+
       <div className="nat-list" ref={listRef} onScroll={onScroll} onClick={focusInput}>
         {!state && <div className="nat-empty">Reading the conversation…</div>}
         {state && !hasConversation && (
@@ -1300,6 +1425,14 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
             {confirmClear ? 'Clear?' : 'Clear'}
           </button>
 
+          <button
+            className="nat-status-clear"
+            title="Find in this conversation (⌘F)"
+            onClick={() => { setFinding(true); requestAnimationFrame(() => findRef.current?.select()); }}
+          >
+            <Search size={10} />
+          </button>
+
           {/* Which checkout this pane is standing in, and what it is about.
               Both come off the session object the sidebar already reads — no
               second poll, and no second opinion about the branch. The pane bar
@@ -1417,9 +1550,9 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
              * line start/end in a text field, which matters more here than
              * cycling the tools, and ⌘A/C/V/Z are the field's own.
              */
-            if (!(e.metaKey || e.ctrlKey) || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) {
-              e.stopPropagation();
-            }
+            const passThrough = (e.metaKey || e.ctrlKey)
+              && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'f');
+            if (!passThrough) e.stopPropagation();
           }}
         />
         {busy ? (
