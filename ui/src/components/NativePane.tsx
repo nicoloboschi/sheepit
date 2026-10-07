@@ -1403,8 +1403,23 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
               e.preventDefault();
               submit();
             }
-            // Never let a keystroke here reach the app's global shortcuts.
-            e.stopPropagation();
+            /**
+             * Never let a keystroke here reach the app's global shortcuts —
+             * **except the two that walk the flock.** ⌘↑/⌘↓ is how you move
+             * between sheep without leaving the keyboard, and the composer
+             * holds the focus for the whole time this view is open, so
+             * swallowing them here turned them off wherever the chat was on
+             * screen. In a textarea the native meaning is jump to the start
+             * or end of the field, which in a three-line box is nothing
+             * anybody reaches for.
+             *
+             * The rest of the ⌘ chords stay swallowed on purpose: ⌘←/→ is
+             * line start/end in a text field, which matters more here than
+             * cycling the tools, and ⌘A/C/V/Z are the field's own.
+             */
+            if (!(e.metaKey || e.ctrlKey) || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) {
+              e.stopPropagation();
+            }
           }}
         />
         {busy ? (
