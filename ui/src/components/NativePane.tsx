@@ -860,13 +860,44 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
    *  up. */
   const [awayFromBottom, setAwayFromBottom] = useState(false);
 
+  /**
+   * Which of your messages is above the top edge right now.
+   *
+   * A **binary search**, not a walk: the nodes are in document order so their
+   * tops increase, and a conversation can hold hundreds of them while this
+   * runs on every scroll event. Seven rect reads instead of three hundred.
+   *
+   * Rects rather than `offsetTop`, which is relative to the offset parent and
+   * would be measuring against the wrong box the moment anything between the
+   * message and the scroller grows a `position`.
+   */
+  const syncSticky = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const nodes = el.querySelectorAll<HTMLElement>('.nat-msg.nat-user');
+    const top = el.getBoundingClientRect().top;
+    let lo = 0, hi = nodes.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      // Gone past means its *bottom* is above the edge — a question half on
+      // screen is still on screen, and naming it in the bar as well would be
+      // the same sentence twice.
+      if (nodes[mid]!.getBoundingClientRect().bottom <= top + 1) { found = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    const node = found >= 0 ? nodes[found] : null;
+    const text = node?.dataset.userText ?? null;
+    setSticky(prev => (prev?.text === text ? prev : text ? { text, top: node!.offsetTop } : null));
+  }, []);
+
   const onScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     atBottom.current = near;
     setAwayFromBottom(!near);
-  }, []);
+    syncSticky();
+  }, [syncSticky]);
 
   /**
    * **Arriving at a pane puts the cursor in the box.**
@@ -1017,18 +1048,21 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   }, [state?.messages, pending.length]);
 
   /**
-   * The last thing you asked, pinned while it is off screen.
+   * **The question you are currently reading the answer to.**
    *
-   * A turn can run for minutes and produce pages of tool calls, and by the
-   * time the answer arrives the question has scrolled away — so you are
-   * reading a reply without the thing it is replying to. The bar puts it back.
+   * A turn can run for minutes and produce pages of tool calls, so by the time
+   * the answer arrives the question has scrolled away and you are reading a
+   * reply without the thing it is replying to. The bar puts it back — and as
+   * you scroll up through the history it follows, always naming the last
+   * message of yours that has gone off the top. That makes it a section
+   * header for wherever you happen to be standing, which is the whole of what
+   * it is for; pinned to the newest question it was only ever right at the
+   * bottom of the conversation.
    *
-   * **It appears only while the real message is out of view.** Showing it when
-   * the message is right there would be the same sentence twice, and a bar
-   * that is always present is one you stop reading. An IntersectionObserver
-   * answers that for free; nothing polls.
+   * It is empty at the very top, where nothing has scrolled past yet: a bar
+   * that is always present is one you stop reading.
    */
-  const [askHidden, setAskHidden] = useState(false);
+  const [sticky, setSticky] = useState<{ text: string; top: number } | null>(null);
 
   const shown = useMemo(
     () => (pending.length && state ? [...state.messages, ...pending] : state?.messages ?? []),
@@ -1153,27 +1187,10 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     [hasConversation, shown],
   );
 
-  const lastUser = useMemo(() => {
-    for (let i = shown.length - 1; i >= 0; i--) if (shown[i]!.kind === 'user') return shown[i]!;
-    return null;
-  }, [shown]);
-
-  // Watch the real message, not the scroll position: the bar is about whether
-  // that element is on screen, which is the question an observer answers
-  // exactly and a scroll handler only estimates.
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list || !lastUser) { setAskHidden(false); return; }
-    const nodes = list.querySelectorAll<HTMLElement>('.nat-msg.nat-user');
-    const el = nodes[nodes.length - 1];
-    if (!el) { setAskHidden(false); return; }
-    const io = new IntersectionObserver(
-      ([entry]) => setAskHidden(!entry?.isIntersecting),
-      { root: list, threshold: 0 },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [lastUser?.id, shown.length]);
+  // The messages moved under a stationary viewport — new rows, an expanded
+  // tool, a pane resize — so what is above the edge changed without anybody
+  // scrolling.
+  useEffect(() => { syncSticky(); }, [shown.length, syncSticky]);
 
   // Follow the tail, but only while the reader is already there — yanking
   // someone back down while they read a tool result further up is the worst
@@ -1338,19 +1355,21 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
       {/* Pinned above the thread, not inside it: inside the scroller it would
           need `position: sticky` on a flex child that also has to scroll, and
           the list's own padding would show through behind it. */}
-      {askHidden && lastUser && lastUser.kind === 'user' && (
+      {sticky && (
         <button
           className="nat-ask"
           title="Go to this message"
           onClick={() => {
+            // The one the bar is naming, not the newest — the bar is a header
+            // for where you are standing, so it has to take you back there.
             const list = listRef.current;
-            const nodes = list?.querySelectorAll<HTMLElement>('.nat-msg.nat-user');
-            const el = nodes?.[nodes.length - 1];
+            const el = [...(list?.querySelectorAll<HTMLElement>('.nat-msg.nat-user') ?? [])]
+              .find(n => n.offsetTop === sticky.top);
             if (el) { atBottom.current = false; el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
           }}
         >
           <CornerDownLeft size={11} className="nat-ask-icon" />
-          <span className="nat-ask-text">{lastUser.text}</span>
+          <span className="nat-ask-text">{sticky.text}</span>
         </button>
       )}
 
