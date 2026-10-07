@@ -95,7 +95,15 @@ const MAX_RESULT_CHARS = 20_000;
  *  does, so this is a stat per watched pane per tick and a read only when it
  *  grew — the same bargain `contextTokens` already makes in the session sweep. */
 const POLL_MS = 400;
-/** How long Claude Code's "Pasting…" needs before it will take an Enter. */
+/**
+ * How long to leave between the text and the Enter that submits it.
+ *
+ * Two things need it, and the second is why it applies to every message:
+ * "Pasting…" has to finish before Claude Code will take an Enter, and a burst
+ * that *ends* in a carriage return is read as a paste in the first place — so
+ * a return written in the same breath as the text becomes a newline in the
+ * box instead of submitting. See `send`.
+ */
 const PASTE_SETTLE_MS = 250;
 
 function clip(s: string, n = MAX_RESULT_CHARS): string {
@@ -345,21 +353,32 @@ export class NativeSession {
     // That is what it looked like from the outside: the message appeared in
     // the conversation (the local echo) and never reached the agent. Most
     // messages are one line and need none of it.
-    if (!body.includes('\n')) {
-      this.write(body);
-      this.write('\r');
-      return;
-    }
-
+    //
     // Multi-line genuinely needs the brackets, or the first newline submits a
-    // half-written prompt. So the Enter waits for the paste to be taken: the
-    // pane going quiet is the signal, with a deadline for a TUI that never
-    // settles — the same shape the resume-after-reboot path uses.
-    this.write(`\x1b[200~${body}\x1b[201~`);
-    // Claude Code shows "Pasting…" while it takes the block, and an Enter that
-    // lands during it is swallowed. This is the only place that waits, it is
-    // only reached by multi-line messages, and a quarter of a second on one of
-    // those costs nothing next to a message that silently never sends.
+    // half-written prompt.
+    this.write(body.includes('\n') ? `\x1b[200~${body}\x1b[201~` : body);
+
+    /**
+     * **The Enter is always a later write, never the same one.**
+     *
+     * Writing the text and the `\r` back to back puts both in one read on the
+     * agent's side, and Claude Code reads a burst that ends in a carriage
+     * return as a *paste* — so the return becomes a newline in the box and
+     * nothing is submitted. From the outside the message appears in the
+     * conversation (the local echo), never reaches the agent, and is found
+     * later sitting in the real TUI with a blank line after it, which is
+     * exactly how it was reported.
+     *
+     * It was only the multi-line path that waited, on the theory that the
+     * "Pasting…" state was the whole problem. It is not: measured against a
+     * real pane, eight single-line messages sent the old way left **1 stuck
+     * in the box, twice over** (2 of 16), while the same eight sent with the
+     * return a quarter-second later were **0 of 16**. "Sometimes" was the PTY
+     * happening to coalesce the two writes.
+     *
+     * A quarter of a second is invisible — the echo is already on screen —
+     * and it is the price of a message that cannot silently not send.
+     */
     setTimeout(() => this.write('\r'), PASTE_SETTLE_MS);
   }
 

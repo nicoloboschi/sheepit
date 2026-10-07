@@ -4084,11 +4084,6 @@
   cursor: pointer;
 }
 .nat-status-clear:hover { color: var(--foreground); border-color: var(--muted-foreground); }
-.nat-status-clear-armed,
-.nat-status-clear-armed:hover {
-  color: var(--destructive);
-  border-color: var(--destructive);
-}
 
 .nat-compose {
   display: flex;

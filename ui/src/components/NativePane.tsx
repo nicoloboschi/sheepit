@@ -1272,17 +1272,6 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
    * wrong, and wrong in the alarming direction. See AgentContext.
    */
   const [status, setStatus] = useState<{ used?: number; limit?: number; model?: string } | null>(null);
-  /** Clear asks twice; this is the half-pressed state. */
-  const [confirmClear, setConfirmClear] = useState(false);
-  /**
-   * **A half-pressed Clear does not wait for you in a pane you walked away
-   * from.** Every sheep in a pen stays mounted, so a pane armed and left is
-   * still armed when you come back to it — and the whole point of the second
-   * press is that it is *this* press, now. Blur alone does not cover it: a
-   * pane goes off screen without anything in it losing focus.
-   */
-  useEffect(() => { if (!isActive) setConfirmClear(false); }, [isActive]);
-
   /**
    * The branch and the reference, read off the session object rather than
    * fetched. The sidebar and the pane bar already carry both — one poll on the
@@ -1514,25 +1503,23 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
 
           {/* **Clear is here because this is the line about the context.** It
               is the one thing you do *to* a context rather than with it, and
-              the number beside it is what makes you want to. It types `/clear`
-              into the pane, like everything else this view does — the agent
-              clears its own session and the pane is renamed `-` until it
-              titles itself again.
+              the number beside it is what makes you want to. It types
+              `/clear` into the pane, like everything else this view does —
+              the agent clears its own session and the pane is renamed `-`
+              until it titles itself again.
 
-              It asks twice. A single click would throw away a conversation
-              that can be hours long, and unlike the `/clear` you type there is
-              nothing in front of it. The second click is the whole dialog. */}
+              It fires on the first click, by request. It did ask twice; the
+              argument against that is simply that `/clear` typed in the
+              terminal asks nothing either, and a button that needs two
+              presses is a button you press twice every time to pay for the
+              once you did not mean it. Nothing is destroyed that is not on
+              disk: the transcript stays, and ⌘K still finds it. */}
           <button
-            className={`nat-status-clear${confirmClear ? ' nat-status-clear-armed' : ''}`}
+            className="nat-status-clear"
             title="Clear this conversation — the agent starts fresh in the same pane"
-            onClick={() => {
-              if (!confirmClear) { setConfirmClear(true); return; }
-              setConfirmClear(false);
-              sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' });
-            }}
-            onBlur={() => setConfirmClear(false)}
+            onClick={() => sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' })}
           >
-            {confirmClear ? 'Clear?' : 'Clear'}
+            Clear
           </button>
 
           <button
