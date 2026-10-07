@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react';
-import { Bot, Copy, Check, RefreshCw, Link2, ExternalLink, FileText, Info, Gauge, MessageSquare } from 'lucide-react';
+import { Bot, Copy, Check, RefreshCw, Link2, ExternalLink, FileText, Info, Gauge, MessageSquare, CornerDownRight } from 'lucide-react';
 import { externalClick } from '../openExternal';
 import { usePoll } from '../hooks/usePoll';
 import { usePaneOnScreen } from '../store';
 import { copyText } from '../utils';
+import { jumpToMessage } from './NativePane';
 
 /**
  * What the agent in this pane has been asked to do.
@@ -142,7 +143,7 @@ function Limit({ label, rl }: { label: string; rl: AgentRateLimit }) {
   );
 }
 
-function Prompt({ p }: { p: AgentPrompt }) {
+function Prompt({ p, sessionId }: { p: AgentPrompt; sessionId: string }) {
   // A pasted essay is a legitimate prompt, so the long ones open rather than
   // being cut off for ever — but they open on a click, because a list where
   // every entry is forty lines is not a list you can scan.
@@ -152,6 +153,18 @@ function Prompt({ p }: { p: AgentPrompt }) {
     <li className={`agent-prompt${p.kind === 'command' ? ' agent-prompt-cmd' : ''}`}>
       <div className="agent-prompt-head">
         <span className="agent-prompt-time">{when(p.at)}</span>
+        {/* **This list is an index, so clicking an entry goes to it.** The
+            conversation beside this one holds the same prompt with the answer
+            under it, which is the thing you came to the list to find. It does
+            nothing in the terminal view, where there is nothing to scroll to —
+            see jumpToMessage. */}
+        <button
+          className="agent-prompt-goto"
+          title="Show this in the conversation"
+          onClick={() => jumpToMessage(sessionId, p.text)}
+        >
+          <CornerDownRight size={11} />
+        </button>
         {long && (
           <button className="agent-prompt-more" onClick={() => setOpen(o => !o)}>
             {open ? 'less' : 'more'}
@@ -264,7 +277,6 @@ export default function AgentPane({ sessionId }: { sessionId: string }) {
       <div className="agent-head">
         <Bot size={13} />
         <b>{AGENT_LABEL[info.agent ?? ''] ?? 'Agent'}</b>
-        {info.model && <span className="agent-model">{info.model}</span>}
         <button className="agent-copy" onClick={copyAll} title="Copy every prompt" disabled={!info.prompts.length}>
           {copied ? <Check size={11} /> : <Copy size={11} />}
         </button>
@@ -279,6 +291,7 @@ export default function AgentPane({ sessionId }: { sessionId: string }) {
 
       <div className="agent-facts">
         {info.title && <Row label="Title" value={info.title} />}
+        {info.model && <Row label="Model" value={info.model} />}
         {info.gitBranch && <Row label="Branch" value={info.gitBranch} />}
         {info.cwd && <Row label="Directory" value={info.cwd} />}
         {info.turns !== undefined && <Row label="Turns" value={String(info.turns)} />}
@@ -329,7 +342,7 @@ export default function AgentPane({ sessionId }: { sessionId: string }) {
         // Newest first: the reason to open this is almost always the last thing
         // you said, not the first.
         <ul className="agent-prompts">
-          {[...info.prompts].reverse().map((p, i) => <Prompt key={i} p={p} />)}
+          {[...info.prompts].reverse().map((p, i) => <Prompt key={i} p={p} sessionId={sessionId} />)}
         </ul>
       )}
     </div>

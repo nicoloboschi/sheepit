@@ -39,7 +39,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'net';
-import { platform } from 'os';
+import { homedir, platform } from 'os';
 import { join } from 'path';
 import { CdpConnection } from './cdp.js';
 import { configDir } from './paths.js';
@@ -58,6 +58,14 @@ import { configDir } from './paths.js';
  *  them. A path the daemon never reads must not be able to do that. */
 function browserProfileDir(): string {
   return join(configDir(), 'browser-profile');
+}
+
+/** Files downloaded by the built-in browser land where the user's other
+ *  browser downloads do. That makes the list this pane shows match the folder
+ *  people already know to look in, and keeps repositories free of accidental
+ *  binaries. */
+function browserDownloadsDir(): string {
+  return join(homedir(), 'Downloads');
 }
 
 /** Where a Chromium-family browser usually is, best first. `SHEEPIT_BROWSER`
@@ -267,6 +275,18 @@ export interface ViewState {
   canGoForward: boolean;
 }
 
+export interface BrowserDownload {
+  id: string;
+  name: string;
+  url: string;
+  path: string;
+  state: 'inProgress' | 'completed' | 'canceled';
+  receivedBytes: number;
+  totalBytes: number;
+  startedAt: number;
+  endedAt?: number;
+}
+
 interface View {
   id: string;
   targetId: string;
@@ -282,6 +302,7 @@ interface View {
   onState: (state: ViewState) => void;
   onActive: (active: boolean) => void;
   onCursor: (cursor: string) => void;
+  onDownload: (download: BrowserDownload) => void;
   /** Called after the TTL has closed this view's page. */
   onExpired: () => void;
   /** When the pane last said it was on screen, or was used. */
@@ -301,6 +322,7 @@ export interface OpenViewOptions {
   onState: (state: ViewState) => void;
   onActive: (active: boolean) => void;
   onCursor: (cursor: string) => void;
+  onDownload: (download: BrowserDownload) => void;
   onExpired: () => void;
 }
 
@@ -316,6 +338,9 @@ export class LiveBrowser {
   private headful = false;
   /** What pages should say they are, when the truth would get them refused. */
   private userAgent: string | null = null;
+  private downloadPath = browserDownloadsDir();
+  private downloads = new Map<string, BrowserDownload & { viewId?: string }>();
+  private frameOwners = new Map<string, string>();
   private log: (msg: string) => void;
 
   constructor(log: (msg: string) => void = () => {}) { this.log = log; }
@@ -468,9 +493,12 @@ export class LiveBrowser {
       });
     });
 
-    const restate = (_params: Record<string, unknown>, sessionId?: string) => {
+    const restate = (params: Record<string, unknown>, sessionId?: string) => {
       const view = sessionId ? this.viewBySession(sessionId) : undefined;
-      if (view) void this.pushState(view);
+      if (!view) return;
+      const frame = params.frame as { id?: string } | undefined;
+      if (frame?.id) this.frameOwners.set(frame.id, view.id);
+      void this.pushState(view);
     };
     cdp.on('Page.frameNavigated', restate);
     cdp.on('Page.loadEventFired', restate);
@@ -496,8 +524,57 @@ export class LiveBrowser {
       view?.onCursor(String(params.payload ?? 'auto'));
     });
 
-    cdp.on('__closed__', () => { this.cdp = null; this.views.clear(); });
+    cdp.on('Browser.downloadWillBegin', params => this.downloadWillBegin(params));
+    cdp.on('Browser.downloadProgress', params => this.downloadProgress(params));
+    try {
+      mkdirSync(this.downloadPath, { recursive: true });
+      await cdp.send('Browser.setDownloadBehavior', {
+        behavior: 'allow',
+        downloadPath: this.downloadPath,
+        eventsEnabled: true,
+      });
+    } catch (err) {
+      this.log(`live browser: downloads are not visible (${err instanceof Error ? err.message : String(err)})`);
+    }
+
+    cdp.on('__closed__', () => { this.cdp = null; this.views.clear(); this.downloads.clear(); this.frameOwners.clear(); });
     return cdp;
+  }
+
+  private downloadWillBegin(params: Record<string, unknown>): void {
+    const guid = String(params.guid ?? '');
+    if (!guid) return;
+    const frameId = String(params.frameId ?? '');
+    const ownedView = frameId ? this.views.get(this.frameOwners.get(frameId) ?? '') : undefined;
+    const view = ownedView ?? [...this.views.values()].find(v => v.mainFrameId === frameId);
+    const name = String(params.suggestedFilename ?? 'download');
+    const item: BrowserDownload & { viewId?: string } = {
+      id: guid,
+      name,
+      url: String(params.url ?? ''),
+      path: join(this.downloadPath, name),
+      state: 'inProgress',
+      receivedBytes: 0,
+      totalBytes: 0,
+      startedAt: Date.now(),
+      viewId: view?.id,
+    };
+    this.downloads.set(guid, item);
+    view?.onDownload(item);
+  }
+
+  private downloadProgress(params: Record<string, unknown>): void {
+    const guid = String(params.guid ?? '');
+    const item = this.downloads.get(guid);
+    if (!item) return;
+    item.receivedBytes = Number(params.receivedBytes ?? item.receivedBytes) || 0;
+    item.totalBytes = Number(params.totalBytes ?? item.totalBytes) || 0;
+    if (typeof params.filePath === 'string' && params.filePath) item.path = params.filePath;
+    const state = String(params.state ?? 'inProgress');
+    item.state = state === 'completed' ? 'completed' : state === 'canceled' ? 'canceled' : 'inProgress';
+    if (item.state !== 'inProgress') item.endedAt = Date.now();
+    const view = item.viewId ? this.views.get(item.viewId) : undefined;
+    view?.onDownload(item);
   }
 
   private viewBySession(sessionId: string): View | undefined {
@@ -572,7 +649,7 @@ export class LiveBrowser {
       width: Math.max(200, Math.round(opts.width)),
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
-      onCursor: opts.onCursor, onExpired: opts.onExpired, lastSeen: Date.now(),
+      onCursor: opts.onCursor, onDownload: opts.onDownload, onExpired: opts.onExpired, lastSeen: Date.now(),
       mainFrameId: null, loading: false,
       casting: false, lastUrl: '', lastTitle: '',
     };
@@ -596,6 +673,7 @@ export class LiveBrowser {
     try {
       const tree = await cdp.send<{ frameTree: { frame: { id: string } } }>('Page.getFrameTree', {}, sessionId);
       view.mainFrameId = tree.frameTree.frame.id;
+      this.frameOwners.set(view.mainFrameId, view.id);
     } catch { /* loading stays a guess rather than a lie */ }
     await this.applyMetrics(view, opts.scale);
     if (opts.url) await cdp.send('Page.navigate', { url: opts.url }, sessionId).catch(() => {});
@@ -795,6 +873,7 @@ export class LiveBrowser {
     const view = this.views.get(id);
     if (!view) return;
     this.views.delete(id);
+    for (const [frameId, viewId] of this.frameOwners) if (viewId === id) this.frameOwners.delete(frameId);
     try { await this.cdp?.send('Target.closeTarget', { targetId: view.targetId }); } catch { /* gone */ }
   }
 

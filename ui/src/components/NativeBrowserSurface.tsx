@@ -8,7 +8,7 @@
  * telling the shell where the pane is, and hiding the view when it is not.
  */
 import { useEffect, useRef, useState } from 'react';
-import type { LiveBrowserCommands, LiveBrowserState } from './LiveBrowserSurface';
+import type { BrowserDownload, LiveBrowserCommands, LiveBrowserState } from './LiveBrowserSurface';
 import { perf } from '../perf';
 
 interface DesktopBrowser {
@@ -25,6 +25,7 @@ interface DesktopBrowser {
   stopFind(id: string): void;
   onFindOpen(cb: (id: string) => void): () => void;
   onFindResult(cb: (id: string, result: FindResult) => void): () => void;
+  onDownload(cb: (id: string, download: BrowserDownload) => void): () => void;
   onState(cb: (id: string, state: Pick<LiveBrowserState, 'url' | 'title' | 'loading' | 'canGoBack' | 'canGoForward' | 'error'>) => void): () => void;
 }
 
@@ -63,11 +64,12 @@ function covered(el: HTMLElement, r: DOMRect): boolean {
   return false;
 }
 
-export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onState, commands, onFindOpen, onFindResult }: {
+export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onState, onDownload, commands, onFindOpen, onFindResult }: {
   url?: string | null;
   navSeq?: number;
   zoom?: number;
   onState: (state: LiveBrowserState) => void;
+  onDownload?: (download: BrowserDownload) => void;
   commands: { current: LiveBrowserCommands | null };
   /** ⌘F pressed inside the page. The bar cannot be drawn over the view — a
    *  native view is above the whole page — so the pane owns it. */
@@ -269,12 +271,13 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
     };
   }, [b, id]);
 
-  const findRef = useRef({ open: onFindOpen, result: onFindResult });
-  findRef.current = { open: onFindOpen, result: onFindResult };
+  const findRef = useRef({ open: onFindOpen, result: onFindResult, download: onDownload });
+  findRef.current = { open: onFindOpen, result: onFindResult, download: onDownload };
   useEffect(() => {
     const offOpen = b.onFindOpen(viewId => { if (viewId === id) findRef.current.open?.(); });
     const offResult = b.onFindResult((viewId, r) => { if (viewId === id) findRef.current.result?.(r); });
-    return () => { offOpen(); offResult(); };
+    const offDownload = b.onDownload((viewId, download) => { if (viewId === id) findRef.current.download?.(download); });
+    return () => { offOpen(); offResult(); offDownload(); };
   }, [b, id]);
 
   useEffect(() => {

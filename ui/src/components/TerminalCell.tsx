@@ -466,15 +466,26 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    *
    *  The terminal stays mounted underneath (see the style below): switching
    *  back is instant, the scrollback is intact, and the PTY never knew. */
-  const [nativeOn, setNativeOn] = useState(() => !tile && readPaneMode() === 'native');
+  const [paneMode, setPaneMode] = useState(readPaneMode);
   const toggleNative = useCallback(() => {
-    setNativeOn(on => { writePaneMode(!on ? 'native' : 'terminal'); return !on; });
+    setPaneMode(m => { const next = m === 'native' ? 'terminal' : 'native'; writePaneMode(next); return next; });
   }, []);
   // Another pane in this window just flipped it — follow, so the app is in one
   // mode rather than in as many modes as it has mounted panes.
-  useEffect(() => subscribePaneMode(mode => { if (!tile) setNativeOn(mode === 'native'); }), [tile]);
+  useEffect(() => subscribePaneMode(setPaneMode), []);
   /** Only a Claude Code pane is offered the native view; see the pane bar. */
   const isClaudeCode = useStore(s => !!s.sessionMap[sessionId]?.isClaudeCode);
+  /** **Whether this pane CAN show the conversation, not just whether the
+   *  device prefers it.** The preference is global — it is the one setting
+   *  that makes switching panes keep the view — but the view itself only works
+   *  where there is a Claude Code transcript to read. Deriving it rather than
+   *  storing it is what keeps the two from disagreeing: stored, a shell pane
+   *  showed the chat *and* was not offered the button that turns it off, which
+   *  is a pane with no terminal and no way back to one.
+   *
+   *  Derived also means it follows the pane: an agent started in a shell a
+   *  minute from now flips this on by itself, and a `/exit` flips it back. */
+  const nativeOn = !tile && isClaudeCode && paneMode === 'native';
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -1892,7 +1903,20 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
       />
       {nativeOn && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: 'flex' }}>
-          <NativePane sessionId={sessionId} onOpenTerminal={() => setNativeOn(false)} />
+          <NativePane
+            sessionId={sessionId}
+            // The same link policy the terminal uses — see handleWebLink.
+            onOpenLink={handleWebLink}
+            // Only the pane on screen takes the keyboard; the rest stay mounted.
+            isActive={isActive}
+            // A path clicked here opens the same Files panel the terminal
+            // opens — see handleFileLink.
+            onOpenFile={handleFileLink}
+            // The card's "answer this in the terminal" button. It flips the
+            // whole device back, which is right: if a dialog needs the TUI,
+            // the next pane you open probably does too.
+            onOpenTerminal={() => { writePaneMode('terminal'); setPaneMode('terminal'); }}
+          />
         </div>
       )}
       {imgPasteBusy && (

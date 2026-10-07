@@ -780,39 +780,60 @@
 /* Browser chrome is chrome: neutral graphite like the bars above it, never the
    olive the rest of the pane is tinted with. */
 .preview-bar {
-  display: flex; align-items: center; gap: 3px;
-  padding: 5px 7px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--chrome-line);
   background: var(--chrome);
   flex-shrink: 0;
 }
 .preview-btn {
+  position: relative;
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
-  border: none; background: none; cursor: pointer;
+  width: 24px; height: 24px; border-radius: 5px; flex-shrink: 0;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--background) 44%, transparent);
+  cursor: pointer;
   color: var(--muted-foreground);
-  transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.08s ease;
 }
-.preview-btn:hover { background: var(--accent); color: var(--foreground); }
-.preview-btn:active:not(:disabled) { transform: scale(0.9); }
+.preview-btn:hover {
+  background: var(--accent);
+  border-color: var(--chrome-line);
+  color: var(--foreground);
+}
+.preview-btn:active:not(:disabled) { transform: translateY(1px); }
 .preview-btn:disabled { opacity: 0.35; cursor: default; }
+.preview-btn-active, .preview-btn-active:hover {
+  background: color-mix(in srgb, var(--primary) 14%, var(--accent));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--chrome-line));
+  color: var(--foreground);
+}
 /* The screenshot's path is on the clipboard — the one moment this row of
    controls has something to report. */
 .preview-btn-done, .preview-btn-done:hover { color: var(--success); }
-/* A pill, so the address reads as the one field on a row of buttons. It sits
-   *in* the bar rather than on it — inset, darker than the chrome — which is
-   what tells you it takes typing and the things beside it take clicks. */
+.preview-download-badge {
+  position: absolute; transform: translate(8px, -8px);
+  min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--warning); color: #0b0d0a;
+  font-size: 9px; font-weight: 800; line-height: 1;
+}
+/* A squared field, matching sheepit's own chrome controls rather than a
+   browser-style pill. It sits inset in the bar: darker than the chrome, with a
+   quiet border until it is focused. */
 .preview-address {
   flex: 1; min-width: 0;
   margin: 0 4px;
-  background: var(--background); border: 1px solid transparent;
+  height: 24px;
+  background: var(--background);
+  border: 1px solid var(--chrome-line);
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.18);
-  border-radius: 999px; padding: 3px 10px;
+  border-radius: 5px; padding: 3px 9px;
   font-family: var(--font-mono); font-size: 11px;
   color: var(--foreground); outline: none;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
-.preview-address:hover { border-color: var(--chrome-line); }
+.preview-address:hover { background: color-mix(in srgb, var(--background) 82%, var(--accent)); }
 .preview-address:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
@@ -821,14 +842,15 @@
    native view above the whole window, so nothing can be drawn on top of it. */
 .preview-find {
   display: flex; align-items: center; gap: 4px;
-  padding: 4px 7px; flex-shrink: 0;
+  padding: 5px 8px; flex-shrink: 0;
   border-bottom: 1px solid var(--chrome-line);
   background: var(--chrome);
 }
 .preview-find-input {
   flex: 1; min-width: 0;
-  background: var(--background); border: 1px solid transparent;
-  border-radius: 999px; padding: 3px 10px;
+  height: 24px;
+  background: var(--background); border: 1px solid var(--chrome-line);
+  border-radius: 5px; padding: 3px 9px;
   font-size: 11px; color: var(--foreground); outline: none;
 }
 .preview-find-input:focus { border-color: var(--primary); }
@@ -838,6 +860,50 @@
   flex-shrink: 0; padding: 0 2px;
   font-size: 10px; color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
+}
+
+.preview-downloads {
+  flex-shrink: 0;
+  max-height: 190px; overflow: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome);
+}
+.preview-downloads-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+}
+.preview-download-empty {
+  padding: 6px 2px;
+  font-size: 11px; color: var(--muted-foreground);
+}
+.preview-download {
+  display: flex; align-items: center; gap: 7px;
+  min-height: 34px; padding: 5px 4px; border-radius: 8px;
+  color: var(--foreground);
+}
+.preview-download:hover { background: color-mix(in srgb, var(--accent) 72%, transparent); }
+.preview-download-icon { flex-shrink: 0; color: var(--muted-foreground); }
+.preview-download-completed .preview-download-icon { color: var(--success); }
+.preview-download-canceled .preview-download-icon { color: var(--destructive); }
+.preview-download-main { min-width: 0; flex: 1; }
+.preview-download-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600;
+}
+.preview-download-detail {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 1px; font-size: 10px; color: var(--muted-foreground);
+}
+.preview-download-progress {
+  height: 3px; margin-top: 4px; overflow: hidden; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
+}
+.preview-download-progress > span {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--primary-gradient);
 }
 
 .preview-body { position: relative; flex: 1; min-height: 0; background: var(--background); }
@@ -2924,11 +2990,6 @@
   color: var(--foreground);
 }
 .agent-head b { font-size: 12px; font-weight: 600; }
-.agent-model {
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--muted-foreground);
-  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
-}
 .agent-copy {
   margin-left: auto; display: flex; align-items: center;
   background: none; border: none; cursor: pointer; padding: 3px;
@@ -3124,13 +3185,20 @@
    The terminal next to it is 11px of monospace precisely because it is
    output; this is the opposite thing and should not look like it. */
 .nat-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
   background: var(--card);
-  font-family: var(--font-sans);
+  /* **The whole view is set in the font chosen for the terminal**, not just
+     the code in it. The two halves of a pane are the same work, and a view
+     that reads in a different face from the terminal beside it is a seam you
+     notice without being able to name. Prose was carved out at first, on the
+     grounds that an answer reads like a document; that was a judgement nobody
+     asked for, and the one setting that exists should win. */
+  font-family: var(--nat-code-family);
   font-size: var(--nat-size);
 
   /* **One scale for the whole view**, so "make it bigger" is one number rather
@@ -3140,11 +3208,30 @@
      It was a flat 13px, which came out of a condensing pass that tightened the
      *size* along with the vertical rhythm — and only the rhythm needed it. The
      spacing stays tight; the type goes up. */
-  --nat-size: 14.5px;
+  /* Set per pane from the conversation's own size setting (Appearance →
+     Conversation). The literal here is only what a pane renders at before the
+     store has answered. */
+  --nat-base: 11px;
+  --nat-size: var(--nat-base);
   /* The mono inside prose — tool rows, code spans, the receipt line. It sits
      optically smaller than the sans at the same number, so it is not simply
      --nat-size. */
-  --nat-mono: 12px;
+  --nat-mono: calc(var(--nat-base) - 1.5px);
+  /* The face for anything that is code. Set per pane from the font chosen in
+     Appearance — the same store value the terminal reads — so the two halves
+     of a pane agree. Falls back to the app's mono stack when no pane has set
+     it, which is what the pane bar and the slash menu pick up. */
+  --nat-code-family: var(--font-mono);
+
+  /* **The shapes are the app's, not this view's own.** sheepit has a small
+     vocabulary already: a pane card is 7px on `--accent` with a 7% white
+     hairline, an input is 6px on `--background`, a chip is a pill, and the
+     brand marks an edge with a 2–3px rail rather than a fill. Everything below
+     is spelled with those, so the conversation reads as another surface of the
+     app instead of a chat widget that landed in it. */
+  --nat-card-radius: 7px;
+  --nat-input-radius: 6px;
+  --nat-hairline: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 /* A phone is held at arm's length and has no pointer to hover for detail, so
@@ -3153,8 +3240,110 @@
    iOS and some Android keyboards scale the whole viewport and the pane has to
    be pinched back. */
 @media (max-width: 767px) {
-  .nat-pane { --nat-size: 16px; --nat-mono: 13.5px; }
+  /* A size UP from whatever was chosen, not a fixed one — the setting is
+     still the setting; a phone just needs a little more of it. */
+  .nat-pane { --nat-size: calc(var(--nat-base) + 1.5px); --nat-mono: calc(var(--nat-base) - 0.5px); }
 }
+/* A slash command you ran. Shown as the command and its argument, never as
+   its expansion — a skill's body is thousands of words the agent received and
+   you did not write, and as a user bubble it read as you shouting a config
+   file at it. One quiet line, because it is a thing you did rather than a
+   thing you said. */
+.nat-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  align-self: flex-end;
+  max-width: min(85%, 70ch);
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  font-size: calc(var(--nat-size) * 0.88);
+  min-width: 0;
+}
+.nat-cmd-name { color: var(--primary); font-weight: 600; flex-shrink: 0; }
+.nat-cmd-args {
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+
+/* **The last thing you asked, while it is off screen.**
+   A turn can run for minutes and fill the pane with tool calls, so by the time
+   the answer lands the question has scrolled away and you are reading a reply
+   without the thing it replies to. Carries the user bubble's green so it is
+   recognisably *yours* and not a status line, clamped to two lines because it
+   is a reminder rather than the message, and it is a button: clicking it goes
+   back to the real one. */
+.nat-ask {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  flex-shrink: 0;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  border: none;
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome);
+  /* The brand marks it with a rail, the way the selected pen is marked in the
+     sidebar — not with a tint, which would make it a third kind of surface. */
+  box-shadow: inset 3px 0 0 var(--primary);
+  padding-left: 15px;
+  color: var(--foreground);
+  font: inherit;
+  font-size: calc(var(--nat-size) * 0.92);
+  line-height: 1.45;
+  cursor: pointer;
+}
+.nat-ask:hover { background: color-mix(in srgb, #ffffff 4%, var(--chrome)); }
+.nat-ask-icon { flex-shrink: 0; margin-top: 3px; color: var(--primary); opacity: 0.9; }
+.nat-ask-text {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* **Every assistant message starts with a mark.** Without one, three replies
+   in a row read as one long block — which is what the terminal avoids by
+   printing a ● at the head of each turn. The gutter is the same width the tool
+   rows' rail sits in, so the marks line up down the left edge and the column
+   of machine activity is one column.
+
+   The dot is brand green for an ordinary reply; the rest of the palette is
+   left for things that mean something. */
+.nat-assistant {
+  position: relative;
+  padding-left: 15px;
+}
+.nat-assistant::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 0.62em;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+/* When it was said — the terminal's "done 10:23 AM", kept quiet and at the
+   end so it never competes with the answer. */
+.nat-when {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.74em;
+  color: var(--muted-foreground);
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+/* A reply is a bigger break than a tool call, so it gets more air above it —
+   the gap is what says "this is a new thing", and an even rhythm said nothing. */
+.nat-list > .nat-assistant { margin-top: 5px; }
+.nat-list > .nat-msg.nat-user { margin-top: 9px; }
+
 .nat-list {
   flex: 1;
   min-height: 0;
@@ -3173,6 +3362,51 @@
    tool call in a long conversation was on screen as a hairline, which read as
    a horizontal rule, which read as "the tools are not rendered at all". */
 .nat-list > * { flex-shrink: 0; }
+/* The empty pen. Centred, quiet, and made of the app's own mark rather than a
+   fetched image — nothing to load, and correct on a LAN with no route out. */
+.nat-splash {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 24px;
+  max-width: 46ch;
+}
+/* It breathes rather than sits: the one animation in an otherwise still
+   screen, slow enough to read as alive and not as something loading. */
+.nat-splash-mark {
+  opacity: 0.85;
+  margin-bottom: 10px;
+  animation: nat-splash-breathe 5.5s ease-in-out infinite;
+}
+@keyframes nat-splash-breathe {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.85; }
+  50%      { transform: translateY(-3px) scale(1.02); opacity: 1; }
+}
+.nat-splash-line {
+  font-size: calc(var(--nat-size) * 1.45);
+  font-weight: 650;
+  color: var(--foreground);
+  letter-spacing: -0.01em;
+}
+.nat-splash-where {
+  font-size: calc(var(--nat-size) * 0.92);
+  color: var(--primary);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+.nat-splash-hint {
+  margin-top: 8px;
+  font-size: calc(var(--nat-size) * 0.88);
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nat-splash-mark { animation: none; }
+}
+
 .nat-empty {
   margin: auto;
   color: var(--muted-foreground);
@@ -3193,11 +3427,70 @@
   padding: 7px 11px;
   font-size: var(--nat-size);
   line-height: 1.5;
-  border-radius: 12px 12px 3px 12px;
-  background: color-mix(in srgb, var(--primary) 16%, var(--accent));
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  /* A card with one corner notched toward the composer it came from — the
+     same 7px the sidebar's pane cards use, so it is recognisably the same
+     family of object rather than a messaging-app bubble. */
+  border-radius: var(--nat-card-radius) var(--nat-card-radius) 3px var(--nat-card-radius);
+  background: color-mix(in srgb, var(--primary) 14%, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, transparent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  text-align: left;
+}
+/* **Three lines, then it opens on click.** A prompt can be a paragraph or a
+   pasted essay, and a long one pushes the answer you are looking for off the
+   screen — while the first line is almost always enough to recognise which
+   question this was. Clamped rather than truncated with an ellipsis in the
+   text, so opening it costs nothing and loses nothing. */
+.nat-bubble-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  /* **It has to LOOK cut off.** A clean third line reads as the whole message,
+     so a word underneath was the only clue — something you have to notice
+     rather than see. The last line fades out instead, which is the shape
+     "there is more" has everywhere. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+}
+.nat-bubble-toggleable { cursor: pointer; }
+/* A sibling of the clamped text, never inside it — in the box it was clamped
+   away along with the line it exists to advertise. */
+.nat-bubble-toggle {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--primary) 50%, transparent);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.nat-bubble-toggle:hover { background: color-mix(in srgb, var(--primary) 30%, transparent); }
+
+/* The message the Agent tab just sent you to. A flash rather than a
+   persistent mark: it answers "which one" and then gets out of the way. */
+/* The Agent tab's "take me there" handle. Quiet until hovered: the list is
+   scanned far more often than it is jumped from. */
+.agent-prompt-goto {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 18px;
+  border: none; background: none; padding: 0;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  cursor: pointer;
+}
+.agent-prompt:hover .agent-prompt-goto { opacity: 1; color: var(--primary); }
+
+.nat-jumped { animation: nat-jump-flash 1.6s ease-out; }
+@keyframes nat-jump-flash {
+  0%, 35% { background: color-mix(in srgb, var(--primary) 34%, var(--accent)); }
+  100%    { background: color-mix(in srgb, var(--primary) 16%, var(--accent)); }
 }
 .nat-text {
   white-space: pre-wrap;
@@ -3250,7 +3543,7 @@
   padding: 1px 0 1px 7px;
   background: none; border: none;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
+  font-family: var(--nat-code-family);
   font-size: var(--nat-mono);
   line-height: 1.55;
   text-align: left;
@@ -3260,7 +3553,13 @@
 .nat-tool-head:hover { color: var(--foreground); }
 .nat-tool-chev { flex-shrink: 0; transition: transform 0.12s; }
 .nat-tool-chev-open { transform: rotate(90deg); }
-.nat-tool-name { color: var(--foreground); font-weight: 600; flex-shrink: 0; }
+/* The tool's name is the verb of the line — "Bash", "Read", "Edit" — and the
+   rest is its object. Brand green because this is the machine working, which
+   is what green means everywhere else here; terracotta when it failed, which
+   is the one tool row worth finding in a scroll. */
+.nat-tool-name { color: var(--primary); font-weight: 600; flex-shrink: 0; }
+.nat-tool-error .nat-tool-name { color: var(--destructive); }
+.nat-tool-error .nat-tool-sum { color: color-mix(in srgb, var(--destructive) 70%, var(--muted-foreground)); }
 /* The subject of the call, clipped rather than wrapped: a two-line head would
    make a list of twenty calls as tall as the answer they produced. */
 .nat-tool-sum {
@@ -3275,11 +3574,17 @@
   border-radius: 50%;
   animation: pane-spin 0.85s linear infinite;
 }
-.nat-tool-body { margin-left: 7px; border-left: 1px solid var(--border); }
+.nat-tool-body {
+  margin: 3px 0 2px 9px;
+  border: var(--nat-hairline);
+  border-radius: var(--nat-card-radius);
+  background: var(--accent);
+  overflow: hidden;
+}
 .nat-pre {
   margin: 0;
   padding: 6px 9px;
-  font-family: var(--font-mono);
+  font-family: var(--nat-code-family);
   font-size: var(--nat-mono);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -3309,7 +3614,7 @@
 .nat-needs-tui {
   display: flex; align-items: flex-start; gap: 9px;
   padding: 11px 13px;
-  border-radius: 9px;
+  border-radius: var(--nat-card-radius);
   border: 1px solid color-mix(in srgb, var(--bleating) 55%, transparent);
   background: color-mix(in srgb, var(--bleating) 12%, var(--accent));
   color: var(--foreground);
@@ -3321,7 +3626,7 @@
 .nat-needs-tui-note { font-size: 11px; opacity: 0.75; margin-top: 4px; }
 .nat-needs-tui-btn {
   flex-shrink: 0; align-self: center;
-  padding: 5px 10px; border-radius: 7px;
+  padding: 5px 10px; border-radius: var(--nat-input-radius);
   border: 1px solid color-mix(in srgb, var(--bleating) 55%, transparent);
   background: none; color: var(--bleating);
   font-size: 11px; font-weight: 600; cursor: pointer;
@@ -3335,7 +3640,7 @@
    because that is what it is: the pane is stopped, waiting on a person. */
 .nat-choice {
   border: 1px solid color-mix(in srgb, var(--bleating) 50%, transparent);
-  border-radius: 9px;
+  border-radius: var(--nat-card-radius);
   background: color-mix(in srgb, var(--bleating) 9%, var(--accent));
   padding: 10px 12px;
   display: flex; flex-direction: column; gap: 9px;
@@ -3360,7 +3665,7 @@
 .nat-opt {
   display: flex; flex-direction: column; gap: 2px;
   padding: 7px 10px;
-  border-radius: 7px;
+  border-radius: var(--nat-input-radius);
   border: 1px solid var(--border);
   background: var(--card);
   font-size: calc(var(--nat-size) * 0.94);
@@ -3397,7 +3702,13 @@
  * read even though nothing was wrong with it. 74ch caps it without ever
  * narrowing a pane that is already narrower than that. */
 .nat-text.md-preview {
-  max-width: 74ch;
+  /* 74ch was a reading measure borrowed from body copy on a page, and it is
+     too tight for this: an answer here is half prose and half code, paths and
+     identifiers, which do not wrap like prose and look cramped when they are
+     forced to. At 92ch a wide pane stops showing a column of text with a
+     third of the pane empty beside it, and a narrow one is unaffected because
+     it was never that wide. */
+  max-width: 92ch;
   font-size: var(--nat-size);
   line-height: 1.55;
   /* **Markdown brings its own line breaks, so the source's must go.**
@@ -3409,6 +3720,77 @@
      view being loose when it was the whitespace rule leaking across. */
   white-space: normal;
 }
+
+/* ── Colour, so the structure of an answer is visible before it is read ────
+   The base `.md-preview` is tuned for somebody else's README on a page, where
+   near-uniform grey is right. A conversation is scanned: you look for the
+   heading, the bolded claim, the file path, the thing that went wrong. All of
+   that was the same colour, so finding it meant reading everything.
+
+   Palette discipline from CLAUDE.md still applies — green is the brand and
+   "healthy", amber warns, terracotta is an error. Nothing here invents a hue;
+   it spends the ones that already mean something. */
+
+/* Bold is the writer saying "this is the sentence". It was body colour at a
+   heavier weight, which at 14.5px is almost invisible — so it carries the
+   foreground's brightest value, where the prose around it sits slightly back. */
+.nat-text.md-preview { color: #c6ccbe; }
+.nat-text.md-preview strong { color: #f2f5ee; font-weight: 650; }
+.nat-text.md-preview em { color: #dfe4d7; }
+
+/* A heading inside an answer is a section of an argument, and the brand green
+   is what sheepit uses for "this is a thing, here". */
+.nat-text.md-preview h1,
+.nat-text.md-preview h2,
+.nat-text.md-preview h3,
+.nat-text.md-preview h4 { color: var(--primary); }
+
+/* An identifier in prose — a path, a symbol, a flag. Terracotta is already
+   `.md-preview`'s choice for it and it is the right one: it is the only thing
+   in a sentence that is not English, and it should not be mistaken for one. */
+.nat-text.md-preview code,
+.nat-text.md-preview pre,
+.nat-text.md-preview pre code { font-family: var(--nat-code-family); }
+/* **In a monospace body, an inline code pill is double-marking.** The base
+   `.md-preview` gives it a background and padding because there it sits inside
+   proportional prose and has to be told apart from it. Here the whole answer is
+   already set in the terminal's face, so the box adds nothing but texture — a
+   paragraph with six identifiers in it came out looking like a ransom note.
+   The colour alone does the whole job. */
+.nat-text.md-preview code {
+  background: none;
+  padding: 0;
+  color: #e8a893;
+  font-size: 1em;
+}
+.nat-text.md-preview pre code { background: none; color: #cdd3c6; }
+.nat-text.md-preview pre {
+  background: var(--background);
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+}
+
+/* A quote is somebody else talking — an error text, a spec, a reply. */
+.nat-text.md-preview blockquote {
+  border-left: 2px solid color-mix(in srgb, var(--primary) 50%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* A table is the one block here that is read by eye rather than by line, so
+   it gets the most help: a brand-tinted header, hairline rules, and zebra
+   rows that stop a wide row being traced with a finger. */
+.nat-text.md-preview table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.nat-text.md-preview th {
+  background: color-mix(in srgb, var(--primary) 14%, var(--accent));
+  color: #f2f5ee;
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--border));
+}
+.nat-text.md-preview td { border-color: var(--border); }
+.nat-text.md-preview tbody tr:nth-child(even) { background: color-mix(in srgb, #ffffff 3%, transparent); }
+.nat-text.md-preview a { color: var(--primary); }
+/* A bullet should be a mark, not a letter competing with the first word. */
+.nat-text.md-preview li::marker { color: color-mix(in srgb, var(--primary) 70%, transparent); }
+.nat-text.md-preview hr { border-top-color: color-mix(in srgb, var(--primary) 22%, var(--border)); }
+
 .nat-text.md-preview > :first-child { margin-top: 0; }
 .nat-text.md-preview > :last-child { margin-bottom: 0; }
 .nat-text.md-preview p { margin: 0.4em 0; }
@@ -3460,12 +3842,117 @@
   color: var(--muted-foreground);
 }
 
+/* Back to the tail. A round handle floating over the end of the list — the
+   one place in this view that is not a card, because it is a control rather
+   than content. Brand gradient, like every other filled button in the app. */
+/* The scroller and anything floating over it. Exists so the "back to the
+   tail" handle is positioned against the LIST rather than the pane, where it
+   would sit on top of the composer. */
+.nat-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nat-to-bottom {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3;
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary-gradient);
+  color: var(--primary-foreground);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+.nat-to-bottom:hover { background: var(--primary-gradient-hover); }
+/* A dot when the agent is still working, so the button says "there is more
+   coming" and not just "you are not at the bottom". */
+.nat-to-bottom-live {
+  position: absolute; top: -1px; right: -1px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--warning);
+  border: 2px solid var(--chrome);
+}
+
+/* Images waiting to go with the next message. A strip above the composer,
+   because that is where what-you-are-about-to-send belongs, and thumbnails
+   rather than paths — a path says nothing about which screenshot it is. */
+.nat-attach {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 10px 0;
+}
+.nat-attach-item {
+  position: relative;
+  width: 54px; height: 54px;
+  border-radius: var(--nat-input-radius);
+  border: var(--nat-hairline);
+  background: var(--accent);
+  overflow: hidden;
+  display: grid; place-items: center;
+}
+.nat-attach-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nat-attach-x {
+  position: absolute; top: 2px; right: 2px;
+  display: grid; place-items: center;
+  width: 17px; height: 17px;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff; cursor: pointer; padding: 0;
+}
+.nat-attach-busy { border-style: dashed; }
+
+/* The composer is **chrome** — the same neutral graphite as the pane bar above
+   it and the sidebar beside it, with the same hairline. It is furniture around
+   the conversation, not part of it; see "Chrome is not green" in CLAUDE.md. */
+/* A path in the output. Claude Code colours these in the terminal and sheepit
+   makes them clickable there; here they were plain text, so the one thing you
+   most often want to open was the one thing you could not. Amber, because it
+   is the palette's "look at this" and the terracotta of inline code already
+   means "this is not English". */
+.nat-path {
+  color: var(--warning);
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px dotted color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.nat-path:hover {
+  color: var(--foreground);
+  border-bottom-color: var(--warning);
+}
+/* A backticked path keeps the code span's shape and takes the path's colour. */
+.nat-text.md-preview code.nat-path-code { color: var(--warning); }
+
+/* How full the context is and which model — the two facts the TUI keeps on
+   screen, on the composer's top edge where they are read before asking for
+   something big. Chrome, because it is furniture. */
+.nat-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 3px 12px;
+  background: var(--chrome);
+  border-top: 1px solid var(--chrome-line);
+  font-size: calc(var(--nat-size) * 0.78);
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.nat-status-model { color: var(--primary); opacity: 0.9; }
+.nat-status-ctx { margin-left: auto; }
+
 .nat-compose {
   display: flex;
   align-items: flex-end;
   gap: 7px;
   padding: 8px 10px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--chrome-line);
   background: var(--chrome);
 }
 .nat-input {
@@ -3473,11 +3960,11 @@
   min-width: 0;
   resize: none;
   padding: 7px 10px;
-  border-radius: 9px;
+  border-radius: var(--nat-input-radius);
   border: 1px solid var(--border);
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans);
+  font-family: inherit;
   font-size: var(--nat-size);
   line-height: 1.5;
   outline: none;
@@ -3489,7 +3976,7 @@
   display: grid; place-items: center;
   /* A 44px target on a phone — below that it is a button you aim at twice. */
   width: 34px; height: 34px;
-  border-radius: 9px;
+  border-radius: var(--nat-input-radius);
   border: none;
   background: var(--primary-gradient);
   color: var(--primary-foreground);
@@ -3528,7 +4015,7 @@
 .nat-slash-on { background: color-mix(in srgb, var(--primary) 16%, transparent); }
 .nat-slash-name {
   flex-shrink: 0;
-  font-family: var(--font-mono);
+  font-family: var(--nat-code-family);
   font-weight: 600;
   color: var(--foreground);
 }

@@ -164,6 +164,8 @@ export interface StoreState {
   requestBrowserUrl: (sessionId: string, url: string) => void;
   /** Global terminal font size — applies to every pane in every workspace. */
   fontSize: number;
+  /** The conversation view's size — see DEFAULT_NATIVE_FONT_SIZE. */
+  nativeFontSize: number;
   /** Global terminal font stack — applies to every pane in every workspace.
    *  A CSS font-family value, not a single family: everything but the bundled
    *  JetBrains Mono depends on the viewing device having the font installed,
@@ -279,12 +281,29 @@ export interface StoreState {
   setTerminalFontFamily: (family: string) => void;
   adjustFontSize: (delta: number) => void;
   resetFontSize: () => void;
+  /** The conversation view's own size. Separate from the terminal's because
+   *  they are different kinds of reading — see nativeFontSize below. */
+  setNativeFontSize: (size: number) => void;
   setTheme: (theme: AppTheme) => void;
 }
 
 export const DEFAULT_FONT_SIZE = (): number => 12;
 export const MIN_FONT_SIZE = 8;
 export const MAX_FONT_SIZE = 32;
+
+/**
+ * The conversation view's size, which is **not** the terminal's.
+ *
+ * They were one setting, and that was wrong in both directions: a terminal is
+ * read at a glance in dense columns and people run it small — 10px is normal —
+ * while the conversation is prose that is actually read, and 10px prose is a
+ * squint. Sharing the number meant picking a size that was wrong for one of
+ * them, and applying the terminal's font made that obvious: the same 10px that
+ * is right for output came out oversized against it in a 92-character column.
+ */
+export const DEFAULT_NATIVE_FONT_SIZE = (): number => 11;
+export const MIN_NATIVE_FONT_SIZE = 9;
+export const MAX_NATIVE_FONT_SIZE = 24;
 
 /** Ids the active-workspace pointer may hold that are not pens. */
 const VIRTUAL_IDS = new Set(['__notes__']);
@@ -808,6 +827,18 @@ function saveWorkspaceZooms(zooms: Record<string, number>): void {
 }
 
 // Global terminal font size — one value shared by every workspace/pane.
+const NATIVE_FONT_SIZE_KEY = 'sheepit:native-font-size';
+function loadNativeFontSize(): number {
+  try {
+    const raw = preferences.getItem(NATIVE_FONT_SIZE_KEY);
+    if (raw) {
+      const n = parseInt(raw, 10);
+      if (!Number.isNaN(n)) return Math.max(MIN_NATIVE_FONT_SIZE, Math.min(MAX_NATIVE_FONT_SIZE, n));
+    }
+  } catch { /* fall through */ }
+  return DEFAULT_NATIVE_FONT_SIZE();
+}
+
 const FONT_SIZE_KEY = 'sheepit:font-size';
 function loadFontSize(): number {
   try {
@@ -906,6 +937,7 @@ const useStore = create<StoreState>((set, get) => ({
   browserUrls: {},
   browserNav: null,
   fontSize: loadFontSize(),
+  nativeFontSize: loadNativeFontSize(),
   terminalFontFamily: readTerminalFont(),
   theme: readTheme(),
   workspaceZooms: loadWorkspaceZooms(),
@@ -1776,6 +1808,12 @@ const useStore = create<StoreState>((set, get) => ({
   resetFontSize() {
     saveFontSize(DEFAULT_FONT_SIZE());
     set({ fontSize: DEFAULT_FONT_SIZE() });
+  },
+
+  setNativeFontSize(size: number) {
+    const clamped = Math.max(MIN_NATIVE_FONT_SIZE, Math.min(MAX_NATIVE_FONT_SIZE, Math.round(size)));
+    try { preferences.setItem(NATIVE_FONT_SIZE_KEY, String(clamped)); } catch { /* quota */ }
+    set({ nativeFontSize: clamped });
   },
 
   setTerminalFontFamily(family: string) {

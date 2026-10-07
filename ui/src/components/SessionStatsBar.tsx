@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Plus, BookOpen, Search, SquarePlus, TerminalSquare, Settings, FolderOpen, Github, ListPlus } from 'lucide-react';
+import { BookOpen, Search, SquarePlus, TerminalSquare, Settings, FolderOpen, Github, ListPlus } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import SettingsDialog from './SettingsDialog';
@@ -20,10 +20,6 @@ interface SessionStatsBarProps {
 }
 
 export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession }: SessionStatsBarProps) {
-  // Terminal font size is a single global value shared by every pane.
-  const fontSize          = useStore(s => s.fontSize);
-  const adjustFontSize    = useStore(s => s.adjustFontSize);
-  const resetFontSize     = useStore(s => s.resetFontSize);
   const renameWorkspace   = useStore(s => s.renameWorkspace);
   // Publish where the bar ends, for anything that floats under it.
   const barRef = useRef<HTMLDivElement>(null);
@@ -95,51 +91,12 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
     </button>
   );
 
-  const currentZoom = fontSize;
-  const zoomButtons = sessionId && (
-    <div
-      className="flex items-center shrink-0"
-      style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}
-    >
-      <button
-        title="Zoom out (\u2318-)"
-        onClick={() => adjustFontSize(-1)}
-        style={{
-          display: 'flex', alignItems: 'center', padding: '2px 5px',
-          background: 'none', border: 'none',
-          borderRight: '1px solid var(--border)',
-          cursor: 'pointer', color: 'var(--muted-foreground)',
-        }}
-      >
-        <Minus size={13} />
-      </button>
-      <button
-        title={`Font size ${currentZoom}px — click to reset (\u23180)`}
-        onClick={() => resetFontSize()}
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          minWidth: 28, padding: '2px 4px',
-          background: 'none', border: 'none',
-          borderRight: '1px solid var(--border)',
-          cursor: 'pointer', color: 'var(--muted-foreground)',
-          fontSize: 10, fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        {currentZoom}
-      </button>
-      <button
-        title="Zoom in (\u2318+)"
-        onClick={() => adjustFontSize(1)}
-        style={{
-          display: 'flex', alignItems: 'center', padding: '2px 5px',
-          background: 'none', border: 'none',
-          cursor: 'pointer', color: 'var(--muted-foreground)',
-        }}
-      >
-        <Plus size={13} />
-      </button>
-    </div>
-  );
+  /* **The zoom control moved to Appearance.** It was permanent space on a bar
+     that is in view all day, for a thing changed about twice a month — and
+     there are two sizes now (the terminal's and the conversation's), which is
+     a settings panel's job rather than a toolbar's. ⌘+ / ⌘− / ⌘0 are
+     unchanged, which is how it is actually used. */
+  const zoomButtons = null;
 
   // Right-side cluster: the active workspace name (click to rename) and a
   // Notes toggle. Lives in the formerly-empty right half of the bar.

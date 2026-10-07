@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Moon, Sun, RotateCcw, Download, Check, Loader2, CloudOff } from 'lucide-react';
-import useStore from '../store';
+import { Moon, Sun, RotateCcw, Download, Check, Loader2, CloudOff, Minus, Plus } from 'lucide-react';
+import useStore, {
+  DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE,
+  DEFAULT_NATIVE_FONT_SIZE, MIN_NATIVE_FONT_SIZE, MAX_NATIVE_FONT_SIZE,
+} from '../store';
 import {
   TERMINAL_THEMES,
   TERMINAL_FONT_PRESETS,
@@ -19,12 +22,65 @@ import {
  *  Nerd Font glyph resolve or come out as tofu. */
 const SAMPLE = '~/dev/sheepit  main ❯ 0O l1I {}[]() ─┼─ ✚ ✔ ✖';
 
+/** One size: minus, the number, plus, and a reset that appears once it has
+ *  been moved off the default. Shared by both, so they cannot drift apart. */
+function SizeRow({ label, hint, value, min, max, onChange, onReset, isDefault }: {
+  label: string; hint: string; value: number; min: number; max: number;
+  onChange: (n: number) => void; onReset: () => void; isDefault: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium">{label}</div>
+        <div className="text-[10px]" style={{ color: 'var(--muted-foreground)' }}>{hint}</div>
+      </div>
+      {!isDefault && (
+        <button
+          onClick={onReset}
+          className="flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 shrink-0"
+          style={{ color: 'var(--muted-foreground)', border: '1px solid var(--border)' }}
+          title={`Back to the default`}
+        >
+          <RotateCcw size={10} />
+        </button>
+      )}
+      <div className="flex items-center shrink-0" style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+        <button
+          onClick={() => onChange(value - 1)}
+          disabled={value <= min}
+          className="px-2 py-1"
+          style={{ color: 'var(--muted-foreground)', borderRight: '1px solid var(--border)', opacity: value <= min ? 0.4 : 1 }}
+        >
+          <Minus size={12} />
+        </button>
+        <span
+          className="text-center"
+          style={{ minWidth: 34, fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'var(--foreground)' }}
+        >
+          {value}px
+        </span>
+        <button
+          onClick={() => onChange(value + 1)}
+          disabled={value >= max}
+          className="px-2 py-1"
+          style={{ color: 'var(--muted-foreground)', borderLeft: '1px solid var(--border)', opacity: value >= max ? 0.4 : 1 }}
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AppearanceContent() {
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const fontFamily = useStore(s => s.terminalFontFamily);
   const setFontFamily = useStore(s => s.setTerminalFontFamily);
   const fontSize = useStore(s => s.fontSize);
+  const setFontSize = useStore(s => s.setFontSize);
+  const nativeFontSize = useStore(s => s.nativeFontSize);
+  const setNativeFontSize = useStore(s => s.setNativeFontSize);
 
   // The box is a draft until it is committed, so a half-typed family name does
   // not repaint every terminal on each keystroke — each repaint refits the grid
@@ -108,6 +164,38 @@ export function AppearanceContent() {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* **Two sizes, because they are two kinds of reading.** A terminal is
+          scanned in dense columns and people run it small — 10px is normal —
+          while the conversation view is prose that is actually read, and 10px
+          prose is a squint. One number had to be wrong for one of them, and
+          applying the terminal's *face* to the conversation made it obvious.
+          Both live here rather than one of them on the workspace bar, where a
+          control used twice a month was spending permanent space. ⌘+/−/0 still
+          work on the terminal. */}
+      <section>
+        <h3 className="text-sm font-semibold mb-1">Text size</h3>
+        <SizeRow
+          label="Terminal"
+          hint="Output in the pane. ⌘+ and ⌘− also change this."
+          value={fontSize}
+          min={MIN_FONT_SIZE}
+          max={MAX_FONT_SIZE}
+          onChange={setFontSize}
+          onReset={() => setFontSize(DEFAULT_FONT_SIZE())}
+          isDefault={fontSize === DEFAULT_FONT_SIZE()}
+        />
+        <SizeRow
+          label="Conversation"
+          hint="The native Claude Code view."
+          value={nativeFontSize}
+          min={MIN_NATIVE_FONT_SIZE}
+          max={MAX_NATIVE_FONT_SIZE}
+          onChange={setNativeFontSize}
+          onReset={() => setNativeFontSize(DEFAULT_NATIVE_FONT_SIZE())}
+          isDefault={nativeFontSize === DEFAULT_NATIVE_FONT_SIZE()}
+        />
       </section>
 
       <section>

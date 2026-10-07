@@ -52,6 +52,8 @@ import { logger } from './server.js';
 /** How a block of a turn is drawn. One of these per bubble in the UI. */
 export type NativeMessage =
   | { id: string; kind: 'user'; text: string; at: number }
+  /** A slash command you ran — shown as the command, never as its expansion. */
+  | { id: string; kind: 'command'; name: string; args: string; at: number }
   | { id: string; kind: 'assistant'; text: string; at: number }
   | { id: string; kind: 'thinking'; text: string; at: number }
   | {
@@ -91,9 +93,39 @@ const MAX_RESULT_CHARS = 20_000;
  *  does, so this is a stat per watched pane per tick and a read only when it
  *  grew — the same bargain `contextTokens` already makes in the session sweep. */
 const POLL_MS = 400;
+/** How long Claude Code's "Pasting…" needs before it will take an Enter. */
+const PASTE_SETTLE_MS = 250;
 
 function clip(s: string, n = MAX_RESULT_CHARS): string {
   return s.length <= n ? s : s.slice(0, n) + `\n… [${s.length - n} more characters]`;
+}
+
+/** The longest string we keep inside a tool's arguments. */
+const MAX_INPUT_CHARS = 2_000;
+
+/**
+ * A tool's arguments, with the bulky parts clipped.
+ *
+ * `Write` carries the whole file it is writing, `Edit` carries both sides of
+ * the change — so the arguments, not the results, are what weighs a
+ * conversation down: measured on a real pane, tool blocks were **84% of a 78KB
+ * payload** while the largest *result* in it was 2KB. All of it is sent to
+ * draw a one-line summary and a body nobody has opened.
+ *
+ * Only long **strings** are clipped, and the shape is kept, because the
+ * summary line reads named fields out of this (`command`, `file_path`,
+ * `pattern`) and they are short. What goes is the content, which is already
+ * truncated in the body with the same marker.
+ */
+function clipInput(input: unknown): unknown {
+  if (typeof input === 'string') return clip(input, MAX_INPUT_CHARS);
+  if (Array.isArray(input)) return input.map(clipInput);
+  if (input && typeof input === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) out[k] = clipInput(v);
+    return out;
+  }
+  return input;
 }
 
 function textOf(content: unknown): string {
@@ -162,13 +194,52 @@ class RowReader {
       }
       if (sawResult) return { added, changed };
       const text = textOf(content);
-      // Claude Code puts its own notices through as user rows wrapped in
-      // <...> tags — a hook's stdout, a command's expansion, a reminder. They
-      // are not something anybody typed, and drawn as a user bubble they read
-      // as the person shouting machine output at the agent.
-      if (text && !/^<[a-z-]+>/i.test(text)) {
-        added.push({ id: `u-${uuid}`, kind: 'user', text, at });
+      if (!text) return { added, changed };
+
+      /**
+       * **Not everything filed as a `user` row is something a person typed.**
+       * Claude Code injects its own material the same way: a slash command's
+       * expansion, a skill's body, a hook's stdout, a system reminder. Drawn as
+       * a user bubble they read as the person shouting a config file at the
+       * agent — which is exactly how a `/goal` or a skill looked here.
+       *
+       * A command is worth showing, small: `/goal <args>` is a thing you did,
+       * and hiding it leaves a gap in the conversation where an instruction
+       * was. Its *expansion* is not, and neither is anything else wearing
+       * tags — the agent received it, but it is not a message.
+       */
+      const command = text.match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i);
+      if (command) {
+        const args = text.match(/<command-args>\s*([\s\S]*?)\s*<\/command-args>/i)?.[1] ?? '';
+        added.push({
+          id: `u-${uuid}`, kind: 'command', at,
+          name: command[1]!.trim(),
+          args: args.trim(),
+        });
+        return { added, changed };
       }
+      /**
+       * A skill's body, which arrives as a plain `user` row with no tag around
+       * it — it opens `Base directory for this skill: <path>` and then runs to
+       * thousands of words of instructions. Verified against a real transcript
+       * rather than guessed: the tag rule below does not catch it, which is
+       * why a skill used to fill the conversation with its own documentation
+       * under the heading of something you said.
+       *
+       * The *name* is worth keeping — running a skill is a thing you did —
+       * so it is drawn as a command, like a slash command.
+       */
+      const skill = text.match(/^Base directory for this skill:\s*(\S+)/i);
+      if (skill) {
+        const name = skill[1]!.replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? 'skill';
+        added.push({ id: `u-${uuid}`, kind: 'command', at, name: `/${name}`, args: '' });
+        return { added, changed };
+      }
+
+      // Anything else that opens with a tag, or is mostly tags, is machinery.
+      if (/^<[a-z-]+[\s>]/i.test(text)) return { added, changed };
+
+      added.push({ id: `u-${uuid}`, kind: 'user', text, at });
       return { added, changed };
     }
 
@@ -179,7 +250,7 @@ class RowReader {
         added.push({ id: `a-${uuid}-think-${added.length}`, kind: 'thinking', text: b.thinking, at });
       } else if (b?.type === 'tool_use') {
         const m: Extract<NativeMessage, { kind: 'tool' }> = {
-          id: `t-${b.id}`, kind: 'tool', at, name: b.name, input: b.input,
+          id: `t-${b.id}`, kind: 'tool', at, name: b.name, input: clipInput(b.input),
         };
         this.tools.set(b.id, m);
         added.push(m);
@@ -250,10 +321,29 @@ export class NativeSession {
   send(text: string): void {
     const body = text.replace(/\r\n?/g, '\n');
     if (!body.trim()) return;
+
+    // **A single line is typed, not pasted.** Bracketed paste puts Claude Code
+    // into a "Pasting…" state while it buffers, and an Enter that arrives
+    // during it is swallowed — the text sits in the box and nothing is sent.
+    // That is what it looked like from the outside: the message appeared in
+    // the conversation (the local echo) and never reached the agent. Most
+    // messages are one line and need none of it.
+    if (!body.includes('\n')) {
+      this.write(body);
+      this.write('\r');
+      return;
+    }
+
+    // Multi-line genuinely needs the brackets, or the first newline submits a
+    // half-written prompt. So the Enter waits for the paste to be taken: the
+    // pane going quiet is the signal, with a deadline for a TUI that never
+    // settles — the same shape the resume-after-reboot path uses.
     this.write(`\x1b[200~${body}\x1b[201~`);
-    // Enter as its own write, after the paste has closed. Inside the brackets
-    // it is just a character in the pasted text.
-    this.write('\r');
+    // Claude Code shows "Pasting…" while it takes the block, and an Enter that
+    // lands during it is swallowed. This is the only place that waits, it is
+    // only reached by multi-line messages, and a quarter of a second on one of
+    // those costs nothing next to a message that silently never sends.
+    setTimeout(() => this.write('\r'), PASTE_SETTLE_MS);
   }
 
   /**
@@ -364,15 +454,27 @@ export class NativeSession {
 }
 
 /**
- * One reader per pane, made on demand.
+ * One reader per pane, made on demand and **kept warm after you leave**.
  *
- * These are cheap — a timer and a file offset — so they are kept while anyone
- * is watching and dropped when the last one leaves. Nothing is lost by that:
- * the conversation is the transcript, and reopening re-reads it. That is the
- * difference a process would have made, and it no longer owns one.
+ * A reader used to be disposed the moment its last watcher went away, on the
+ * grounds that it owns no process and the conversation is the transcript
+ * anyway. True, and it made every pane switch pay for a fresh read and a full
+ * re-parse — and then hand the client the whole conversation again, measured
+ * at 62KB on the wire, for a pane it had shown thirty seconds earlier.
+ *
+ * So a reader survives its watchers for `IDLE_MS`. Coming back is then the
+ * `init` it already holds, and the poll has been running the whole time, so
+ * the messages are current rather than re-derived. What is kept is a message
+ * array and a 400ms timer; what is saved is the read, the parse and the
+ * re-send.
  */
+const IDLE_MS = 10 * 60 * 1000;
+
 export class NativeSessions {
   private byPane = new Map<string, NativeSession>();
+  /** When the last watcher left, for the readers nobody is watching. */
+  private idleSince = new Map<string, number>();
+  private sweep: ReturnType<typeof setInterval> | null = null;
 
   get(sessionId: string): NativeSession | undefined { return this.byPane.get(sessionId); }
 
@@ -382,28 +484,46 @@ export class NativeSessions {
     resolvePath: () => string | null,
     write: (data: string) => void,
   ): Promise<NativeSession> {
+    this.idleSince.delete(sessionId);
     const existing = this.byPane.get(sessionId);
     if (existing) return existing;
     const s = new NativeSession(sessionId, cwd, resolvePath, write);
     this.byPane.set(sessionId, s);
     await s.load();
+    this.startSweep();
     return s;
   }
 
-  /** Called when a watcher leaves; drops the reader once nobody is left. */
+  /** Called when a watcher leaves. The reader stays up — see IDLE_MS. */
   release(sessionId: string): void {
     const s = this.byPane.get(sessionId);
     if (!s || s.subscriberCount > 0) return;
-    s.dispose();
-    this.byPane.delete(sessionId);
+    this.idleSince.set(sessionId, Date.now());
+  }
+
+  private startSweep(): void {
+    if (this.sweep) return;
+    this.sweep = setInterval(() => {
+      const now = Date.now();
+      for (const [id, at] of [...this.idleSince]) {
+        if (now - at < IDLE_MS) continue;
+        this.byPane.get(id)?.dispose();
+        this.byPane.delete(id);
+        this.idleSince.delete(id);
+      }
+      if (!this.byPane.size && this.sweep) { clearInterval(this.sweep); this.sweep = null; }
+    }, 60_000);
+    this.sweep.unref?.();
   }
 
   close(sessionId: string): void {
     this.byPane.get(sessionId)?.dispose();
     this.byPane.delete(sessionId);
+    this.idleSince.delete(sessionId);
   }
 
   closeAll(): void {
     for (const id of [...this.byPane.keys()]) this.close(id);
+    if (this.sweep) { clearInterval(this.sweep); this.sweep = null; }
   }
 }

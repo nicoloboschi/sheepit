@@ -31,14 +31,14 @@
  * `localhost` port works whatever device you are looking from.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus, Search, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus, Search, ChevronUp, ChevronDown, X, Download, Copy } from 'lucide-react';
 import { externalClick } from '../openExternal';
 import { copyText } from '../utils';
 
 // Chrome's own zoom steps, trimmed to the useful range.
 const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const DEFAULT_ZOOM = 0.9;
-import LiveBrowserSurface, { type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
+import LiveBrowserSurface, { type BrowserDownload, type LiveBrowserCommands, type LiveBrowserState } from './LiveBrowserSurface';
 import NativeBrowserSurface, { desktopBrowser } from './NativeBrowserSurface';
 import useStore from '../store';
 import { preferences } from '../preferences';
@@ -59,6 +59,18 @@ function rememberedUrl(sessionId: string): string | null {
 }
 
 /** What someone typing in the address bar meant. */
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let v = n / 1024;
+  for (const unit of units) {
+    if (v < 1024 || unit === 'GB') return `${v >= 10 ? v.toFixed(0) : v.toFixed(1)} ${unit}`;
+    v /= 1024;
+  }
+  return `${Math.round(n)} B`;
+}
+
 function normalizeTyped(raw: string): string {
   const trimmed = raw.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
@@ -90,6 +102,16 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
   const [live, setLive] = useState<LiveBrowserState | null>(null);
   const liveCommands = useRef<LiveBrowserCommands | null>(null);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [downloads, setDownloads] = useState<BrowserDownload[]>([]);
+  const onDownload = useCallback((download: BrowserDownload) => {
+    setDownloads(list => {
+      const next = [download, ...list.filter(d => d.id !== download.id)];
+      return next.sort((a, b) => b.startedAt - a.startedAt).slice(0, 12);
+    });
+    setDownloadsOpen(true);
+  }, []);
+  const activeDownloads = downloads.filter(d => d.state === 'inProgress').length;
   const stepZoom = (dir: 1 | -1) => setZoom(z => {
     const i = ZOOMS.indexOf(z);
     return ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + dir))] ?? z;
@@ -297,8 +319,16 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
           {shot?.state === 'done' ? <Check size={12} /> : <Camera size={12} />}
         </button>
 
-        {/* Your own browser, for what this one is not: a download, a password
-            manager, a tab you want to keep. */}
+        <button
+          className={`preview-btn${downloadsOpen ? ' preview-btn-active' : ''}`}
+          onClick={() => setDownloadsOpen(v => !v)}
+          title={downloads.length ? `${downloads.length} download${downloads.length === 1 ? '' : 's'}` : 'Downloads'}
+        >
+          <Download size={12} />
+          {activeDownloads > 0 && <span className="preview-download-badge">{activeDownloads}</span>}
+        </button>
+
+        {/* Your own browser, for a password manager or a tab you want to keep. */}
         <a
           className="preview-btn"
           href={live?.url && live.url !== 'about:blank' ? live.url : undefined}
@@ -334,6 +364,38 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
         </div>
       )}
 
+      {downloadsOpen && (
+        <div className="preview-downloads">
+          <div className="preview-downloads-head">
+            <span>Downloads</span>
+            <button className="preview-btn" title="Clear downloads" onClick={() => setDownloads([])} disabled={!downloads.length}><X size={12} /></button>
+          </div>
+          {downloads.length === 0 ? (
+            <div className="preview-download-empty">Downloaded files will land in your Downloads folder.</div>
+          ) : downloads.map(d => {
+            const pct = d.totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((d.receivedBytes / d.totalBytes) * 100))) : null;
+            const detail = d.state === 'inProgress'
+              ? (pct !== null ? `${pct}% · ${formatBytes(d.receivedBytes)} / ${formatBytes(d.totalBytes)}` : formatBytes(d.receivedBytes) || 'Downloading…')
+              : d.state === 'completed' ? `Saved to ${d.path}` : 'Canceled';
+            return (
+              <div key={d.id} className={`preview-download preview-download-${d.state}`} title={d.path || d.url}>
+                <Download size={13} className="preview-download-icon" />
+                <div className="preview-download-main">
+                  <div className="preview-download-name">{d.name}</div>
+                  <div className="preview-download-detail">{detail}</div>
+                  {d.state === 'inProgress' && pct !== null && <div className="preview-download-progress"><span style={{ width: `${pct}%` }} /></div>}
+                </div>
+                {d.path && (
+                  <button className="preview-btn" title="Copy path" onClick={() => { void copyText(d.path); }}>
+                    <Copy size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="preview-body">
         {server.available || desktopBrowser ? (
           <>
@@ -357,11 +419,11 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
             )}
             {desktopBrowser
               ? <NativeBrowserSurface
-                  url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands}
+                  url={src} navSeq={nav} zoom={zoom} onState={setLive} onDownload={onDownload} commands={liveCommands}
                   onFindOpen={openFind}
                   onFindResult={r => setFind(f => f && { ...f, matches: r.matches, active: r.active })}
                 />
-              : <LiveBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} commands={liveCommands} />}
+              : <LiveBrowserSurface url={src} navSeq={nav} zoom={zoom} onState={setLive} onDownload={onDownload} commands={liveCommands} />}
           </>
         ) : (
           <div className="preview-empty">

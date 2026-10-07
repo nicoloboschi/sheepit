@@ -14,7 +14,7 @@
  * would only add a second place for a modifier bit to go missing.
  */
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { LiveBrowser, findBrowser, VIEW_TTL_MS } from './live-browser.js';
+import { LiveBrowser, findBrowser, VIEW_TTL_MS, type BrowserDownload } from './live-browser.js';
 
 export const BROWSER_WS_PATH = '/ws/browser';
 
@@ -88,6 +88,9 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
               onActive: active => send({ type: 'active', active }),
               // What the page says the pointer should look like over it.
               onCursor: cursor => send({ type: 'cursor', cursor }),
+              // Downloads have no shelf in the streamed browser, so they are
+              // reported to the pane chrome instead.
+              onDownload: (download: BrowserDownload) => send({ type: 'download', download }),
               // Out of sight past the TTL: the page is gone, the socket stays,
               // and the pane may ask for it again with another `open`.
               // The TTL travels with it, so the pane's wording cannot disagree

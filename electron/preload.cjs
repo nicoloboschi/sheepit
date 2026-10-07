@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld('sheepitDesktop', {
       ipcRenderer.on('browser:find-result', handler);
       return () => ipcRenderer.removeListener('browser:find-result', handler);
     },
+    onDownload: cb => {
+      const handler = (_event, id, download) => cb(id, download);
+      ipcRenderer.on('browser:download', handler);
+      return () => ipcRenderer.removeListener('browser:download', handler);
+    },
     onState: cb => {
       const handler = (_event, id, state) => cb(id, state);
       ipcRenderer.on('browser:state', handler);

@@ -114,6 +114,18 @@ export interface LiveBrowserState {
   streaming: boolean;
 }
 
+export interface BrowserDownload {
+  id: string;
+  name: string;
+  url: string;
+  path: string;
+  state: 'inProgress' | 'completed' | 'canceled';
+  receivedBytes: number;
+  totalBytes: number;
+  startedAt: number;
+  endedAt?: number;
+}
+
 export interface LiveBrowserCommands {
   navigate: (url: string) => void;
   reload: () => void;
@@ -127,7 +139,7 @@ export interface LiveBrowserCommands {
   stopFind?: () => void;
 }
 
-export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom = 1, onState, commands }: {
+export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom = 1, onState, onDownload, commands }: {
   url?: string | null;
   navSeq?: number;
   /** Page zoom, the way Chrome does it: lay out at box / zoom CSS pixels and
@@ -135,6 +147,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom =
    *  in `pointFrom` follows without knowing about it. */
   zoom?: number;
   onState: (state: LiveBrowserState) => void;
+  onDownload?: (download: BrowserDownload) => void;
   /** Filled in on mount so the pane's own bar can drive the page. */
   commands: { current: LiveBrowserCommands | null };
 }): React.ReactElement {
@@ -261,6 +274,8 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom =
           syncSize();
         } else if (msg.type === 'cursor') {
           setCursor(safeCursor(String(msg.cursor ?? 'default')));
+        } else if (msg.type === 'download') {
+          onDownload?.(msg.download as BrowserDownload);
         } else if (msg.type === 'expired') {
           // The page is gone; the last frame stays up, dimmed, under the offer
           // to load it again.

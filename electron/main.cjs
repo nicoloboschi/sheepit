@@ -181,6 +181,8 @@ ipcMain.handle('perf:main', () => {
 /** @type {Map<string, { view: import('electron').WebContentsView, win: BrowserWindow, owner: import('electron').WebContents }>} */
 const views = new Map();
 const watchedOwners = new WeakSet();
+const watchedDownloadSessions = new WeakSet();
+let nextDownloadId = 1;
 /** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
 const APP_SHORTCUTS = new Set(['k', 'n', 'ArrowUp', 'ArrowDown']);
 
@@ -218,6 +220,43 @@ function watchOwner(owner) {
 
 const viewOf = id => views.get(id)?.view;
 
+function downloadData(downloadId, startedAt, item, state) {
+  const total = item.getTotalBytes?.() ?? 0;
+  const received = item.getReceivedBytes?.() ?? 0;
+  const pathName = item.getSavePath?.() || path.join(app.getPath('downloads'), item.getFilename?.() || 'download');
+  return {
+    id: downloadId,
+    name: item.getFilename?.() || path.basename(pathName) || 'download',
+    url: item.getURL?.() || '',
+    path: pathName,
+    state,
+    receivedBytes: received,
+    totalBytes: total,
+    startedAt,
+    endedAt: state === 'inProgress' ? undefined : Date.now(),
+  };
+}
+
+function ensureDownloadWatcher(ses) {
+  if (watchedDownloadSessions.has(ses)) return;
+  watchedDownloadSessions.add(ses);
+  ses.on('will-download', (_event, item, wc) => {
+    const entry = [...views.entries()].find(([, e]) => e.view.webContents === wc);
+    if (!entry) return;
+    const [viewId, viewEntry] = entry;
+    const downloadId = `download-${nextDownloadId++}`;
+    const startedAt = Date.now();
+    const send = state => {
+      if (!viewEntry.owner.isDestroyed() && views.has(viewId)) {
+        viewEntry.owner.send('browser:download', viewId, downloadData(downloadId, startedAt, item, state));
+      }
+    };
+    send('inProgress');
+    item.on('updated', (_e, state) => send(state === 'interrupted' ? 'canceled' : 'inProgress'));
+    item.once('done', (_e, state) => send(state === 'completed' ? 'completed' : 'canceled'));
+  });
+}
+
 ipcMain.on('browser:open', (event, id, url) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || views.has(id)) return;
@@ -226,6 +265,7 @@ ipcMain.on('browser:open', (event, id, url) => {
     // the UI's own origin.
     webPreferences: { partition: 'persist:sheepit-browser', sandbox: true, contextIsolation: true },
   });
+  ensureDownloadWatcher(view.webContents.session);
   view.setVisible(false); // until the UI says where the pane is
   win.contentView.addChildView(view);
   views.set(id, { view, win, owner: event.sender });

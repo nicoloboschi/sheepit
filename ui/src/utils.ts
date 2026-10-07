@@ -113,10 +113,17 @@ export interface FileLinkMatch {
  * back to a buffer position by plain arithmetic. Matching a single row instead
  * turns every wrapped path into a truncated one that opens nothing.
  */
-export function findFileLinks(rows: string[], cols: number, topRow: number): FileLinkMatch[] {
+/**
+ * Where the file paths are in a run of text.
+ *
+ * **One definition of what a path looks like**, used by the terminal's link
+ * provider and by the conversation view. They are the same question asked of
+ * the same output; two regexes would drift, and the one thing this rule is
+ * carefully tuned for — keeping prose out — is exactly what would rot.
+ */
+export function matchFilePaths(text: string): { text: string; index: number }[] {
   const FILE_RE = /((?:~\/|\.\.?\/|\/(?![\s/]))[\w./\-@~+%:]+|(?:[\w.\-@+%]+\/)+[\w.\-@+%]+\.[A-Za-z0-9]{1,8})/g;
-  const text = rows.join('');
-  const out: FileLinkMatch[] = [];
+  const out: { text: string; index: number }[] = [];
   let match: RegExpExecArray | null;
   while ((match = FILE_RE.exec(text)) !== null) {
     const raw = match[1]!;
@@ -127,12 +134,19 @@ export function findFileLinks(rows: string[], cols: number, topRow: number): Fil
     // (`https://x.dev/a` matches from its second slash), which the web-links
     // provider owns and is asked for first.
     if (raw.includes('://') || /[\w:/]/.test(text[match.index - 1] ?? ' ')) continue;
-    const last = match.index + raw.length - 1;
-    out.push({
-      text: raw,
-      start: { x: (match.index % cols) + 1, y: topRow + Math.floor(match.index / cols) + 1 },
-      end:   { x: (last % cols) + 1,        y: topRow + Math.floor(last / cols) + 1 },
-    });
+    out.push({ text: raw, index: match.index });
   }
   return out;
+}
+
+export function findFileLinks(rows: string[], cols: number, topRow: number): FileLinkMatch[] {
+  const text = rows.join('');
+  return matchFilePaths(text).map(({ text: raw, index }) => {
+    const last = index + raw.length - 1;
+    return {
+      text: raw,
+      start: { x: (index % cols) + 1, y: topRow + Math.floor(index / cols) + 1 },
+      end:   { x: (last % cols) + 1,  y: topRow + Math.floor(last / cols) + 1 },
+    };
+  });
 }
