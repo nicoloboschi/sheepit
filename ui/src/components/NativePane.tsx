@@ -475,6 +475,85 @@ function imagesIn(text: string, cwd: string): string[] {
   return out;
 }
 
+/**
+ * Your own message, with its URLs and paths made clickable — and nothing else
+ * touched.
+ *
+ * **It is still not Markdown.** What you typed is what you typed: a `*` is an
+ * asterisk and a `#` is a hash, and re-interpreting the prompt would show you
+ * something you did not write. But a link is not formatting, it is a thing
+ * you named, and in a view where every link in the agent's half opens — in
+ * the built-in browser, or the Files panel — the one place they stayed dead
+ * was the half you wrote. "Check https://…" is the commonest kind of message
+ * there is here.
+ *
+ * Both rules are the ones already in use: `matchFilePaths` for paths (the
+ * same definition the terminal's link provider uses) and a plain http(s) run
+ * for URLs. Paths and URLs cannot collide — `matchFilePaths` skips anything
+ * containing `://`.
+ */
+function Linkified({ text }: { text: string }): React.ReactElement {
+  const onLink = useContext(LinkHandler);
+  const onFile = useContext(FileHandler);
+
+  const parts = useMemo(() => {
+    type Hit = { text: string; index: number; kind: 'url' | 'path' };
+    const hits: Hit[] = [];
+    // Trailing punctuation belongs to the sentence, not to the URL: "see
+    // https://x.dev." should not open a page whose address ends in a stop.
+    for (const m of text.matchAll(/https?:\/\/[^\s<>"')\]]+/g)) {
+      hits.push({ text: m[0].replace(/[.,;:!?]+$/, ''), index: m.index, kind: 'url' });
+    }
+    for (const h of matchFilePaths(text)) {
+      // **A slash command is not a path.** `/clear`, `/goals`, `/compact` all
+      // pass the path rule — one slash and a word — and in a message somebody
+      // typed that is overwhelmingly what they are. A real path worth opening
+      // has a second segment or an extension, so requiring one of those keeps
+      // `/tmp/x.png`, `./a`, `~/b` and `src/a.ts` and drops the commands. The
+      // shared rule is left alone: in the terminal and in the agent's output
+      // a bare `/usr` really is a directory.
+      const bare = /^\/[\w.-]+$/.test(h.text) && !h.text.slice(1).includes('.');
+      if (!bare) hits.push({ ...h, kind: 'path' });
+    }
+    hits.sort((a, b) => a.index - b.index);
+
+    const out: (string | Hit)[] = [];
+    let at = 0;
+    for (const h of hits) {
+      if (h.index < at) continue;   // overlapping, keep the first
+      if (h.index > at) out.push(text.slice(at, h.index));
+      out.push(h);
+      at = h.index + h.text.length;
+    }
+    if (at < text.length) out.push(text.slice(at));
+    return out;
+  }, [text]);
+
+  return (
+    <>
+      {parts.map((p, i) => typeof p === 'string' ? p : (
+        <a
+          key={i}
+          className={p.kind === 'path' ? 'nat-path' : undefined}
+          href={p.kind === 'url' ? p.text : undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            if (e.button !== 0) return;
+            // The bubble itself toggles the clamp on click; a link means the
+            // link, not "show more".
+            e.stopPropagation();
+            if (p.kind === 'path') { e.preventDefault(); onFile?.(p.text); return; }
+            if (!onLink) return;
+            e.preventDefault();
+            onLink(e.nativeEvent, p.text);
+          }}
+        >{p.text}</a>
+      ))}
+    </>
+  );
+}
+
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {
   const cwd = useContext(PaneCwd);
   const images = useMemo(() => imagesIn(text, cwd), [text, cwd]);
@@ -502,7 +581,7 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
       {/* The clamp and its fade live on the TEXT, not on the bubble: as one
           element the "show more" control was inside the clamped box and got
           cut off with the line it was advertising. */}
-      <div ref={ref} className={`nat-bubble-body${open ? '' : ' nat-bubble-clamped'}`}>{text}</div>
+      <div ref={ref} className={`nat-bubble-body${open ? '' : ' nat-bubble-clamped'}`}><Linkified text={text} /></div>
       {toggleable && (
         <button className="nat-bubble-toggle" onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}>
           {open ? 'show less' : 'show more'}

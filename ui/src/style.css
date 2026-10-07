@@ -3454,6 +3454,19 @@
   -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
 }
+/* A link you typed. Underlined rather than coloured: the bubble is already a
+   brand-tinted surface, so a brand-coloured link on it is a link you have to
+   look for. Paths keep their own amber (.nat-path), which is the colour they
+   are in the agent's half and in the terminal. */
+.nat-bubble a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+}
+.nat-bubble a:hover { text-decoration-color: currentColor; }
+
 .nat-bubble-toggleable { cursor: pointer; }
 /* A sibling of the clamped text, never inside it — in the box it was clamped
    away along with the line it exists to advertise. */
