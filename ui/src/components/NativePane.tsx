@@ -449,7 +449,35 @@ const CHOICE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
  * same markup, and offering "more" on something already whole is a button that
  * does nothing.
  */
+/**
+ * The images a message of yours names.
+ *
+ * Attaching a picture types its path into the pane, so what came back in the
+ * conversation was the path as grey text — you could see that you had sent
+ * *something* and not what. Both shapes are taken:
+ *
+ *  - a bare path, by the same rule the output uses (`matchFilePaths`);
+ *  - a **quoted** one, which is the shape a path with spaces arrives in —
+ *    `"…/Screenshot 2026-10-07 at 15.11.49.png"` is exactly what a macOS
+ *    screenshot is called, and the bare-path rule stops at the first space.
+ *    Quotes make it unambiguous, so there is nothing to guess.
+ */
+function imagesIn(text: string, cwd: string): string[] {
+  const out: string[] = [];
+  for (const h of matchFilePaths(text)) {
+    const u = imageUrl(h.text, cwd);
+    if (u) out.push(u);
+  }
+  for (const m of text.matchAll(/["']([^"'\n]*\/[^"'\n]+)["']/g)) {
+    const u = imageUrl(m[1], cwd);
+    if (u && !out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {
+  const cwd = useContext(PaneCwd);
+  const images = useMemo(() => imagesIn(text, cwd), [text, cwd]);
   const [open, setOpen] = useState(false);
   const [clamped, setClamped] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -480,6 +508,9 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
           {open ? 'show less' : 'show more'}
         </button>
       )}
+      {/* Outside the clamp: what you sent is the point of the message, and a
+          three-line clamp would have hidden it along with the fourth line. */}
+      {images.map(src => <Thumb key={src} src={src} />)}
     </div>
   );
 });
