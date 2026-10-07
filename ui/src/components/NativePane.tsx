@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors } from 'lucide-react';
+import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -1043,6 +1043,35 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
    * wrong, and wrong in the alarming direction. See AgentContext.
    */
   const [status, setStatus] = useState<{ used?: number; limit?: number; model?: string } | null>(null);
+  /** Clear asks twice; this is the half-pressed state. */
+  const [confirmClear, setConfirmClear] = useState(false);
+  /**
+   * **A half-pressed Clear does not wait for you in a pane you walked away
+   * from.** Every sheep in a pen stays mounted, so a pane armed and left is
+   * still armed when you come back to it — and the whole point of the second
+   * press is that it is *this* press, now. Blur alone does not cover it: a
+   * pane goes off screen without anything in it losing focus.
+   */
+  useEffect(() => { if (!isActive) setConfirmClear(false); }, [isActive]);
+
+  /**
+   * The branch and the reference, read off the session object rather than
+   * fetched. The sidebar and the pane bar already carry both — one poll on the
+   * server feeds every reader — and each selector returns a primitive, so this
+   * re-renders when the branch moves and not when anything else does.
+   */
+  const gitBranch = useStore(s => s.sessionMap[sessionId]?.gitBranch);
+  const gitDirty = useStore(s => s.sessionMap[sessionId]?.gitDirty);
+  const refs = useStore(s => s.sessionMap[sessionId]?.prRefs) as
+    | { kind: 'pr' | 'issue'; num: number; url?: string; repo?: string }[]
+    | undefined;
+  // Most recently touched, not highest-numbered: a pane that has just checked
+  // out #3672 is about #3672 whatever else it read. Same rule as the pane bar.
+  const topRef = refs?.[0] ?? null;
+  const topRefUrl = topRef
+    ? topRef.url
+      ?? (topRef.repo ? `https://github.com/${topRef.repo}/${topRef.kind === 'issue' ? 'issues' : 'pull'}/${topRef.num}` : null)
+    : null;
 
   const terminalFont = useStore(s => s.terminalFontFamily);
   /** Its own size, not the terminal's — see DEFAULT_NATIVE_FONT_SIZE. */
@@ -1216,10 +1245,60 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
 
       {/* The status line, on the composer's top edge — where the TUI keeps it,
           and what you check before asking for something big. */}
-      {(status?.used !== undefined || status?.model) && (
+      {(status?.used !== undefined || status?.model || gitBranch) && (
         <div className="nat-status">
-          {status.model && <span className="nat-status-model">{status.model}</span>}
-          {status.used !== undefined && (
+          {status?.model && <span className="nat-status-model">{status.model}</span>}
+
+          {/* **Clear is here because this is the line about the context.** It
+              is the one thing you do *to* a context rather than with it, and
+              the number beside it is what makes you want to. It types `/clear`
+              into the pane, like everything else this view does — the agent
+              clears its own session and the pane is renamed `-` until it
+              titles itself again.
+
+              It asks twice. A single click would throw away a conversation
+              that can be hours long, and unlike the `/clear` you type there is
+              nothing in front of it. The second click is the whole dialog. */}
+          <button
+            className={`nat-status-clear${confirmClear ? ' nat-status-clear-armed' : ''}`}
+            title="Clear this conversation — the agent starts fresh in the same pane"
+            onClick={() => {
+              if (!confirmClear) { setConfirmClear(true); return; }
+              setConfirmClear(false);
+              sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' });
+            }}
+            onBlur={() => setConfirmClear(false)}
+          >
+            {confirmClear ? 'Clear?' : 'Clear'}
+          </button>
+
+          {/* Which checkout this pane is standing in, and what it is about.
+              Both come off the session object the sidebar already reads — no
+              second poll, and no second opinion about the branch. The pane bar
+              says the same two things above the terminal; in this view there
+              is no pane bar in sight once you have scrolled, and these are
+              exactly the facts you want before you ask for a commit. */}
+          {gitBranch && (
+            <span className={`nat-status-branch${gitDirty ? ' nat-status-dirty' : ''}`} title={gitDirty ? `${gitBranch} — uncommitted changes` : gitBranch}>
+              <GitBranch size={10} />{gitBranch}
+            </span>
+          )}
+          {topRef && (
+            <a
+              className="nat-status-pr"
+              href={topRefUrl ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`${topRef.kind === 'issue' ? 'Issue' : 'Pull request'} #${topRef.num}`}
+              onClick={(e) => {
+                if (e.button !== 0 || !topRefUrl || !onOpenLink) return;
+                e.preventDefault();
+                onOpenLink(e.nativeEvent, topRefUrl);
+              }}
+            >#{topRef.num}</a>
+          )}
+
+          {status?.used !== undefined && (
             <span
               className="nat-status-ctx"
               title={status.limit

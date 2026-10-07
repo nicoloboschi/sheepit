@@ -3995,6 +3995,40 @@
 }
 .nat-status-model { color: var(--primary); opacity: 0.9; }
 .nat-status-ctx { margin-left: auto; }
+.nat-status-branch,
+.nat-status-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  text-decoration: none;
+  color: var(--muted-foreground);
+}
+/* The branch is the only arbitrary-length string on this line, so it is the
+   only one allowed to give up width — the same argument that keeps it off the
+   pane bar entirely. */
+.nat-status-branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.nat-status-dirty { color: var(--warning); }
+.nat-status-pr:hover { color: var(--primary); }
+/* Clear is a control among facts, so it is drawn as one. Armed, it is the
+   palette's "this removes something". */
+.nat-status-clear {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.nat-status-clear:hover { color: var(--foreground); border-color: var(--muted-foreground); }
+.nat-status-clear-armed,
+.nat-status-clear-armed:hover {
+  color: var(--destructive);
+  border-color: var(--destructive);
+}
 
 .nat-compose {
   display: flex;
