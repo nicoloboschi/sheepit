@@ -3113,3 +3113,481 @@
 }
 .agent-link a:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
 .agent-link-out { flex: 0 0 auto; color: var(--muted-foreground); opacity: 0.5; }
+
+/* ══ THE NATIVE VIEW ═══════════════════════════════════════════════════════
+   Claude Code drawn as a conversation rather than as a terminal — see
+   NativePane.tsx. It fills the terminal's column, so it inherits the pane's
+   width and never has a width of its own to get wrong.
+
+   Everything here is prose, so it uses the sans stack and a reading measure;
+   only what the agent actually typed (tool input, tool output) stays mono.
+   The terminal next to it is 11px of monospace precisely because it is
+   output; this is the opposite thing and should not look like it. */
+.nat-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--card);
+  font-family: var(--font-sans);
+  font-size: var(--nat-size);
+
+  /* **One scale for the whole view**, so "make it bigger" is one number rather
+     than a hunt through twenty rules. Everything below is in `em` off this or
+     reads it directly.
+
+     It was a flat 13px, which came out of a condensing pass that tightened the
+     *size* along with the vertical rhythm — and only the rhythm needed it. The
+     spacing stays tight; the type goes up. */
+  --nat-size: 14.5px;
+  /* The mono inside prose — tool rows, code spans, the receipt line. It sits
+     optically smaller than the sans at the same number, so it is not simply
+     --nat-size. */
+  --nat-mono: 12px;
+}
+
+/* A phone is held at arm's length and has no pointer to hover for detail, so
+   it reads a size up, not a size down. 16px on the composer is also what stops
+   a mobile browser zooming the page when the field takes focus — below that,
+   iOS and some Android keyboards scale the whole viewport and the pane has to
+   be pinched back. */
+@media (max-width: 767px) {
+  .nat-pane { --nat-size: 16px; --nat-mono: 13.5px; }
+}
+.nat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+/* **Nothing in a scrolling log may shrink.** This is a column flexbox, so its
+   children take `flex-shrink: 1` by default and are squashed below their
+   content once the list overflows — which it always does. A text block resists
+   because its text cannot be compressed; a tool block has `overflow: hidden`
+   and so collapsed to **2px**, its own two borders and nothing else. Every
+   tool call in a long conversation was on screen as a hairline, which read as
+   a horizontal rule, which read as "the tools are not rendered at all". */
+.nat-list > * { flex-shrink: 0; }
+.nat-empty {
+  margin: auto;
+  color: var(--muted-foreground);
+  font-size: var(--nat-size);
+  text-align: center;
+  max-width: 44ch;
+  line-height: 1.5;
+}
+
+/* What you said: a bubble, because it is the one thing on the page somebody
+   typed, and it has to be findable while scrolling back through a long turn.
+   What the agent said is NOT a bubble — it is most of the page, and a tinted
+   box around most of the page is a box around nothing. */
+.nat-msg { display: flex; }
+.nat-user { justify-content: flex-end; }
+.nat-user .nat-bubble {
+  max-width: min(85%, 70ch);
+  padding: 7px 11px;
+  font-size: var(--nat-size);
+  line-height: 1.5;
+  border-radius: 12px 12px 3px 12px;
+  background: color-mix(in srgb, var(--primary) 16%, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+
+/* Thinking is collapsed by default: it is long, it is the model talking to
+   itself, and leaving it open pushes the answer off the screen. */
+.nat-think {
+  border-left: 2px solid color-mix(in srgb, var(--muted-foreground) 35%, transparent);
+  padding-left: 9px;
+}
+.nat-think > summary {
+  cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  font-size: calc(var(--nat-size) * 0.82);
+  color: var(--muted-foreground);
+  list-style: none;
+}
+.nat-think > summary::-webkit-details-marker { display: none; }
+.nat-think-body {
+  margin-top: 5px;
+  font-size: calc(var(--nat-size) * 0.92);
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* A tool call: ONE LINE until you ask for more. It is the commonest block in
+   a transcript and the least worth reading in full — a wall of JSON per call
+   is how a chat log stops being readable. The head carries the only question
+   you ask while scrolling: which call was this. */
+/* A tool call is a RULED LINE, not a card.
+   It was a card — a filled, bordered box per call — and a turn is mostly tool
+   calls, so a conversation came out as a stack of boxes with the prose lost
+   between them. What a reader wants from this row is "what did it just do",
+   which is one line; the box was spending a border and 60% of a fill on it.
+   A left rail in the agent's own green marks the column of machine actions, so
+   they read as a margin beside the prose rather than as items in it. */
+.nat-tool {
+  border-left: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  padding-left: 1px;
+  overflow: hidden;
+}
+.nat-tool-error { border-left-color: var(--destructive); }
+.nat-tool-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 6px;
+  padding: 1px 0 1px 7px;
+  background: none; border: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--nat-mono);
+  line-height: 1.55;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.nat-tool-head:hover { color: var(--foreground); }
+.nat-tool-chev { flex-shrink: 0; transition: transform 0.12s; }
+.nat-tool-chev-open { transform: rotate(90deg); }
+.nat-tool-name { color: var(--foreground); font-weight: 600; flex-shrink: 0; }
+/* The subject of the call, clipped rather than wrapped: a two-line head would
+   make a list of twenty calls as tall as the answer they produced. */
+.nat-tool-sum {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; opacity: 0.85;
+}
+.nat-tool-spin {
+  flex-shrink: 0;
+  width: 10px; height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--warning) 25%, transparent);
+  border-top-color: var(--warning);
+  border-radius: 50%;
+  animation: pane-spin 0.85s linear infinite;
+}
+.nat-tool-body { margin-left: 7px; border-left: 1px solid var(--border); }
+.nat-pre {
+  margin: 0;
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: var(--nat-mono);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* The one scroll inside the list. A 2,000-line result would otherwise push
+     everything after it off the screen even when opened deliberately. */
+  max-height: 340px;
+  overflow: auto;
+  color: var(--muted-foreground);
+}
+.nat-result { border-top: 1px solid var(--border); color: var(--foreground); }
+.nat-tool-body .nat-pre { max-height: 300px; }
+
+.nat-system {
+  font-size: calc(var(--nat-size) * 0.82);
+  color: var(--muted-foreground);
+  font-style: italic;
+  text-align: center;
+}
+.nat-system-error { color: var(--destructive); font-style: normal; }
+
+/* The one thing this view cannot draw: a dialog the TUI is holding up. It is
+   not in the transcript because it is not part of the conversation, so rather
+   than guess, the view says so and hands over. Teal, because this is the pane
+   bleating — the same state, the same colour the sheep uses... except the sheep
+   is red now, and so is this: one colour for "stopped, waiting on you". */
+.nat-needs-tui {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--bleating) 55%, transparent);
+  background: color-mix(in srgb, var(--bleating) 12%, var(--accent));
+  color: var(--foreground);
+  font-size: calc(var(--nat-size) * 0.94);
+  line-height: 1.5;
+}
+.nat-needs-tui > svg { flex-shrink: 0; margin-top: 2px; color: var(--bleating); }
+.nat-needs-tui div div { color: var(--muted-foreground); margin-top: 2px; }
+.nat-needs-tui-note { font-size: 11px; opacity: 0.75; margin-top: 4px; }
+.nat-needs-tui-btn {
+  flex-shrink: 0; align-self: center;
+  padding: 5px 10px; border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--bleating) 55%, transparent);
+  background: none; color: var(--bleating);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+.nat-needs-tui-btn:hover { background: color-mix(in srgb, var(--bleating) 18%, transparent); }
+
+/* A question the agent is asking, drawn as a question rather than as the tool
+   call it technically is. The options come out of the tool's input, so this is
+   read, never inferred from a screen. It is bordered in the bleating colour
+   because that is what it is: the pane is stopped, waiting on a person. */
+.nat-choice {
+  border: 1px solid color-mix(in srgb, var(--bleating) 50%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bleating) 9%, var(--accent));
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+/* Answered, it is history: the colour goes and it stops competing with
+   whatever the agent is doing now. */
+.nat-choice-answered {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--accent) 70%, var(--card));
+}
+.nat-choice-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: calc(var(--nat-size) * 0.8); font-weight: 600; letter-spacing: 0.02em;
+  color: var(--bleating);
+  text-transform: uppercase;
+}
+.nat-choice-answered .nat-choice-head { color: var(--muted-foreground); }
+.nat-q { display: flex; flex-direction: column; gap: 5px; }
+.nat-q-text { font-weight: 600; line-height: 1.45; }
+/* An option is a label and its reasoning. The label carries the weight, since
+   that is what you are choosing between; the description is why. */
+.nat-opt {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: calc(var(--nat-size) * 0.94);
+  line-height: 1.45;
+}
+.nat-opt-label { font-weight: 600; }
+.nat-opt-desc { color: var(--muted-foreground); line-height: 1.45; }
+.nat-choice-answer {
+  font-size: calc(var(--nat-size) * 0.9);
+  color: var(--muted-foreground);
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nat-choice-foot {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  font-size: calc(var(--nat-size) * 0.85);
+  color: var(--muted-foreground);
+}
+
+/* Markdown inside a message.
+ *
+ * `.md-preview` is the GitHub view's style for a whole page of somebody else's
+ * Markdown: 14px on 1.7, paragraph margins of 0.6em, headings that draw a
+ * full-width rule. On a page that is right; in a conversation it is loose
+ * enough that the prose stops being a thread and becomes a series of
+ * documents. These overrides are the chat rhythm, and they are all one idea:
+ * tighter vertical spacing, and a **reading measure**.
+ *
+ * The measure is the real readability fix. A pane is routinely 800px wide, and
+ * 13px prose across 800px is about 120 characters a line — roughly double what
+ * the eye tracks comfortably, which is why a long answer felt like work to
+ * read even though nothing was wrong with it. 74ch caps it without ever
+ * narrowing a pane that is already narrower than that. */
+.nat-text.md-preview {
+  max-width: 74ch;
+  font-size: var(--nat-size);
+  line-height: 1.55;
+  /* **Markdown brings its own line breaks, so the source's must go.**
+     `.nat-text` is `white-space: pre-wrap`, which is right for plain text and
+     wrong here: the HTML react-markdown emits has a newline between every
+     `<li>` and every `<p>`, and pre-wrap turns each of those into a real line
+     box. Every gap in a rendered answer was a blank line taller than it should
+     be — 25px between list items that have a 1.45px margin — which read as the
+     view being loose when it was the whitespace rule leaking across. */
+  white-space: normal;
+}
+.nat-text.md-preview > :first-child { margin-top: 0; }
+.nat-text.md-preview > :last-child { margin-bottom: 0; }
+.nat-text.md-preview p { margin: 0.4em 0; }
+.nat-text.md-preview ul,
+.nat-text.md-preview ol { margin: 0.35em 0; padding-left: 1.3em; }
+.nat-text.md-preview li { margin: 0.1em 0; }
+/* A "loose" list — one with blank lines between its items — has each item
+   wrapped in a <p> by the Markdown spec, which then takes the paragraph
+   margin and doubles the gap between bullets. The agent writes loose lists
+   constantly, so this is most of what made a list of findings sprawl. */
+.nat-text.md-preview li > p { margin: 0; }
+.nat-text.md-preview li > p + p { margin-top: 0.3em; }
+/* A heading inside a message is a paragraph lead, not a document title — so no
+   rule across the pane, and a size close to the body it introduces. */
+.nat-text.md-preview h1,
+.nat-text.md-preview h2,
+.nat-text.md-preview h3,
+.nat-text.md-preview h4 {
+  margin: 0.75em 0 0.25em;
+  padding-bottom: 0;
+  border-bottom: none;
+  line-height: 1.3;
+}
+.nat-text.md-preview h1 { font-size: 1.25em; }
+.nat-text.md-preview h2 { font-size: 1.15em; }
+.nat-text.md-preview h3,
+.nat-text.md-preview h4 { font-size: 1.05em; }
+.nat-text.md-preview blockquote { margin: 0.45em 0; padding: 0.1em 0.8em; }
+.nat-text.md-preview hr { margin: 0.7em 0; }
+.nat-text.md-preview table { margin: 0.5em 0; font-size: 0.95em; }
+.nat-text.md-preview th,
+.nat-text.md-preview td { padding: 3px 8px; }
+.nat-text.md-preview pre {
+  /* A long line of code must not widen the pane; it scrolls on its own. And a
+     code block is the one thing here that may use the pane's full width — it
+     is not prose, so the reading measure does not apply to it. */
+  max-width: none;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  padding: 8px 10px;
+  border-radius: 5px;
+}
+.nat-text.md-preview pre code { font-size: 0.84em; line-height: 1.45; }
+.nat-text.md-preview code { font-size: 0.85em; padding: 0.1em 0.3em; }
+
+.nat-working {
+  display: flex; align-items: center; gap: 7px;
+  font-size: calc(var(--nat-size) * 0.85);
+  color: var(--muted-foreground);
+}
+
+.nat-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--chrome);
+}
+.nat-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--nat-size);
+  line-height: 1.5;
+  outline: none;
+  max-height: 180px;
+}
+.nat-input:focus { border-color: var(--primary); }
+.nat-send {
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  /* A 44px target on a phone — below that it is a button you aim at twice. */
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  border: none;
+  background: var(--primary-gradient);
+  color: var(--primary-foreground);
+  cursor: pointer;
+}
+.nat-send:hover:not(:disabled) { background: var(--primary-gradient-hover); }
+.nat-send:disabled { opacity: 0.4; cursor: default; }
+/* Stop is destructive, and it occupies the send button's place on purpose:
+   while a turn is running, stopping it is the thing that button is for. */
+.nat-stop-btn { background: var(--destructive); color: var(--background); }
+
+/* ── The `/` completion menu ───────────────────────────────────────────────
+   Above the composer, because the composer is on the pane's bottom edge and a
+   menu under it would be off-screen. It is an accelerator, not a gate: what
+   you type reaches the agent whether or not it is in this list, which is what
+   the footer says in as few words as it can. */
+.nat-slash {
+  flex-shrink: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: var(--popover, var(--card));
+}
+.nat-slash-row {
+  width: 100%;
+  display: flex; align-items: baseline; gap: 8px;
+  /* A list you tap on a phone, so the rows are tall enough to hit. */
+  padding: 8px 12px;
+  background: none; border: none;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  font-size: calc(var(--nat-size) * 0.92);
+  color: var(--muted-foreground);
+}
+.nat-slash-on { background: color-mix(in srgb, var(--primary) 16%, transparent); }
+.nat-slash-name {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--foreground);
+}
+/* The description is the reason to have a menu at all — nobody forgets
+   `/clear`, everybody forgets what they called the skill they wrote in March.
+   Clipped rather than wrapped: a two-line row halves how many fit on screen. */
+.nat-slash-desc {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 0.85;
+}
+.nat-slash-src {
+  flex-shrink: 0;
+  font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  opacity: 0.6;
+}
+/* Where it came from, because "is this mine or does it ship with the agent"
+   changes what you expect it to do. */
+.nat-slash-src-project { color: var(--primary); opacity: 0.9; }
+.nat-slash-src-user { color: var(--warning); opacity: 0.85; }
+.nat-slash-foot {
+  position: sticky; bottom: 0;
+  padding: 5px 12px 7px;
+  background: var(--popover, var(--card));
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+/* ── "There is an app for this" ────────────────────────────────────────────
+   Shown only on an Android browser, only when an APK has actually been built,
+   and never inside the app itself — see AndroidInstallBanner.tsx. A full-width
+   strip above the mobile header rather than something floating: it must not
+   cover a pane, and it is read once and then dismissed for good. */
+.apk-banner {
+  display: flex; align-items: center; gap: 9px;
+  flex-shrink: 0;
+  padding: 8px 10px;
+  background: var(--primary-gradient);
+  color: var(--primary-foreground);
+  font-size: 12.5px;
+}
+.apk-banner > svg { flex-shrink: 0; }
+.apk-banner-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.apk-banner-get {
+  font-weight: 700; color: inherit; text-decoration: none; font-size: 13.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.apk-banner-more {
+  font-size: 11px; color: inherit; opacity: 0.8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+a.apk-banner-more { text-decoration: underline; }
+.apk-banner-x {
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  width: 26px; height: 26px;
+  border: none; border-radius: 7px;
+  background: rgba(0, 0, 0, 0.14);
+  color: inherit; cursor: pointer;
+}

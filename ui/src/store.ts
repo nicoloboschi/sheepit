@@ -947,7 +947,6 @@ const useStore = create<StoreState>((set, get) => ({
   renderSessionsInner(sessions: Session[]) {
     const { currentSessionId, workspaces, workspaceOrder } = get();
 
-    const liveSessionIds = new Set(sessions.map(s => s.id));
     // Headless panes never get a pen, and so never appear in the sidebar.
     // They are still in `sessionMap` and are reached from the Terminals panel.
     const workspaceSessions = sessions.filter(s => !s.isHeadless);

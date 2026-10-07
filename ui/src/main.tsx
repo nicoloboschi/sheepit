@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import 'xterm/css/xterm.css';
-import { initServerUrl, needsConnect, setServerUrl, installFetchInterceptor } from './serverUrl';
+import { initServerUrl, needsConnect, setServerUrl, clearServerUrl, installFetchInterceptor } from './serverUrl';
 import ConnectScreen from './components/ConnectScreen';
 import { initializePreferences } from './preferences';
 import { applyTheme, readTheme } from './theme';
@@ -82,10 +82,19 @@ function Root() {
   if (needsServer) {
     return (
       <ConnectScreen
-        onConnected={async (url) => {
-          setServerUrl(url);
+        onConnected={async (url, key) => {
+          setServerUrl(url, key);
           installFetchInterceptor();
-          await initializePreferences();
+          try {
+            await initializePreferences();
+          } catch (e) {
+            // The handshake worked, so the address and password are right and
+            // this is something else — most usefully said as itself rather
+            // than as a screen that does nothing. The stored URL is rolled
+            // back so a retry is not fighting a half-applied connection.
+            clearServerUrl();
+            throw new Error(`connected, but could not load settings: ${e instanceof Error ? e.message : String(e)}`);
+          }
           applyTheme(readTheme());
           setNeedsServer(false);
         }}

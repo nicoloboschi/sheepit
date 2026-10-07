@@ -27,8 +27,33 @@ const externalListeners = new Set<(keys: string[]) => void>();
  * two must stay in step — see the key check in src/api.ts. */
 const SERVER_URL_KEY = 'sheepit:server-url';
 
+/**
+ * Keys that stay on THIS device and never reach the shared profile.
+ *
+ * The profile is shared by every browser looking at this machine (see "One key
+ * per pen" in CLAUDE.md), which is right for what a pen *is* and wrong for how
+ * one viewer likes to look at it. A phone and a laptop want different answers
+ * to "which server do I talk to" and "do I read a pane as a terminal or as a
+ * conversation", and a shared key would have them overwriting each other's.
+ *
+ * They keep the `sheepit:` namespace and live in localStorage. Anything listed
+ * here must be read and written through `localStorage` directly — the
+ * `preferences` object below is the profile.
+ */
+const DEVICE_LOCAL = new Set([
+  SERVER_URL_KEY,
+  /** The password for that server. Beside the URL it belongs to, and for the
+   *  same reason: it describes this viewer's route in, not the machine. */
+  'sheepit:server-key',
+  /** Terminal or the native conversation view. See NativePane.tsx. */
+  'sheepit:pane-mode',
+  /** Dismissing the "install the app" banner on one phone must not hide it on
+   *  the next. See AndroidInstallBanner.tsx. */
+  'sheepit:android-banner-dismissed',
+]);
+
 function isPreferenceKey(key: string): boolean {
-  return key !== SERVER_URL_KEY && (key.startsWith('sheepit:') || key.startsWith('sheepit-'));
+  return !DEVICE_LOCAL.has(key) && (key.startsWith('sheepit:') || key.startsWith('sheepit-'));
 }
 
 function legacyValues(): PreferenceValues {

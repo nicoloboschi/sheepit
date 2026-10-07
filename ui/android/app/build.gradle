@@ -2,12 +2,65 @@ apply plugin: 'com.android.application'
 
 // Release signing is configured out-of-tree: keystore.properties (gitignored)
 // points at a keystore that lives outside the repo, so no secret is committed.
-// Without it the release build is simply left unsigned rather than failing, so
-// `assembleDebug` and CI checkouts still work on a fresh clone.
+// Without it a DEBUG build still works, so `assembleDebug` and CI checkouts are
+// fine on a fresh clone; a release build stops instead — see below.
 def keystorePropsFile = rootProject.file('keystore.properties')
 def keystoreProps = new Properties()
 if (keystorePropsFile.exists()) {
     keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
+// The APK's version IS the product's version — read from the one package.json
+// the whole repo is released from, never typed here.
+//
+// It was typed here, and it drifted: the APK said 1.5.3 while sheepit was on
+// 1.15.0, which is not a number anyone notices is wrong. A hand-bumped
+// versionCode is worse than stale, because Android *enforces* it — an APK
+// whose code has not gone up is refused as a downgrade, so forgetting it looks
+// like a broken phone rather than a forgotten edit.
+//
+// versionCode packs the semver into one increasing integer: major*10000 +
+// minor*100 + patch. That holds up to 99 minors and 99 patches, which this
+// project will not exhaust, and it is monotonic for any version bump.
+def pkg = new groovy.json.JsonSlurper().parse(rootProject.file('../../package.json'))
+def (vMajor, vMinor, vPatch) = pkg.version.tokenize('.').collect { it.toInteger() }
+def sheepitVersionCode = vMajor * 10000 + vMinor * 100 + vPatch
+
+// **The versionName carries the commit, because the semver does not identify a
+// build.** Twenty APKs are built from version 1.15.0 in a day, and "which one
+// is on my phone" is the question you actually ask — the one the release
+// number cannot answer. `1.15.0+a1b2c3d4`, with `-dirty` when the tree had
+// uncommitted changes, because an APK built from a dirty tree corresponds to
+// no commit at all and saying otherwise is worse than saying nothing.
+//
+// scripts/android.sh computes it and passes it down, so the script and the APK
+// cannot disagree about what was built. Gradle derives its own only when
+// invoked directly (Android Studio), and falls back to the bare version when
+// git is unavailable — a checkout from a tarball still builds.
+def gitDescribe = {
+    try {
+        def sha = 'git rev-parse --short=8 HEAD'.execute([], rootProject.file('../..')).text.trim()
+        if (!sha) return null
+        def dirty = 'git status --porcelain'.execute([], rootProject.file('../..')).text.trim()
+        return dirty ? "${sha}-dirty" : sha
+    } catch (Exception ignored) { return null }
+}
+def sheepitVersionName = project.hasProperty('sheepitVersionName')
+    ? project.property('sheepitVersionName')
+    : (gitDescribe() ? "${pkg.version}+${gitDescribe()}" : pkg.version)
+
+// **A release build must never come out unsigned.** Missing signing config is
+// tolerated below so a fresh clone and CI can still assembleDebug — but an
+// unsigned *release* APK installs nowhere and says nothing about why, which is
+// exactly the failure this file already warns about for versionCode. If a
+// release is what was asked for, say so and stop.
+if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+        && !keystoreProps.containsKey('storeFile')) {
+    throw new GradleException(
+        "Cannot build a release APK: no signing config.\n" +
+        "  ${keystorePropsFile} is missing or has no storeFile.\n" +
+        "  An unsigned release APK cannot be installed, so this fails here\n" +
+        "  rather than handing you one that silently does nothing.")
 }
 
 android {
@@ -17,11 +70,9 @@ android {
         applicationId "com.nicoloboschi.sheepit"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // versionName tracks the sheepit release this client ships with.
-        // versionCode is the integer Android compares on upgrade — bump it on
-        // every published APK or the install will be rejected as a downgrade.
-        versionCode 4
-        versionName "1.5.3"
+        // Both come from the repo's package.json — see above. Nothing to bump.
+        versionCode sheepitVersionCode
+        versionName sheepitVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

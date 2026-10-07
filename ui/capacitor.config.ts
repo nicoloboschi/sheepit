@@ -34,6 +34,12 @@ const config: CapacitorConfig = {
   android: {
     // Terminal output is dark; match it so there is no white flash on launch.
     backgroundColor: '#0b0d0a',
+    // A release APK is otherwise a black box: console errors go nowhere, so a
+    // white screen has no explanation and the only tool left is guessing. This
+    // exposes the WebView to `adb forward` + CDP, which is how the connect
+    // failures in this app have actually been diagnosed. It does not make the
+    // app debuggable as an Android process, and it costs nothing at runtime.
+    webContentsDebuggingEnabled: true,
   },
   backgroundColor: '#0b0d0a',
   plugins: {

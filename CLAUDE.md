@@ -1749,6 +1749,259 @@ than any pane.
 Only a new `Terminal` picks this up — it is a constructor option, so a running
 pane keeps the height it opened with until a reload.
 
+## The native view — Claude Code, drawn by sheepit
+
+A pane running Claude Code carries one more button on its bar: it swaps the
+xterm TUI for a conversation sheepit draws itself. **It is the session already
+running in that pane** — not a copy, not a fork, not a second process. Two
+wires, and that is the whole design:
+
+  **in**  — the text is typed into the pane's PTY, exactly as a keyboard would.
+            `DirectBridge.sendInput`, the same path a keystroke travels.
+  **out** — the agent's own transcript is tailed, and its rows are drawn.
+
+Which is why there is no Claude Code feature it can be missing. Slash commands,
+plan mode, `/compact`, skills, attachments, subagents, permission modes, MCP,
+whatever ships next week — **none of them are known about here**, so none of
+them can be left out. `src/claude-native.ts` is a file tailer and a PTY write.
+
+### The approach that was built first, and deleted
+
+The first cut drove a second `claude` over its stream-json stdio protocol
+(`-p --input-format stream-json --output-format stream-json`), forking the
+conversation into it with `--resume --fork-session`. It worked — real session,
+hooks firing, token-by-token streaming, a measured 137k-token context carried
+into the fork — and it was the wrong trade. A forked session is a *different*
+session writing a *different* transcript, and every TUI-only affordance either
+had to be rebuilt or given up. For a view whose whole promise is *this is your
+real session*, buying streaming with fidelity is backwards.
+
+**What the transcript costs instead is streaming within a message.** Measured
+on a real turn, the rows land as they happen:
+
+```
++18.9s  assistant ["thinking"]        ← written before the tool runs
++18.9s  assistant ["tool_use(Bash)"]
++26.3s  user ["tool_result"]          ← the moment it returns
++32.9s  assistant ["text"]            ← the answer
+```
+
+So the conversation is live to about the latency of a file write; it simply
+arrives a message at a time rather than a token at a time. Liveness in between
+comes from the pane's own busy flag — the hooks sheepit already reads — so the
+view knows the agent is working before it knows what it will say. There is
+deliberately **no second liveness mechanism**: a view that worked it out again
+could disagree with the sheep on the card beside it.
+
+### The questions the agent asks, which ARE in the transcript
+
+`AskUserQuestion` and `ExitPlanMode` are ordinary tool calls, so the questions,
+their headers, and every option's label and description are in the tool's
+input — **read, never inferred from a screen**. They were landing in the
+generic one-line tool block: a collapsed row called "AskUserQuestion" whose
+body was raw JSON, which is exactly backwards for the one tool call addressed
+to the person reading. `ChoiceBlock` draws them as questions, with the answer
+underneath once it has been given, and goes neutral once answered so it stops
+competing with whatever the agent is doing now.
+
+**It deliberately cannot be answered from here.** Picking an option in the TUI
+means arrow keys and Enter against a list this view cannot see, and a wrong
+guess answers a real question wrongly in somebody's session. So it shows the
+question in full and hands over. Answering in place needs the agent to expose
+the choice as something better than keystrokes.
+
+### The `/` menu is an accelerator, not a gate
+
+Typing `/` in the composer opens a completion menu (`src/slash-commands.ts`,
+`useSlashCommands`). Everything it offers still goes through the TUI as typed,
+and the agent is what answers for a command that does not exist — exactly as it
+would at the keyboard. **That is what makes an incomplete list acceptable**,
+and it is the only reason this can exist at all.
+
+Everything the user added is read off disk and is therefore complete and
+verifiable: skills and commands from `~/.claude` and from the pane's own
+`<cwd>/.claude`, and from every plugin under `~/.claude/plugins/cache`. That is
+the half worth having — nobody forgets `/clear`, everybody forgets what they
+called the skill they wrote in March. A plugin's skills are addressed
+`plugin:skill`, which is why those are the ones prefixed.
+
+**The built-ins are a static list, and that is a deliberate retreat.** Claude
+Code ships as a 233MB compiled binary with no machine-readable command list.
+Scraping its strings was tried: 355 candidates, mostly filesystem paths and
+minified identifiers (`/usr`, `/tmp`, `/jsx-dev-runtime`, `/zfn5`). A clever
+source that is wrong a third of the time is worse than a short list that is
+honest about being short — and the footer of the menu says so in one line.
+
+Two details: a skill's description is often a **YAML block scalar**
+(`description: >` with the text indented below), and reading the line as
+written gave every plugin skill a description of `>`. And the menu opens only
+while `/` is the *first* character and the draft holds no space — a slash in
+the middle of a sentence is a path or a date, and a menu over `src/components`
+would be in the way of nearly every message this view sends.
+
+### What it cannot show, and how much it can honestly say
+
+A dialog the TUI *draws* is **not in the transcript**, because it is not part
+of the conversation: a permission prompt, a first-run trust prompt, a
+`/resume` picker. This view cannot invent them and does not guess.
+
+It can sometimes notice. A permission prompt makes the pane bleat, which
+sheepit already knows from the agent's hooks, so the view says the pane is
+waiting on something only the terminal can show.
+
+**But not every dialog raises anything at all**, and that is worth knowing
+before trusting the card. Checked against a real first-run trust prompt
+("Is this a project you created or one you trust?"): it fires no hook and
+writes no transcript row, so the pane neither bleats nor says anything — the
+native view simply shows an empty conversation. The empty state names that
+possibility rather than leaving it a mystery, and the terminal toggle is on the
+bar at all times, so the view is never a dead end. Do not build a heuristic
+that claims to detect these; the honest answer is the one that is always true.
+
+### Details that are easy to get wrong
+
+- **Typing is bracketed paste, then Enter as its own write.** Without the
+  brackets the first newline of a multi-line message submits a half-written
+  prompt and the rest lands as a second one. Enter must be outside them, or it
+  is just a character in the pasted text.
+- **Interrupt is Escape** — a real interrupt, the same key you would press. The
+  session, its context and its transcript all survive, which is the thing the
+  forked version could not do (there it was a kill).
+- **The transcript can be replaced under you.** A `/clear`, or a resumed
+  session, starts a new file, so the path is re-asked every poll rather than
+  captured, and a change emits `reset` — the client throws its conversation
+  away and takes the new one. This fires in practice, not in theory: it was
+  seen the first time the view typed into a pane whose registered path had gone
+  stale.
+- **The transcript is not only the conversation.** It carries `attachment`,
+  `queue-operation`, `last-prompt`, `atis-latch`, `cost-state` and `system`
+  rows, and a sidechain (subagent) conversation interleaved with the main one.
+  Only non-sidechain `user` and `assistant` rows are messages — the same filter
+  ⌘K's search already applies. Claude Code also puts its own notices through as
+  `user` rows wrapped in `<...>` tags; drawn as a user bubble they read as the
+  person shouting machine output at the agent, so they are dropped.
+- **A row is routinely caught half-written**, since the agent appends as it
+  goes. The reader keeps the trailing partial line for the next read rather
+  than parsing it.
+- **What you just sent is echoed before the agent has written it down.** The
+  conversation is the transcript, and the transcript only gets your message
+  once the TUI has taken it and the agent has flushed the row — measured at
+  about three seconds. For three seconds the composer emptied and *nothing
+  happened*, which reads as a dropped message, so people send it again. The
+  echo is dropped the moment the real row arrives, matched on the text, since
+  the id is Claude Code's and is not known until then: it is a placeholder for
+  a row we know is coming, never a second copy of it.
+- **Nothing in the message list may shrink, and forgetting it hid every tool
+  call.** The list is a column flexbox, so its children take `flex-shrink: 1`
+  by default and are squashed below their content once it overflows — which it
+  always does. Text blocks resist, because text cannot be compressed; a tool
+  block has `overflow: hidden` and collapsed to **2px**, its own two borders
+  and nothing else. Every tool call in a conversation was on screen as a
+  hairline, which reads as a horizontal rule, which reads as *the tools are not
+  rendered at all* — and that is exactly how it was reported. `.nat-list > *`
+  takes `flex-shrink: 0`.
+- **A tool call is a ruled line, not a card.** It was a filled bordered box per
+  call, and a turn is mostly tool calls, so a conversation came out as a stack
+  of boxes with the prose lost between them. What the row has to answer is
+  "what did it just do", which is one line; a left rail in the brand green
+  marks the column of machine actions so they read as a margin beside the
+  prose rather than as items in it.
+- **One scale for the view, and a phone reads a size UP.** `--nat-size` on
+  `.nat-pane` is the single number everything else is `em` or `calc()` off, so
+  "make it bigger" is one edit rather than a hunt through twenty rules. 14.5px,
+  and **16px below 768px** — a phone is held at arm's length and has no pointer
+  to hover for detail. 16px on the composer is also what stops a mobile browser
+  zooming the whole viewport when the field takes focus; below that, iOS and
+  some Android keyboards scale the page and it has to be pinched back.
+  It was a flat 13px, which came out of a condensing pass that shrank the
+  *size* along with the vertical rhythm — only the rhythm needed it.
+- **Markdown must not inherit `white-space: pre-wrap`.** `.nat-text` sets it,
+  which is right for plain text and wrong for rendered Markdown: the HTML
+  react-markdown emits carries a newline between every `<li>` and every `<p>`,
+  and pre-wrap turns each one into a real line box. Measured: **25px between
+  list items whose margin is 1.45px**. Every gap in every answer was a blank
+  line too tall, which reads as the whole view being loose when it is one
+  inherited property leaking across. `white-space: normal` on the Markdown
+  variant; 25px became 1px.
+- **The measure is the typography fix.** A pane is routinely 800–900px wide,
+  and 13px prose across it is about 120 characters a line — roughly double what
+  the eye tracks comfortably, which is why a long answer read as work even
+  though nothing was wrong with it. `.nat-text` caps at **74ch**, which never
+  narrows a pane already narrower than that. A code block is exempt: it is not
+  prose, and wrapping it costs more than the width does.
+  `.md-preview` otherwise stays the GitHub view's style — 14px on 1.7 with
+  0.6em paragraph margins is right for a page of someone else's Markdown and
+  loose for a conversation, so the overrides are all one idea: tighter vertical
+  rhythm. The one that matters most is `li > p { margin: 0 }` — a list with
+  blank lines between its items is "loose" per the Markdown spec and each item
+  gets wrapped in a paragraph, so every bullet was paying a paragraph's margin.
+  The agent writes those constantly.
+- **A 200 is not an answer; the content type is.** The install banner asks
+  `HEAD /download/sheepit.apk` to find out whether there is an app to offer —
+  and a single-page app answers 200 to *every* unknown path with its own
+  index.html, which is what the dev server does and what any static host would.
+  So `r.ok` was true on exactly the machines with no APK to download. The check
+  is `content-type: application/vnd.android.package-archive`. The dev server
+  also has to proxy `/download`, or the same fallback hands the UI an HTML file
+  named `.apk`.
+- **The agent writes Markdown, so the view renders Markdown.** Showing the
+  source shows the wrong thing — `**Quality**` as literal asterisks, a table as
+  pipes. `react-markdown` + `remark-gfm` and the `.md-preview` style are
+  already in the bundle for the GitHub view, so this is the same two lines
+  rather than a second renderer with its own opinions. The *user's* own message
+  stays plain text: it is what they typed, not something to re-interpret.
+- **`/clear` has to forget the pane's agent ref**, and did not. The endpoint
+  marked the pane fresh and cleared its turns but left `agentSessions`
+  pointing at the transcript the clear had just ended, so
+  `resolveAgentTranscript` kept returning it until the next `UserPromptSubmit`
+  happened to repoint it. That is not only this view's problem: the pen card's
+  context count, ⌘K and the Agent tab all went on describing a conversation
+  that had been thrown away. `clearAgentSession` drops it, and absent is the
+  honest answer every one of those readers already copes with — no count
+  rather than a stale one. The hook that reports a clear carries a fixed body
+  (see post.sh) and so cannot hand over a new path; there is none to hand over.
+- **The project directory slug is the *resolved* path.** A session in
+  `/tmp/x` files under `-private-tmp-x` on macOS. Reconstructing the slug from
+  cwd silently finds nothing — the same trap [the Pi transcript
+  lookup](#four-agents-and-what-each-one-can-be-asked) documents, which is why
+  the path comes from `resolveAgentTranscript` rather than being rebuilt.
+
+### What switching costs, which is nothing
+
+**The terminal stays mounted**, hidden rather than unmounted — the same trade
+every pane in a pen already makes. Tearing down the xterm would discard the
+scrollback and make switching back a rebuild from the daemon's ring. Both
+directions are one click, and the PTY never knew.
+
+**The reader is dropped when nobody is watching**, and nothing is lost by that:
+the conversation is the transcript, not the object, so reopening re-reads it.
+That is the one real simplification over owning a process.
+
+**The mode is one setting for the whole app, and it is device-local.** "Do I
+read panes as a terminal or as a conversation" is a way of looking, like a zoom
+level, so having chosen it every pane you move to keeps it — a toggle that had
+to be flipped again on arrival is a toggle nobody uses. Panes mounted in the
+same window follow each other through `subscribePaneMode`, so the app is in one
+mode rather than in as many modes as it has mounted panes.
+
+It is **not** in the profile. That profile is shared by every browser looking at
+this machine (see [One key per
+pen](#one-key-per-pen-and-the-profile-talks-back)), and the right answer here
+genuinely differs between a phone — where a TUI in 390px is a hard read — and a
+laptop. `sheepit:pane-mode` therefore lives in localStorage and is listed in
+`DEVICE_LOCAL` in preferences.ts, which is what keeps the profile's own
+migration from sweeping it up. A tile is never offered the view, so it is never
+in it however the preference is set.
+
+**On a phone the key bar is hidden in this mode.** It types Esc, Tab and the
+arrows into the PTY, which is what a terminal wants and the opposite of what
+this view does — there, Esc *interrupts the agent*. The composer has the keys
+it needs.
+
+**Only Claude Code.** The button is drawn only on a pane running it: the
+transcript shape and the TUI's input handling are its, and Codex and Pi are not
+guessed at.
+
 ## Nothing reads the terminal as text
 
 Two things used to be derived by reading the output as prose. Both are gone,
@@ -2232,6 +2485,205 @@ and the pane points the browser at `http://127.0.0.1:<serverPort>/api/fs/raw…`
 relative path would be the viewing device's. `/api/browser/status` carries that
 port along with whether a browser was found. Port chips are loopback for the
 same reason, which is why they work from a phone.
+
+## The Android app
+
+A Capacitor shell (`ui/android`) around the same UI, talking to a sheepit
+server over the LAN. `ui/capacitor.config.ts` explains the two settings that
+make that work at all — an `http` WebView origin, and `CapacitorHttp` so the
+server needs no CORS headers.
+
+**The app offers its own update.** `GET /download/version` answers
+`{available, version}`, and the banner compares that against the APK's own
+`versionName` from `App.getInfo()`. **The comparison is on the commit, not the
+release number** — `1.15.0+<sha>` — because twenty APKs come out of 1.15.0 in a
+day and a release number cannot say whether the app in your hand is the code on
+the machine. That is what the sha in the version is for.
+
+Three rules keep it from becoming wallpaper: it is drawn only on Android, only
+when an APK exists (`available: false`, not a 404 — the app asks on every
+launch and a plain "no" needs no interpreting), and only when the versions
+actually differ. Dismissal is remembered **per version**, so dismissing
+"update to X" does not hide "update to Y" three commits later; that would make
+it silent exactly when it mattered.
+
+**An upgrade keeps your settings, and that is checked rather than assumed.**
+Android installs the new APK over the old one and the WebView's localStorage
+survives, so the server address, the password and the view mode are all still
+there — measured on the emulator by reading them before and after an in-place
+install. The banner says so, because "will I have to set it up again" is the
+question that stops people updating.
+
+**Getting it onto a phone is a URL**: `/download` is a page served by sheepit
+itself, offering the APK this checkout last built (`src/download.ts`). The
+phone is already able to reach this server — that is the whole point of the app
+— so it is the right place to hand the file over, and the build it serves is
+necessarily the build that matches the server it will be paired with. Nothing
+is published anywhere for that to work.
+
+It serves straight out of Gradle's output rather than copying the APK somewhere
+tidier, because a copy goes stale silently: the page would keep offering a
+two-week-old build with no way to tell. Reading the build output means the page
+is either current or honestly empty, and when it is empty it says which command
+fills it. The filename carries the version so a phone cannot hand back a cached
+older build under the same name, and the response is
+`application/vnd.android.package-archive` — Android only offers to install a
+file it has been told is a package.
+
+**Upgrading is one command**: `npm run android` builds the UI, syncs it in,
+assembles a signed release and installs it over adb on whatever is attached
+(`--build` to stop at the APK, which is all `/download` needs; `--debug` for an
+unsigned one). It exists
+because every one of those steps was a thing to remember, and the forgotten one
+was always the version: the APK sat at **1.5.3, shipping an August build of the
+UI, while sheepit was on 1.15.0**.
+
+So **the version is not typed anywhere** — `app/build.gradle` reads
+`package.json` and packs the semver into `versionCode` as
+`major*10000 + minor*100 + patch`. A hand-bumped `versionCode` is worse than a
+stale one, because Android *enforces* it: an APK whose code has not gone up is
+refused as a downgrade, which reads as a broken phone rather than a forgotten
+edit.
+
+**A release build that cannot sign now fails** instead of handing you an
+unsigned APK that installs nowhere. `keystore.properties` is gitignored and
+pointed at `~/.sheepit/android-release.jks` — it still said `~/.vipershell/`
+long after the rebrand, and the "leave it unsigned" tolerance (which exists so
+a fresh clone can still `assembleDebug`) turned that into silence. **Back that
+keystore up**: Android refuses an update signed with a different key, so losing
+it means uninstall/reinstall on every device.
+
+### Reaching it from outside the LAN
+
+**Two things broke the Android app here, and both answered 200.** They cost
+several wrong diagnoses between them, so they are worth knowing before
+debugging anything that reports `Unexpected token '<', "<!DOCTYPE "`:
+
+1. **ngrok's free-tier browser interstitial.** A request whose User-Agent looks
+   like a browser gets ngrok's own HTML warning page — **200, `text/html`** —
+   instead of being proxied. The app is a WebView, so every API call it made
+   was answered with that page. `curl` never sees it, which is why every test
+   from the command line passed while the phone failed. Any value for the
+   `ngrok-skip-browser-warning` header suppresses it, and it is harmless to
+   servers that have never heard of it. The WebSocket is unaffected — the
+   interstitial is for HTML-ish GETs — which is checkable and was checked.
+2. **The fetch interceptor matched only one of the two spellings.** Some code
+   fetches a bare `/api/...` and relies on the interceptor to prefix it; some
+   calls `apiUrl()` first and arrives already absolute. Matching only the bare
+   paths left everything built by `apiUrl` — most of the startup path,
+   preferences included — with no `Authorization` and no skip header. The app
+   got past the connect screen, rendered nothing, and said so only in a console
+   a release build does not show.
+
+Which is why `android.webContentsDebuggingEnabled` is now on in
+`capacitor.config.ts`. A release APK is otherwise a black box: a white screen
+with the explanation sitting in a console nobody can read leaves guessing as
+the only tool, and guessing is what the two wrong diagnoses were. With it,
+`adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` plus CDP
+reads the console, and the answer took one run.
+
+
+sheepit binds to the LAN and nothing in it authenticates — **anything that can
+reach it has a shell on this machine as this user**, which is the trust
+boundary the whole product has (see the security note under [The live
+browser](#the-live-browser)). So the answer to "use it from anywhere" is a
+tunnel that authenticates in front of it, not a change here.
+
+**The authentication is sheepit's, not the tunnel's**, and that is not a
+preference — a tunnel cannot do it. `config.password` (or `SHEEPIT_PASSWORD`)
+turns on `src/auth.ts`; the tunnel is left open and simply forwards.
+
+The reason is the Android app. **A WebView cannot authenticate a WebSocket.**
+A browser can: it prompts, caches the credential for the origin, and sends
+`Authorization` on the upgrade for you. The app cannot, because its UI is
+served from a `localhost` origin and talks to a *different* one, so there is no
+cached credential — and script has no API to set a header on a handshake.
+Measured against a live tunnel with `basic_auth` on: the upgrade returns 401
+without the header and connects with it, and the app has no way to add it. The
+first cut of this was tunnel-level basic auth, and it locked the app out
+completely; the symptom was the connect screen saying *Unexpected token '<'*,
+which is ngrok's HTML 401 page being parsed as JSON.
+
+So the password is checked in two channels, because that is what the two
+transports allow:
+
+| | how |
+|---|---|
+| HTTP | `Authorization: Basic <anything>:<password>` — the username is ignored, so a browser's own prompt works whatever is typed in it |
+| WebSocket | `?k=<password>` on the URL — the only channel a handshake gives you |
+
+**A request that arrived directly on loopback is exempt**, since whoever sent
+it can already open a terminal here. "Directly" is load-bearing: a tunnelled
+request *also* arrives from 127.0.0.1, so the test is loopback **and no
+forwarding header**. Every proxy sets `x-forwarded-for`, and a direct
+connection cannot forge one in a direction that weakens the check.
+
+The 401 carries `WWW-Authenticate`, which is what makes a browser put up its
+own prompt — that is how `/download` is reachable before there is an app.
+
+The tunnel itself is a launchd agent
+(`~/Library/LaunchAgents/dev.sheepit.ngrok.plist`, `KeepAlive`) running
+`ngrok start sheepit`, with the tunnel defined in `~/Library/Application
+Support/ngrok/ngrok.yml` rather than on a command line. It needs `HOME` and a
+`PATH` in its environment: launchd gives a job neither, and ngrok reads its
+config out of the user's Application Support directory.
+
+The phone then takes the `https://….ngrok-free.app` URL as its server address,
+and `/download` on that same URL hands over the APK. Two things make this work
+without any change to sheepit: ngrok's basic auth covers the **WebSocket
+upgrade** as well, because that is an HTTP request, and the app speaks https to
+it without the mixed-content problem that `androidScheme: 'http'` exists to
+avoid (see capacitor.config.ts).
+
+**A tunnel without auth is a shell on the public internet.** `cloudflared
+tunnel --url http://localhost:4445` is one command and gives a working URL, and
+it is the wrong tool here for exactly that reason. If a tunnel that cannot
+authenticate is ever the only option, sheepit needs auth of its own first —
+HTTP Basic on every route *and* on the upgrade handler, since a WebSocket that
+skips the check is the whole API.
+
+### A phone is not a narrow desktop
+
+Two things were costing most of the device, and both were the same mistake —
+rendering what a phone does not show. Measured in the APK with the same
+`/api/perf` feed everything else uses (on an emulator with a software GPU, so
+read the ratios, not the milliseconds):
+
+| | before | after |
+|---|---|---|
+| main thread blocked | 16,017 ms/min | **811** |
+| fps | 9.4 | **27.6** |
+| worst frame | 2503ms | 3620ms once at startup, then ≤440 |
+| cold launch (`am start -W`) | 2178ms | **777ms** |
+
+- **The sidebar is not mounted on a phone.** It carries `hidden md:flex`, so
+  below 768px it was `display: none` and rendering the whole time behind it —
+  8 pens, 41 pane cards, 41 sheep and the fence and grass canvases, every
+  sweep. `commit:sidebar` was **78 ms/sec with a worst commit of 1180ms**,
+  against 2.8 on the desktop: about 70% of all the React work on the device,
+  for pixels never painted. The phone has its own copy anyway — the Pens sheet
+  renders its own `SessionList`, and only while it is open. This is the third
+  instance of the same bug in this file; see [Measuring the
+  UI](#measuring-the-ui--one-place-always-on). **`display: none` stops the
+  painting, never the rendering.**
+- **A phone opens on the terminal, alone, and remembers no view.**
+  `sheepit:pane-views` lives in the shared profile, so the phone was opening
+  whichever split the desktop last had out — halving a 390px screen, and
+  costing `commit:split:split-agent` **9.1 of `commit:pane`'s 10.3 ms/sec** for
+  a tool nobody on that device had asked for. A narrow screen now neither reads
+  that key nor writes it, exactly as a tile does not; the rail still works
+  while you are there. A second storage key would buy a remembered tool across
+  app launches, which is not what a phone is for.
+
+`isNarrowScreen()` / `NARROW_QUERY` in `ui/src/platform.ts` are the one
+definition of the breakpoint, matching Tailwind's `md:` so the CSS and the
+mounting decisions can never disagree.
+
+**What is left, and not done:** startup. The first 10-second window still
+carries one ~3.6s frame, which is the bundle — `App-*.js` is 1.17 MB, and
+dnd-kit is in it and then disabled on mobile (`dndEnabled = !isMobile`). A lazy
+boundary around it is the next real lever; everything after that first window
+is already at zero long tasks for stretches.
 
 ### The desktop app's browser
 

@@ -12,6 +12,10 @@ import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import { MAX_HEADLESS, MAX_SIDE_TERMINALS, type BridgeMessage } from './protocol.js';
 import type { AIService } from './ai.js';
 import { vibeSessionsDir } from './paths.js';
+import { NativeSessions } from './claude-native.js';
+import { createDownloadRouter } from './download.js';
+import { configureAuth, requireAuth, isAuthorized } from './auth.js';
+import { config as appConfig } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -146,8 +150,18 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
   // validate it, so allow a bounded 2 MB request body instead.
   app.use(express.json({ limit: '2mb' }));
 
+  // The password, in front of everything. Mounted before the API, the download
+  // page and the static UI, because all three are the same machine. A request
+  // that arrived directly on loopback is exempt — see src/auth.ts.
+  configureAuth(appConfig.password);
+  app.use(requireAuth);
+
   // REST API
   app.use('/api', createApiRouter(bridge, logBuffer, ai));
+
+  // The Android app, from the server you are about to point it at. Mounted
+  // before the static UI so the catch-all below cannot swallow it.
+  app.use('/download', createDownloadRouter());
 
   const server = createServer(app);
 
@@ -182,8 +196,21 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
       : pathname === BROWSER_WS_PATH ? browserWss
       : null;
     if (!target) { socket.destroy(); return; }
+    // **The WebSocket is the whole API**, so it is checked here too — and it
+    // is checked against the query string, because script cannot put a header
+    // on a handshake. See src/auth.ts.
+    if (!isAuthorized(req, new URL(req.url ?? '/', 'http://localhost'))) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="sheepit"\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     target.handleUpgrade(req, socket, head, ws => target.emit('connection', ws, req));
   });
+
+  /** A pane's Claude Code session read as a conversation — what the native
+   *  view is made of. It owns no process: the agent is the one already running
+   *  in the pane, typed into and tailed. See claude-native.ts. */
+  const native = new NativeSessions();
 
   // Track active WebSocket clients for diagnostics
   const activeClients = new Set<{ ws: WebSocket; state: ClientState; connectedAt: number; messageCount: number; bytesSent: number }>();
@@ -204,6 +231,8 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
 
   wss.on('connection', (ws: WebSocket) => {
     const state: ClientState = { subscribedSessions: new Map(), unsubSessions: null, watchedFiles: new Map() };
+    /** This client's native-view subscriptions, by pane. */
+    const nativeSubs = new Map<string, () => void>();
     const clientInfo = { ws, state, connectedAt: Date.now(), messageCount: 0, bytesSent: 0 };
     activeClients.add(clientInfo);
     logger.debug(`WS client connected (total: ${activeClients.size})`);
@@ -261,6 +290,53 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             const sessionId = msg.session_id as string;
             state.subscribedSessions.get(sessionId)?.();
             state.subscribedSessions.delete(sessionId);
+            break;
+          }
+
+          // ── The native view ────────────────────────────────────────────
+          // A real Claude Code session, driven over its stream-json stdio
+          // protocol instead of drawn into a PTY. See claude-native.ts; the
+          // raw protocol stops there and only NativeEvents come through here.
+          case 'native_open': {
+            const sessionId = msg.session_id as string;
+            if (nativeSubs.has(sessionId)) break;
+            const sess = (await bridge.listSessions()).find(s => s.id === sessionId);
+            if (!sess) break;
+            const s = await native.open(
+              sessionId,
+              sess.path || process.cwd(),
+              // Re-asked every poll rather than captured: a `/clear` starts a
+              // new transcript, and the pane's hooks are what know about it.
+              () => bridge.resolveAgentTranscript(sessionId),
+              (data) => bridge.sendInput(sessionId, data),
+            );
+            nativeSubs.set(sessionId, s.subscribe(event => send({ type: 'native_event', session_id: sessionId, event })));
+            break;
+          }
+
+          case 'native_close': {
+            const sessionId = msg.session_id as string;
+            nativeSubs.get(sessionId)?.();
+            nativeSubs.delete(sessionId);
+            // Drops the reader once nobody is watching. There is nothing to
+            // lose: the conversation is the transcript, not this object.
+            native.release(sessionId);
+            break;
+          }
+
+          case 'native_send': {
+            native.get(msg.session_id as string)?.send(String(msg.text ?? ''));
+            break;
+          }
+
+          case 'native_interrupt': {
+            native.get(msg.session_id as string)?.interrupt();
+            break;
+          }
+
+          // Raw keys, for the TUI dialogs the conversation view cannot draw.
+          case 'native_key': {
+            native.get(msg.session_id as string)?.raw(String(msg.data ?? ''));
             break;
           }
 
@@ -423,6 +499,8 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
       for (const stop of state.watchedFiles.values()) stop();
       state.watchedFiles.clear();
       state.unsubSessions?.();
+      for (const [sid, unsub] of nativeSubs) { unsub(); native.release(sid); }
+      nativeSubs.clear();
       activeClients.delete(clientInfo);
       logger.debug(`WS client disconnected (total: ${activeClients.size})`);
     });

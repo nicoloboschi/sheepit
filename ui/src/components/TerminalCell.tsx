@@ -273,6 +273,8 @@ function saveSplitPct(sid: string, pct: number): void {
 }
 import { useDndEnabled } from '../dndEnabled';
 import { preferences } from '../preferences';
+import { isNarrowScreen } from '../platform';
+import NativePane, { readPaneMode, writePaneMode, subscribePaneMode } from './NativePane';
 
 // No output filtering needed — direct PTY output is passed through as-is.
 // (The old tmux bridge needed alt-screen stripping because tmux attach
@@ -430,7 +432,49 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
   // the git view can open a file in this same pane.
   // New panes default to the split view (terminal + file browser); panes with a
   // saved preference reopen on whatever view they were left on.
-  const [view, setView] = useState<PaneView>(() => (tile ? 'terminal' : readPaneView(sessionId) ?? 'split'));
+  // **A phone opens on the terminal, alone, and remembers nothing.**
+  //
+  // `sheepit:pane-views` lives in the shared profile, so the phone was opening
+  // whatever split the desktop last had out — and a split halves a screen that
+  // is 390px wide to begin with, which is most of the reason the app felt
+  // cramped. It was also most of the reason it felt slow: measured in the APK,
+  // `commit:split:split-agent` alone was 9.1 of `commit:pane`'s 10.3 ms/sec,
+  // for a tool nobody on that device had asked for.
+  //
+  // So a narrow screen neither reads the saved view nor writes one, exactly as
+  // a tile does not (see above). The rail is still there and a tool opened on
+  // the phone stays open while you are in it; what does not happen is one
+  // device choosing the other's layout. A second storage key would buy a
+  // remembered tool across app launches, which is not what a phone is for.
+  const narrow = tile || isNarrowScreen();
+  const [view, setView] = useState<PaneView>(() => (narrow ? 'terminal' : readPaneView(sessionId) ?? 'split'));
+
+  /** Claude Code drawn as a conversation rather than as a terminal.
+   *
+   *  **One setting for the whole app, not one per pane.** "Do I read panes as
+   *  a terminal or as a conversation" is a way of looking, like a zoom level —
+   *  so having chosen it, every pane you move to should keep it, and a toggle
+   *  that had to be flipped again on arrival would be a toggle nobody uses.
+   *
+   *  **Device-local, so it is not in the profile.** That profile is shared by
+   *  every browser looking at this machine, and the answer here genuinely
+   *  differs between a phone (where a TUI in 390px is a hard read) and a
+   *  laptop. See DEVICE_LOCAL in preferences.ts.
+   *
+   *  A tile is a scratch shell and is never offered this, so it is never on
+   *  for one however the preference is set.
+   *
+   *  The terminal stays mounted underneath (see the style below): switching
+   *  back is instant, the scrollback is intact, and the PTY never knew. */
+  const [nativeOn, setNativeOn] = useState(() => !tile && readPaneMode() === 'native');
+  const toggleNative = useCallback(() => {
+    setNativeOn(on => { writePaneMode(!on ? 'native' : 'terminal'); return !on; });
+  }, []);
+  // Another pane in this window just flipped it — follow, so the app is in one
+  // mode rather than in as many modes as it has mounted panes.
+  useEffect(() => subscribePaneMode(mode => { if (!tile) setNativeOn(mode === 'native'); }), [tile]);
+  /** Only a Claude Code pane is offered the native view; see the pane bar. */
+  const isClaudeCode = useStore(s => !!s.sessionMap[sessionId]?.isClaudeCode);
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -485,7 +529,10 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    *  still leaves the narrow half ~220px — about the least a file tree or an
    *  address bar can use — and the terminal its 80 columns at a small font. */
   const stacked = paneW > 0 && paneW < 560;
-  useEffect(() => { if (!tile) savePaneView(sessionId, view); }, [view, sessionId, tile]);
+  // `narrow`, not `tile`: a phone must not write its view into the shared
+  // profile either, or opening Files once on the phone reopens it on every
+  // desktop. See the comment on `narrow` above.
+  useEffect(() => { if (!narrow) savePaneView(sessionId, view); }, [view, sessionId, narrow]);
   /** The tool to bring back when the tools are shown again. */
   const lastToolRef = useRef<PaneView>(view === 'terminal' ? 'split' : view);
   if (view !== 'terminal') lastToolRef.current = view;
@@ -1809,6 +1856,12 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
         toolsOpen={isSplit}
         // No tools in a tile — so no button offering them either.
         onToggleTools={tile ? undefined : toggleTools}
+        nativeOn={nativeOn}
+        // Only where it can work. The native view drives `claude`, so a pane
+        // holding Codex, Pi or a plain shell is not offered a button that
+        // would open somebody else's agent. A tile is a scratch shell and has
+        // no tools at all, by the same rule the rail follows.
+        onToggleNative={!tile && isClaudeCode ? toggleNative : undefined}
       />
       {/* Terminal surface — own relative container so absolute-positioned
           .terminal-pane fills only this area (below the header), and the
@@ -1827,10 +1880,21 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
             : { width: `${termPct}%`, flexShrink: 0 })
           : { flex: 1 }),
       }}>
+      {/* The terminal stays MOUNTED under the native view, hidden rather than
+          unmounted — the same trade every pane in a pen already makes. Tearing
+          down the xterm would discard the scrollback and make switching back a
+          rebuild from the daemon's ring; this way the two views are one click
+          apart in both directions and the PTY never knew. */}
       <div
         ref={containerRef}
         className="terminal-pane"
+        style={nativeOn ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
       />
+      {nativeOn && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: 'flex' }}>
+          <NativePane sessionId={sessionId} onOpenTerminal={() => setNativeOn(false)} />
+        </div>
+      )}
       {imgPasteBusy && (
         <div style={{
           position: 'absolute', bottom: 16, right: 16, zIndex: 21,

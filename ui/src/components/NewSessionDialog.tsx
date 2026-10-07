@@ -21,7 +21,7 @@ interface ProjectGroup {
   variants: { path: string; label: string }[];
 }
 
-function groupProjects(dirs: string[], sessions: Session[], username?: string): ProjectGroup[] {
+function groupProjects(dirs: string[], sessions: Session[]): ProjectGroup[] {
   // Build a map of path → best session info (most recent)
   const pathInfo = new Map<string, { branch?: string; dirty?: boolean; lastActivity?: number }>();
   for (const s of sessions) {
@@ -82,7 +82,7 @@ export default function NewSessionDialog({ onClose, onSelect, title, icon }: New
   const sessions = useStore(s => s.sessions);
   const username = sessions.find(s => s.username)?.username;
   const dirs = useMemo(() => [...new Set(sessions.map(s => s.path).filter(Boolean))] as string[], [sessions]);
-  const projects = useMemo(() => groupProjects(dirs, sessions, username), [dirs, sessions, username]);
+  const projects = useMemo(() => groupProjects(dirs, sessions), [dirs, sessions]);
 
   const [filter, setFilter] = useState('');
   const [showBrowse, setShowBrowse] = useState(false);

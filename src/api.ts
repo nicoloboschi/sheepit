@@ -9,6 +9,7 @@ import { configDir, notesDir, screenshotsDir } from './paths.js';
 import type { DirectBridge, AgentState } from './direct-bridge.js';
 import { AGENT_STATES } from './direct-bridge.js';
 import { readAgentInfo, type AgentInfo } from './agent-info.js';
+import { listSlashCommands } from './slash-commands.js';
 import { getPluginStatus, reinstallAgentPlugin } from './plugin-install.js';
 import { recordHook, hookTrace, HOOK_TRACE_RETENTION_MS } from './hook-trace.js';
 import { extractPrRefs } from './pr-refs.js';
@@ -1151,6 +1152,11 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
 
       bridge.clearAgentTurn(id);
       bridge.markSessionFresh(id);
+      // The old conversation is over, so the pointer to it has to go with it —
+      // otherwise every reader of the transcript (the context count, ⌘K, the
+      // Agent tab, the native view) keeps describing a conversation that was
+      // just thrown away.
+      bridge.clearAgentSession(id);
 
       // Never rename over a name a human chose — `/clear` wipes the agent's
       // context, not the user's intent for what this pane is called.
@@ -1239,6 +1245,27 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
    * the agent replies, so re-reading an unchanged one is pure waste — the same
    * trick `contextTokens` uses, which is why that one stats before it reads.
    */
+  /**
+   * What `/` can mean in this pane — for the native view's completion menu.
+   *
+   * Cached briefly: the menu asks on every open, and the answer is a directory
+   * walk whose inputs change when somebody writes a skill, which is not often.
+   */
+  const slashCache = new Map<string, { at: number; value: unknown }>();
+  router.get('/sessions/:id/slash-commands', async (req, res) => {
+    try {
+      const session = (await bridge.listSessions()).find(s => s.id === req.params.id);
+      const cwd = session?.path ?? '';
+      const hit = slashCache.get(cwd);
+      if (hit && Date.now() - hit.at < 30_000) return res.json(hit.value);
+      const value = { commands: listSlashCommands(cwd) };
+      slashCache.set(cwd, { at: Date.now(), value });
+      res.json(value);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   router.get('/sessions/:id/agent', async (req, res) => {
     try {
       const path = bridge.resolveAgentTranscript(req.params.id);

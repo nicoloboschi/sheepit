@@ -1318,6 +1318,29 @@ export class DirectBridge {
   }
 
   /**
+   * `/clear` ended the conversation this pane was having — forget it.
+   *
+   * Without this the ref outlives the thing it points at: `resolveAgentTranscript`
+   * went on returning the *pre-clear* transcript until the next
+   * `UserPromptSubmit` happened to repoint it, so a cleared pane kept its old
+   * context count on its card, kept matching ⌘K on a conversation that no
+   * longer exists, and showed the whole of it in the native view. The hook
+   * that reports the clear carries a fixed body and so cannot hand over a new
+   * path (see post.sh); there is no new path to hand over anyway — a cleared
+   * pane has no conversation until somebody starts one.
+   *
+   * Absent is the honest answer here, and every reader already copes with it:
+   * no count rather than a stale one, no transcript rather than the wrong one.
+   */
+  clearAgentSession(sessionId: string): void {
+    if (!this.agentSessions.delete(sessionId)) return;
+    // The Pi discovery cache is keyed on the pane and would hand the old file
+    // straight back on the next lookup.
+    this.piPaths.delete(sessionId);
+    this.persistSession(sessionId);
+  }
+
+  /**
    * The transcript file for a pane, or null when there is nothing to read.
    *
    * Claude's path is stored directly. Codex reports only a session id, and its

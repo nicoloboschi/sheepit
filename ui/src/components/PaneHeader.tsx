@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SquareTerminal, X, PanelRight, RotateCcw, Pi, Feather } from 'lucide-react';
+import { SquareTerminal, X, PanelRight, RotateCcw, Pi, Feather, MessageSquare } from 'lucide-react';
 import useStore from '../store';
 import SheepStatus, { type SheepState } from './SheepStatus';
 import StatChips from './StatChips';
@@ -28,10 +28,14 @@ interface PaneHeaderProps {
    *  When a toggle is given, the header shows one button to show/hide them. */
   toolsOpen?: boolean;
   onToggleTools?: () => void;
+  /** Claude Code drawn as a conversation instead of a terminal. Offered only
+   *  on a pane actually running Claude Code — see NativePane.tsx. */
+  nativeOn?: boolean;
+  onToggleNative?: () => void;
 }
 
 
-export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, toolsOpen, onToggleTools }: PaneHeaderProps) {
+export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, toolsOpen, onToggleTools, nativeOn, onToggleNative }: PaneHeaderProps) {
   const session     = useStore(s => s.sessionMap[sessionId]);
   // The pane's own sheep, in the same four states and the same precedence as
   // the sidebar's — bleating over grazing, live over idle. There is room for
@@ -207,6 +211,22 @@ export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, 
         <div className="pane-bar-actions">
         {/* Show/hide the tools beside the terminal. Which tool is showing is
             picked on the tools' own rail, not up here. */}
+        {/* Terminal <-> native. It sits with the tools toggle because it
+            answers the same kind of question — what this pane is showing —
+            and before it because it changes the bigger half. Drawn only where
+            it can work: the native view drives `claude`, so a pane running
+            Codex or a plain shell is not offered it. */}
+        {onToggleNative && <div className="pane-bar-divider" />}
+        {onToggleNative && (
+          <button
+            className="pane-bar-btn pane-bar-views"
+            title={nativeOn ? 'Back to the terminal' : 'Switch to the native view — Claude Code as a conversation'}
+            onClick={(e) => { e.stopPropagation(); onToggleNative(); }}
+            style={{ color: nativeOn ? 'var(--primary)' : undefined }}
+          >
+            <MessageSquare size={13} />
+          </button>
+        )}
         {onToggleTools && <div className="pane-bar-divider" />}
         {onToggleTools && (
           <button

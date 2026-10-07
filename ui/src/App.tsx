@@ -20,12 +20,15 @@ import { requestNotificationPermission } from './utils';
 import { ensureStackLoaded } from './googleFonts';
 import * as sharedWs from './sharedWs';
 import Sidebar from './components/Sidebar';
+import { isNarrowScreen, NARROW_QUERY } from './platform';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
 // Deferred: the Knowledge dialog carries MDXEditor, which nothing else uses
 // and most sessions never open.
 const KnowledgeDialog = lazy(() => import('./components/KnowledgeDialog'));
 import MobileKeybar from './components/MobileKeybar';
+import AndroidInstallBanner from './components/AndroidInstallBanner';
+import { readPaneMode, subscribePaneMode } from './components/NativePane';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
 import CommandsDialog, { loadCommands } from './components/CommandsDialog';
@@ -458,14 +461,20 @@ export default function App() {
   // Mobile = narrow viewport. All dnd-kit interactivity turns off on mobile
   // via the DndEnabledContext below — on touch + small screens the drag
   // affordances are hard to hit and users just want to tap to switch.
-  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+  const [isMobile, setIsMobile] = useState(isNarrowScreen);
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
+    const mq = window.matchMedia(NARROW_QUERY);
     const onChange = () => setIsMobile(mq.matches);
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
   const dndEnabled = !isMobile;
+
+  /** Terminal or the native conversation view — one setting for this device.
+   *  App reads it only to decide whether the mobile key bar belongs on screen;
+   *  the panes own the rest. See NativePane.tsx. */
+  const [paneMode, setPaneMode] = useState(readPaneMode);
+  useEffect(() => subscribePaneMode(setPaneMode), []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -675,11 +684,27 @@ export default function App() {
             the only question a wrapper here can answer that a render counter
             cannot. Reported into ui/src/perf.ts as `commit:*` so it ranks
             beside every other hotspot. */}
-        <Profiler id="sidebar" onRender={recordCommit}>
-          <Sidebar onConnect={connectSession} send={send} />
-        </Profiler>
+        {/* **Not mounted on a phone**, rather than hidden on one.
+            `Sidebar` carries `hidden md:flex`, so below 768px it was display:
+            none — and rendering the whole time behind it: 8 pens, 41 pane
+            cards, 41 sheep and the fence and grass canvases, every sweep, for
+            pixels that are never painted. Measured in the Android app,
+            `commit:sidebar` was **78 ms/sec with a worst commit of 1180ms**,
+            against 2.8 on the desktop — about 70% of all the React work on the
+            device, on the one surface a phone does not show.
+            The phone has its own copy anyway: the Pens sheet renders its own
+            SessionList, and only while it is open (see MobileTopBar).
+            Same bug as the hidden browser pane's timer and the hidden panes'
+            splits — see Measuring the UI in CLAUDE.md. `display: none` stops
+            the painting, never the rendering. */}
+        {!isMobile && (
+          <Profiler id="sidebar" onRender={recordCommit}>
+            <Sidebar onConnect={connectSession} send={send} />
+          </Profiler>
+        )}
 
         <div className="flex flex-col flex-1 min-w-0">
+          <AndroidInstallBanner />
           <MobileTopBar onConnect={connectSession} send={send} />
 
           <Profiler id="pane" onRender={recordCommit}>
@@ -688,7 +713,13 @@ export default function App() {
               send={send}
             />
           </Profiler>
-          <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
+          {/* The key bar types Esc, Tab and the arrows into the PTY, which is
+              what a terminal wants and the opposite of what the conversation
+              view does — there, Esc *interrupts the agent*. So it is drawn only
+              in terminal mode. The composer has the keys it needs. */}
+          {paneMode === 'terminal' && (
+            <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
+          )}
         </div>
 
         <ConfirmDialog />

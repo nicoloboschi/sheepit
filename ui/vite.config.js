@@ -26,6 +26,10 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': `http://${backendHost}:${backendPort}`,
+      // The APK download page. Without this, Vite's SPA fallback answers it
+      // with index.html — a 200 that is not an APK, which is worse than a 404
+      // because everything downstream believes it.
+      '/download': `http://${backendHost}:${backendPort}`,
       '/ws': {
         target: `ws://${backendHost}:${backendPort}`,
         ws: true,

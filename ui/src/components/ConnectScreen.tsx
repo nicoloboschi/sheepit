@@ -1,10 +1,15 @@
 import { useState } from 'react';
-import { Wifi, Loader2 } from 'lucide-react';
-import { getServerUrl } from '../serverUrl';
+import { Wifi, Loader2, KeyRound } from 'lucide-react';
+import { getServerUrl, getServerKey, authHeader } from '../serverUrl';
 import SheepIcon from './SheepIcon';
 
 interface ConnectScreenProps {
-  onConnected: (serverUrl: string) => void;
+  /** Awaited, so whatever it does after the handshake — loading preferences,
+   *  the theme, the app chunk — reports its failure on this screen instead of
+   *  rejecting into nothing. Without the await a rejection here left the
+   *  screen sitting there: the error cleared, the spinner stopped, and the
+   *  button went back to "Connect" as though nothing had been asked. */
+  onConnected: (serverUrl: string, key: string) => void | Promise<void>;
 }
 
 export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
@@ -14,21 +19,57 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
     // Default to current network
     return 'http://192.168.1.100:4445';
   });
+  const [key, setKey] = useState(getServerKey);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
 
   async function connect() {
     setTesting(true);
     setError('');
-    const cleaned = url.replace(/\/+$/, '');
+    // A pasted URL often carries its own credentials, and typing them twice is
+    // a way to get one of them wrong. `https://user:pass@host` is split here,
+    // the password kept and the userinfo dropped — it must not be sent on the
+    // wire, where proxies log it.
+    let cleaned = url.trim().replace(/\/+$/, '');
+    // **A bare hostname is a relative URL to fetch()**, which resolves against
+    // the WebView's own `localhost` origin and quietly returns the app's own
+    // index.html. That is indistinguishable from a server answering wrongly,
+    // so the scheme is filled in rather than left to chance: http for an IP or
+    // localhost, which is a LAN server, https for a name, which is a tunnel.
+    if (!/^https?:\/\//i.test(cleaned)) {
+      const bare = cleaned.split('/')[0]!.split(':')[0]!;
+      const local = /^(\d{1,3}\.){3}\d{1,3}$/.test(bare) || /^localhost$/i.test(bare) || bare.endsWith('.local');
+      cleaned = `${local ? 'http' : 'https'}://${cleaned}`;
+    }
+    let k = key;
+    try {
+      const u = new URL(cleaned);
+      if (u.password) { k = decodeURIComponent(u.password); u.username = ''; u.password = ''; cleaned = u.toString().replace(/\/+$/, ''); }
+    } catch { /* not a full URL yet — let the fetch below say so */ }
+
     try {
       const res = await fetch(`${cleaned}/api/version`, {
+        headers: authHeader(k),
         signal: AbortSignal.timeout(5000),
       });
+      // 401 is not "cannot reach it" — it is the one failure with an obvious
+      // fix, and saying `HTTP 401` instead of naming it is how someone ends up
+      // retyping a URL that was right all along.
+      if (res.status === 401) throw new Error(k ? 'wrong password' : 'this server needs a password');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // **Check what came back before parsing it.** Several things answer 200
+      // with HTML — a tunnel's own interstitial, a reverse proxy's error page,
+      // this very app when the address was relative — and letting JSON.parse
+      // be the one to notice reports it as `Unexpected token '<'`, which sends
+      // people off to debug their server when the address is the problem.
+      const type = res.headers.get('content-type') ?? '';
+      if (!type.includes('json')) {
+        throw new Error('that address answered with a web page, not sheepit — check it is the right host');
+      }
       const data = await res.json();
       if (!data.version) throw new Error('Not a sheepit server');
-      onConnected(cleaned);
+      setUrl(cleaned); setKey(k);
+      await onConnected(cleaned, k);
     } catch (e) {
       setError(`Can't connect: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -67,6 +108,30 @@ export default function ConnectScreen({ onConnected }: ConnectScreenProps) {
             onKeyDown={e => e.key === 'Enter' && connect()}
             placeholder="http://192.168.1.100:4445"
             autoFocus
+            style={{
+              width: '100%',
+              padding: '10px 12px 10px 34px',
+              borderRadius: 8,
+              border: '1px solid var(--border)',
+              background: 'var(--card)',
+              color: 'var(--foreground)',
+              fontSize: 14,
+              fontFamily: 'var(--font-mono)',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        <div style={{ position: 'relative' }}>
+          <KeyRound size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
+          <input
+            type="password"
+            value={key}
+            onChange={e => setKey(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && connect()}
+            placeholder="password (if the server has one)"
+            autoComplete="current-password"
             style={{
               width: '100%',
               padding: '10px 12px 10px 34px',
