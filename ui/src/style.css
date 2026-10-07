@@ -3630,6 +3630,23 @@
   overflow: auto;
 }
 
+/* An image named in the output, shown. Bounded: a 4000px screenshot is not a
+   message, and the conversation has to stay scannable past it. */
+.nat-img {
+  display: block;
+  margin: 6px 0;
+  max-width: min(100%, 420px);
+  max-height: 260px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--nat-card-radius);
+  background: var(--accent);
+  cursor: pointer;
+}
+.nat-img:hover { border-color: var(--primary); }
+
 .nat-system {
   font-size: calc(var(--nat-size) * 0.82);
   color: var(--muted-foreground);
@@ -4017,8 +4034,20 @@
 .nat-send:hover:not(:disabled) { background: var(--primary-gradient-hover); }
 .nat-send:disabled { opacity: 0.4; cursor: default; }
 /* Stop is destructive, and it occupies the send button's place on purpose:
-   while a turn is running, stopping it is the thing that button is for. */
-.nat-stop-btn { background: var(--destructive); color: var(--background); }
+   while a turn is running, stopping it is the thing that button is for. It is
+   the one control here anybody goes looking for in a hurry, so it carries the
+   word as well as the glyph and takes the width that needs. */
+.nat-stop-btn {
+  background: var(--destructive);
+  color: var(--background);
+  width: auto;
+  padding: 0 11px;
+  gap: 5px;
+  grid-auto-flow: column;
+  font-size: calc(var(--nat-size) * 0.82);
+  font-weight: 600;
+}
+.nat-stop-btn:hover { filter: brightness(1.12); }
 
 /* ── The `/` completion menu ───────────────────────────────────────────────
    Above the composer, because the composer is on the pane's bottom edge and a

@@ -241,9 +241,53 @@ function linkifyPaths(node: any, inside = false): void {
 
 const rehypeFilePaths = () => (tree: any) => { linkifyPaths(tree); };
 
+/** The pane's cwd, so a relative image path can be resolved to a file. */
+const PaneCwd = createContext<string>('');
+
+/**
+ * The URL that shows this image, or null if it is not one.
+ *
+ * An agent names images constantly — a screenshot it just took, a diagram it
+ * wrote, a failing visual test — and every one of them was a line of grey text
+ * you had to go and open somewhere else. A path is a picture; show the picture.
+ *
+ * The extension test is written here rather than imported from `FileView`,
+ * which exports the same list: that module pulls the syntax highlighter and
+ * the lazy editor behind it, and importing one predicate from it would put all
+ * of that in this chunk. Same reason `lang.ts` exists.
+ */
+function imageUrl(raw: string | undefined, cwd: string): string | null {
+  if (!raw) return null;
+  if (!/\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)(?:[?#]|$)/i.test(raw)) return null;
+  if (/^(?:https?:|data:)/i.test(raw)) return raw;
+  // Any other scheme is something we should not be fetching into an <img>.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
+  const abs = raw.startsWith('/') || raw.startsWith('~') ? raw : `${cwd}/${raw.replace(/^\.\//, '')}`;
+  return `/api/fs/raw?path=${encodeURIComponent(abs)}`;
+}
+
+/** The picture itself. Bounded, because a 4000px screenshot is not a message,
+ *  and it stays out of the way when the file has gone (`onError`). */
+function Thumb({ src, alt, onOpen }: { src: string; alt?: string; onOpen?: () => void }) {
+  const [dead, setDead] = useState(false);
+  if (dead) return null;
+  return (
+    <img
+      className="nat-img"
+      src={src}
+      alt={alt ?? ''}
+      loading="lazy"
+      title={onOpen ? 'Open' : undefined}
+      onClick={onOpen}
+      onError={() => setDead(true)}
+    />
+  );
+}
+
 const Markdown = memo(function Markdown({ text }: { text: string }) {
   const onLink = useContext(LinkHandler);
   const onFile = useContext(FileHandler);
+  const cwd = useContext(PaneCwd);
   return (
     <div className="nat-text md-preview">
       <ReactMarkdown
@@ -270,26 +314,52 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
             }
             return <code {...p} className={className}>{children}</code>;
           },
-          a: ({ node: _n, href, ...p }) => (
-            <a
-              {...p}
-              href={href}
-              // Kept on the anchor so the URL is in the status bar, and so a
-              // middle-click or "copy link" still behaves — only the plain
-              // left click is taken.
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => {
-                if (e.button !== 0) return;
-                // A path, not a URL — opens the Files panel, as in the terminal.
-                const path = (e.currentTarget as HTMLAnchorElement).dataset.path;
-                if (path) { e.preventDefault(); onFile?.(path); return; }
-                if (!href || !onLink) return;
-                e.preventDefault();
-                onLink(e.nativeEvent, href);
-              }}
-            />
-          ),
+          // `![](…)` — a local path needs routing through the raw-file
+          // endpoint, or the browser asks the *viewing* device for it.
+          img: ({ node: _n, src, alt }) => {
+            const u = imageUrl(typeof src === 'string' ? src : undefined, cwd);
+            return u ? <Thumb src={u} alt={alt} /> : null;
+          },
+          a: ({ node: _n, href, ...p }) => {
+            // A path put here by rehypeFilePaths, or an ordinary link's href.
+            const target = (p as Record<string, unknown>)['data-path'] as string | undefined;
+            const img = imageUrl(target ?? href, cwd);
+            return (
+              <>
+                <a
+                  {...p}
+                  href={href}
+                  // Kept on the anchor so the URL is in the status bar, and so a
+                  // middle-click or "copy link" still behaves — only the plain
+                  // left click is taken.
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (e.button !== 0) return;
+                    // A path, not a URL — opens the Files panel, as in the terminal.
+                    const path = (e.currentTarget as HTMLAnchorElement).dataset.path;
+                    if (path) { e.preventDefault(); onFile?.(path); return; }
+                    if (!href || !onLink) return;
+                    e.preventDefault();
+                    onLink(e.nativeEvent, href);
+                  }}
+                />
+                {/* The link stays — it is how you open the file, and it is what
+                    the sentence around it reads as. The picture goes under it. */}
+                {img && (
+                  <Thumb
+                    src={img}
+                    alt={target ?? href}
+                    onOpen={target && onFile
+                      ? () => onFile(target)
+                      : href && onLink
+                        ? () => onLink(new MouseEvent('click'), href)
+                        : undefined}
+                  />
+                )}
+              </>
+            );
+          },
         }}
       >
         {text}
@@ -1010,6 +1080,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   return (
     <LinkHandler.Provider value={onOpenLink ?? null}>
     <FileHandler.Provider value={onOpenFile ?? null}>
+    <PaneCwd.Provider value={state?.cwd ?? ""}>
     <div
       className="nat-pane"
       style={{
@@ -1230,12 +1301,25 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
           }}
         />
         {busy ? (
+          /**
+           * **Stop says Stop.** It was the send button's 34px square wearing a
+           * different colour, which is the one control on this view you go
+           * looking for in a hurry — and an unlabelled icon in the place the
+           * send button normally sits is not a thing you find in a hurry.
+           *
+           * It sends Escape, exactly as the keyboard would. Measured against a
+           * real turn: a Bash tool running two `python3` processes, both gone
+           * three seconds after this button — the agent's own interrupt tears
+           * down the whole subprocess tree, and the session, its context and
+           * its transcript all survive. There is nothing here to kill by hand,
+           * and killing one would be worse than the keystroke.
+           */
           <button
             className="nat-send nat-stop-btn"
-            title="Interrupt (Esc)"
+            title="Stop the turn"
             onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
           >
-            <Square size={13} />
+            <Square size={11} fill="currentColor" /> Stop
           </button>
         ) : (
           <button className="nat-send" title="Send (Enter)" onClick={submit} disabled={!draft.trim() && !attached.length}>
@@ -1244,6 +1328,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         )}
       </div>
     </div>
+    </PaneCwd.Provider>
     </FileHandler.Provider>
     </LinkHandler.Provider>
   );
