@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown } from 'lucide-react';
+import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -88,7 +88,9 @@ export type NativeMessage =
   | { id: string; kind: 'assistant'; text: string; at: number }
   | { id: string; kind: 'thinking'; text: string; at: number }
   | { id: string; kind: 'tool'; at: number; name: string; input?: unknown; result?: string; isError?: boolean }
-  | { id: string; kind: 'system'; text: string; at: number; level?: 'info' | 'error' };
+  | { id: string; kind: 'system'; text: string; at: number; level?: 'info' | 'error' }
+  /** A compaction boundary — the summary the conversation restarted from. */
+  | { id: string; kind: 'compact'; text: string; at: number };
 
 interface NativeState {
   sessionId: string;
@@ -513,6 +515,18 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
       return CHOICE_TOOLS.has(m.name)
         ? <ChoiceBlock m={m} onOpenTerminal={onOpenTerminal} />
         : <ToolBlock m={m} />;
+    case 'compact':
+      // The boundary the conversation restarted from, closed. The summary is
+      // real content — it is what the agent is working from now — but it is
+      // not a turn, so it does not get a bubble.
+      return (
+        <details className="nat-compact">
+          <summary><Scissors size={11} /> Context compacted</summary>
+          {/* The summary is Markdown the agent wrote — headings and lists,
+              not a wall of asterisks. Same renderer as a reply. */}
+          <div className="nat-compact-body"><Markdown text={m.text} /></div>
+        </details>
+      );
     case 'system':
       return <div className={`nat-system${m.level === 'error' ? ' nat-system-error' : ''}`}>{m.text}</div>;
   }

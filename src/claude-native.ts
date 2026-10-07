@@ -65,7 +65,9 @@ export type NativeMessage =
       result?: string;
       isError?: boolean;
     }
-  | { id: string; kind: 'system'; text: string; at: number; level?: 'info' | 'error' };
+  | { id: string; kind: 'system'; text: string; at: number; level?: 'info' | 'error' }
+  /** A compaction: the summary the next turn starts from. Not a message. */
+  | { id: string; kind: 'compact'; text: string; at: number };
 
 export interface NativeState {
   sessionId: string;
@@ -208,6 +210,21 @@ class RowReader {
        * was. Its *expansion* is not, and neither is anything else wearing
        * tags — the agent received it, but it is not a message.
        */
+      /**
+       * **A compaction is not something you said.** When the context runs out,
+       * Claude Code writes the summary in as a `user` row — so it arrived here
+       * as a user bubble holding "This session is being continued from a
+       * previous conversation…", which reads as the person pasting a wall of
+       * notes at the agent. The TUI draws it as a boundary you can open, and
+       * so does this.
+       *
+       * `isCompactSummary` is the row's own flag, not a guess from the text.
+       */
+      if (row.isCompactSummary === true) {
+        added.push({ id: `u-${uuid}`, kind: 'compact', at, text });
+        return { added, changed };
+      }
+
       const command = text.match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i);
       if (command) {
         const args = text.match(/<command-args>\s*([\s\S]*?)\s*<\/command-args>/i)?.[1] ?? '';

@@ -3598,6 +3598,38 @@
 .nat-result { border-top: 1px solid var(--border); color: var(--foreground); }
 .nat-tool-body .nat-pre { max-height: 300px; }
 
+/* A compaction boundary. Closed by default and drawn as a rule across the
+   conversation: it is where the old turns stop, not a thing anybody said. The
+   summary opens, because it is what the agent is working from now. */
+.nat-compact { margin: 10px 0; }
+.nat-compact > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  list-style: none;
+  font-size: calc(var(--nat-size) * 0.78);
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+}
+.nat-compact > summary::-webkit-details-marker { display: none; }
+/* The rule, drawn by the summary itself so there is nothing extra in the DOM. */
+.nat-compact > summary::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.nat-compact > summary:hover { color: var(--foreground); }
+.nat-compact-body {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+  max-height: 340px;
+  overflow: auto;
+}
+
 .nat-system {
   font-size: calc(var(--nat-size) * 0.82);
   color: var(--muted-foreground);
