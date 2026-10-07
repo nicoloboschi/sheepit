@@ -762,6 +762,34 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     return () => cancelAnimationFrame(id);
   }, [isActive, sessionId]);
 
+  /**
+   * **Clicking anywhere in the conversation puts the cursor back in the box.**
+   *
+   * Reading and typing are the same activity here — you click a message to
+   * look at it and then you want to answer it, and the box is where every
+   * keystroke was always going to end up. A terminal does this by construction
+   * (there is nowhere else for a key to go); this view had a dozen places to
+   * leave the focus, and every one of them cost a second click.
+   *
+   * Two things it must not take:
+   *
+   *  - **A selection.** Dragging across text ends in a click, and focusing a
+   *    textarea collapses whatever was selected — so copying a path out of a
+   *    reply would have cleared it the instant the mouse came up.
+   *  - **A control.** A link, a tool row's disclosure, an image, the "show
+   *    more" on a clamped message — those clicks mean the thing they landed
+   *    on. Focusing afterwards is harmless for most of them, but `summary`
+   *    and the buttons take focus themselves, and fighting them would move
+   *    the ring somewhere the keyboard did not ask for.
+   */
+  const focusInput = useCallback((e: React.MouseEvent) => {
+    if (window.getSelection()?.toString()) return;
+    if ((e.target as HTMLElement).closest('a, button, summary, input, textarea, img, label')) return;
+    // preventScroll: the list is often scrolled far from the composer, and
+    // taking focus must not drag the conversation anywhere.
+    inputRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const toBottom = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
@@ -1136,7 +1164,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         </button>
       )}
 
-      <div className="nat-list" ref={listRef} onScroll={onScroll}>
+      <div className="nat-list" ref={listRef} onScroll={onScroll} onClick={focusInput}>
         {!state && <div className="nat-empty">Reading the conversation…</div>}
         {state && !hasConversation && (
           /* **An empty pen, not an empty box.** A blank panel with one grey
