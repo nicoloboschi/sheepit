@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Repeat, Play, FolderInput, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -35,6 +35,7 @@ interface RepsJob {
   failed?: number;
   prompt?: string;
   last?: RepsRun | null;
+  history?: RepsRun[];
 }
 
 interface RunDetail extends RepsRun {
@@ -86,7 +87,6 @@ export default function RepsDialog({ onClose }: { onClose: () => void }) {
   const [installed, setInstalled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [jobName, setJobName] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RepsRun[] | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [tick, setTick] = useState(0);
@@ -114,14 +114,8 @@ export default function RepsDialog({ onClose }: { onClose: () => void }) {
 
   const job = jobs?.find(j => j.name === jobName) ?? null;
 
-  useEffect(() => {
-    if (!jobName || !job?.runs) { setRuns(null); return; }
-    let live = true;
-    fetch(`/api/reps/${encodeURIComponent(jobName)}/runs`).then(r => r.json()).then(d => {
-      if (live && Array.isArray(d)) setRuns(d.slice().reverse());
-    }).catch(() => {});
-    return () => { live = false; };
-  }, [jobName, job?.runs, job?.last?.status, tick]);
+  // Newest first. `reps list` already carries every run, so no second call.
+  const runs = useMemo(() => job?.history?.slice().reverse() ?? null, [job?.history]);
 
   // Newest run selected whenever the job changes.
   useEffect(() => { setRunId(null); setDetail(null); }, [jobName]);

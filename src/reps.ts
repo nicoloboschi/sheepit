@@ -5,12 +5,12 @@
  * (running, killed, crashed…) has one definition, and it is reps'.
  *
  * Everything here is a pass-through: no state, no cache. The panel asks when
- * it is open, and `reps list --json` over a handful of jobs is a few ms.
+ * it is open; each call is one Python start (~0.25s), so keep them few.
  */
 import { Router } from 'express';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync, readFileSync } from 'fs';
 import nodePath from 'path';
 import os from 'os';
 
@@ -34,11 +34,33 @@ function repsBin(): string | null {
   return null;
 }
 
+/** How to start reps: `[program, ...args]`. reps is `#!/usr/bin/env python3`,
+ *  and on a pyenv machine that `python3` is a shell shim costing ~0.4s per
+ *  call before Python even starts — the panel polls, so that was most of its
+ *  wait. Resolved once to the interpreter the shim would have picked. */
+let launcher: Promise<[string, ...string[]] | null> | null = null;
+function repsLauncher(): Promise<[string, ...string[]] | null> {
+  launcher ??= (async () => {
+    const bin = repsBin();
+    if (!bin) return null;
+    try {
+      const script = realpathSync(bin);
+      if (!readFileSync(script, 'utf8').startsWith('#!/usr/bin/env python3')) return [bin];
+      const { stdout } = await execFileAsync('python3', ['-c', 'import sys; print(sys.executable)'], { timeout: 15_000 });
+      const python = stdout.trim();
+      return python ? [python, script] : [bin];
+    } catch {
+      return [bin];
+    }
+  })();
+  return launcher;
+}
+
 async function repsJson(args: string[]): Promise<unknown> {
-  const bin = repsBin();
-  if (!bin) throw new Error('reps is not installed');
+  const cmd = await repsLauncher();
+  if (!cmd) { launcher = null; throw new Error('reps is not installed'); }
   try {
-    const { stdout } = await execFileAsync(bin, [...args, '--json'], { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 });
+    const { stdout } = await execFileAsync(cmd[0], [...cmd.slice(1), ...args, '--json'], { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 });
     return JSON.parse(stdout);
   } catch (e: any) {
     // reps exits with a one-line reason on stderr ("no job at …")
@@ -58,15 +80,6 @@ export function createRepsRouter(): Router {
     }
   });
 
-  router.get('/:job/runs', async (req, res) => {
-    if (!SAFE_ID.test(req.params.job)) return res.status(400).json({ error: 'bad job name' });
-    try {
-      res.json(await repsJson(['runs', req.params.job]));
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
   router.get('/:job/runs/:run', async (req, res) => {
     const { job, run } = req.params;
     if (!SAFE_ID.test(job) || !SAFE_ID.test(run)) return res.status(400).json({ error: 'bad id' });
@@ -81,12 +94,12 @@ export function createRepsRouter(): Router {
 
   /** Start a run and answer straight away: a run takes minutes to an hour,
    *  and reps already refuses a second one while the first holds its lock. */
-  router.post('/:job/run', (req, res) => {
-    const bin = repsBin();
-    if (!bin) return res.status(404).json({ error: 'reps is not installed' });
+  router.post('/:job/run', async (req, res) => {
     if (!SAFE_ID.test(req.params.job)) return res.status(400).json({ error: 'bad job name' });
+    const cmd = await repsLauncher();
+    if (!cmd) return res.status(404).json({ error: 'reps is not installed' });
     // detached + its own session, so a sheepit restart does not take the run with it
-    const child = spawn(bin, ['run', req.params.job], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd[0], [...cmd.slice(1), 'run', req.params.job], { detached: true, stdio: 'ignore' });
     child.on('error', () => {});
     child.unref();
     res.json({ ok: true });

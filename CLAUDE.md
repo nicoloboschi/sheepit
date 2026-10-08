@@ -635,11 +635,13 @@ summary and output, plus Run now and Open worktree (a new pen in the job's
 worktree, or its folder when it has no repo).
 
 - `src/reps.ts` (`/api/reps`) is a pass-through to the CLI's `--json`
-  (`list`, `runs <job>`, `logs <job> --run <id>`). **Don't read `~/.reps`
+  (`list`, which carries every job's runs, and `logs <job> --run <id>`). **Don't read `~/.reps`
   directly** — what a run status means is reps' to define. Need more data?
   Add it to the CLI in `~/dev/reps`.
 - The binary is found on PATH, then `~/.local/bin` (`REPS_BIN` overrides);
-  launchd and Electron start the server with a bare PATH.
+  launchd and Electron start the server with a bare PATH. A python reps is
+  run with the real interpreter, not through a pyenv shim (~0.4s a call).
+  Each call is a process start, so keep the panel to one per poll.
 - Job names and run ids are checked against `SAFE_ID` (no leading `-`).
 - Run now spawns `reps run` detached; reps' own lock refuses a second run.
 
