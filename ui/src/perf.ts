@@ -103,6 +103,9 @@ export interface MainLag {
   worstMs: number;
   totalExcessMs: number;
   ipc: Record<string, { n: number; totalMs: number; maxMs: number }>;
+  /** Native browser views the shell holds, and its processes' memory by type. */
+  views?: number;
+  memMb?: Record<string, number>;
 }
 
 const spans = new Map<string, Stat>();

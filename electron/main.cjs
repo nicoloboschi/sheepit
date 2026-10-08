@@ -167,6 +167,16 @@ function timedIpc(channel, handler) {
 // snapshot, so there is still exactly one place to read.
 ipcMain.handle('perf:main', () => {
   const out = JSON.parse(JSON.stringify(mainLag));
+  // What the shell is holding, beside how it is coping: native browser views
+  // against the renderer processes that back them. A view the UI forgot to
+  // close is a ~90MB renderer nobody can see, so the two numbers drifting
+  // apart from the UI's own `browserPanes` is what a leak here looks like.
+  out.views = views.size;
+  out.memMb = {};
+  for (const m of app.getAppMetrics()) {
+    const k = m.type === 'Tab' ? 'renderer' : m.type.toLowerCase();
+    out.memMb[k] = (out.memMb[k] || 0) + Math.round((m.memory?.workingSetSize || 0) / 1024);
+  }
   mainLag.ticks = mainLag.stalls = mainLag.worstMs = mainLag.totalExcessMs = 0;
   mainLag.ipc = {};
   return out;

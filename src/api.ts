@@ -161,6 +161,11 @@ function ghExec(cmd: string, opts: { cwd: string; maxBuffer?: number }) {
 const git = (cwd: string, args: string[], maxBuffer = 10 * 1024 * 1024) =>
   execFileAsync('git', args, { cwd, maxBuffer }).then(r => r.stdout).catch((e: any) => e.stdout ?? '');
 
+/** The working-tree diff shows at most this many untracked files, and stops
+ *  adding them once the answer is this big — see the /diff route. */
+const MAX_UNTRACKED_DIFFS = 300;
+const MAX_DIFF_BYTES = 8 * 1024 * 1024;
+
 // The test git itself uses: a NUL in the first 8 KB means binary.
 function looksBinary(path: string): boolean {
   let fd: number | undefined;
@@ -1891,11 +1896,18 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // Now we let `git diff --no-index` flag binaries itself ("Binary files
       // … differ") — so one spawn per file — and run them with bounded
       // concurrency instead of serially.
+      //
+      // **Bounded**, in files and in bytes. A repository with an un-ignored
+      // `node_modules` has tens of thousands of untracked files (26,605 in one
+      // real checkout), and diffing them all meant 26k git processes and the
+      // whole tree's text in memory — every 5s, for as long as the view was
+      // open. Past the cap the rest are simply not shown; nobody reads a diff
+      // of node_modules.
       if (mode !== 'commit') {
         const untrackedOut = await run("git ls-files --others --exclude-standard");
-        const untrackedFiles = untrackedOut.trim().split('\n').filter(Boolean);
+        const untrackedFiles = untrackedOut.trim().split('\n').filter(Boolean).slice(0, MAX_UNTRACKED_DIFFS);
         const CONCURRENCY = 16;
-        for (let i = 0; i < untrackedFiles.length; i += CONCURRENCY) {
+        for (let i = 0; i < untrackedFiles.length && diff.length < MAX_DIFF_BYTES; i += CONCURRENCY) {
           const batch = untrackedFiles.slice(i, i + CONCURRENCY);
           const parts = await Promise.all(
             batch.map((file: string) => git(cwd, ['diff', '--no-index', '--', '/dev/null', file])),

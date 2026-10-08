@@ -36,7 +36,20 @@ export function usePoll(
     if (!enabled) return;
 
     let timer: ReturnType<typeof setInterval> | null = null;
-    const run = () => { void saved.current(); };
+    // **Never two at once.** A tick that lands while the last one is still
+    // running is skipped, not queued: a request slower than the interval (a
+    // working-tree diff over 26k untracked files was one) otherwise starts a
+    // second copy every interval, and they pile up on the server for as long
+    // as the view is open.
+    let busy = false;
+    const run = () => {
+      if (busy) return;
+      busy = true;
+      Promise.resolve()
+        .then(() => saved.current())
+        .catch(() => {})
+        .finally(() => { busy = false; });
+    };
 
     const start = () => {
       if (timer !== null) return;

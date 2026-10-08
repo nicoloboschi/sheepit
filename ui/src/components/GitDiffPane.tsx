@@ -607,7 +607,7 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
    */
   usePoll(() => {
     if (!containerRef.current?.offsetParent) return;
-    void load(true);
+    return load(true);
   }, 5000, sessionId, mode !== 'log');
 
   useEffect(() => { setFiles(null); setFocusedFileIdx(0); }, [mode]);
