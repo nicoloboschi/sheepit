@@ -802,7 +802,32 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   isActive?: boolean;
 }): React.ReactElement {
   const [state, setState] = useState<NativeState | null>(null);
-  const [draft, setDraft] = useState('');
+  /**
+   * **A half-typed message survives a reload.**
+   *
+   * In the terminal it already does, by construction: the characters are in
+   * the agent's own input box, on the far side of a PTY, so the browser
+   * reloading cannot touch them. Here the draft is React state, and in dev
+   * the app reloads itself every time a file is saved — so a message you were
+   * part way through was simply gone.
+   *
+   * Device-local, per pane, and read synchronously at mount so there is never
+   * a frame with an empty box. It is **not** a preference: the profile is
+   * shared by every browser looking at this machine (see "One key per pen"),
+   * and a half-written sentence is nobody else's business — nor is it worth a
+   * PATCH per keystroke. `isPreferenceKey` excludes the prefix for exactly
+   * that reason.
+   */
+  const draftKey = `sheepit:draft:${sessionId}`;
+  const [draft, setDraft] = useState(() => {
+    try { return localStorage.getItem(draftKey) ?? ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try {
+      if (draft) localStorage.setItem(draftKey, draft);
+      else localStorage.removeItem(draftKey);
+    } catch { /* private window, or full — the draft is a convenience */ }
+  }, [draft, draftKey]);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   /** Whether the list is parked at the bottom. Only then does new output
@@ -1023,7 +1048,28 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     ]);
   }, [attach]);
 
+  /** The agent is sitting on a dialog only the terminal can draw. Its own
+   *  report, through its hooks — see `agentWaiting` on the session. */
+  const blocked = useStore(s => !!s.sessionMap[sessionId]?.agentWaiting);
+
   const submit = useCallback(() => {
+    /**
+     * **Nothing is typed into a pane that is holding a dialog.**
+     *
+     * A permission prompt is a *selector*: the keys it reads are arrows and
+     * Enter, and the highlighted row is usually "1. Yes". So sending a
+     * message into one did not merely fail to send — the Enter that follows
+     * it picked whatever was highlighted, which is to say it could approve a
+     * command the person never saw. The text went nowhere and the answer went
+     * somewhere.
+     *
+     * `agentWaiting` is the agent's own report through its hooks (and, since
+     * the subagent fix, one that a tool ping cannot erase). Deliberately not
+     * the client's `sessionNeedsAttention`, which also means "finished while
+     * you were elsewhere" — blocking on that would lock the composer of any
+     * pane you came back to, with no way to type the thing that unlocks it.
+     */
+    if (blocked) return;
     const body = draft.trim();
     // The paths go with the message, because a path is what the agent can
     // open. An attachment with no words is a legitimate message — "look at
@@ -1035,7 +1081,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     setPending(p => [...p, { id: `pending-${Date.now()}`, kind: 'user', text, at: Date.now() }]);
     setDraft('');
     atBottom.current = true;
-  }, [draft, attached, sessionId]);
+  }, [draft, attached, sessionId, blocked]);
 
   // Drop an echo as soon as the real row for it is in the conversation.
   useEffect(() => {
@@ -1442,7 +1488,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
             view does not guess at them: it notices the pane is blocked, which
             sheepit already knows from the agent's hooks, and hands over to the
             terminal. That is one click because the terminal never went away. */}
-        {bleating && (
+        {(bleating || blocked) && (
           <div className="nat-needs-tui">
             <SquareTerminal size={14} />
             <div>
@@ -1607,7 +1653,13 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
           ref={inputRef}
           className="nat-input"
           value={draft}
-          placeholder={busy ? 'Claude is working — type the next one…' : 'Message Claude Code…  (/ for its own commands)'}
+          disabled={blocked}
+          placeholder={
+            // Says what to do about it, not just that it will not take one:
+            // the terminal is where the dialog is, and it is one click away.
+            blocked ? 'Answer the prompt in the terminal first…'
+              : busy ? 'Claude is working — type the next one…'
+                : 'Message Claude Code…  (/ for its own commands)'}
           rows={1}
           onChange={(e) => {
             setDraft(e.target.value);

@@ -23,6 +23,7 @@ import { configDir, ringBuffersDir } from './paths.js';
 import { SessionStore, isSafeSessionId, type StoredSession } from './session-store.js';
 import { mergePrRefs, type PrRef } from './pr-refs.js';
 import { isSearchableTranscript } from './search.js';
+import { isInteractiveTranscript } from './agent-info.js';
 import { logger } from './server.js';
 import { readAiConfig, readContextTokens, type ContextUsage } from './ai.js';
 
@@ -975,6 +976,10 @@ export class DirectBridge {
   /** Where each pane's agent keeps its own transcript, as the agent reported
    *  it (see setAgentSession). Search reads these; nothing else does. */
   private agentSessions = new Map<string, AgentSessionRef>();
+  /** Transcripts belonging to an agent somebody's agent started, so the
+   *  hundreds of hooks each one fires cost one read rather than hundreds.
+   *  See setAgentSession. */
+  private spawnedTranscripts = new Map<string, boolean>();
   /** Partial OSC 99 notifications, keyed `sessionId:notificationId`. */
   private pendingNotes = new Map<string, string>();
   /** Incomplete OSC 9 / OSC 777 notification frames, keyed by session id. */
@@ -1346,8 +1351,37 @@ export class DirectBridge {
   setAgentSession(sessionId: string, ref: { transcriptPath?: string; agentSessionId?: string; source?: string }): void {
     if (!this.sessions.has(sessionId)) return;
     const prev = this.agentSessions.get(sessionId);
-    const transcriptPath = ref.transcriptPath && isSearchableTranscript(ref.transcriptPath)
-      ? ref.transcriptPath : prev?.transcriptPath;
+
+    /**
+     * **An agent the pane's agent started is not the pane's agent.**
+     *
+     * `SHEEPIT_SESSION_ID` is in the pane's environment, so every Claude Code
+     * spawned beneath it inherits the id and reports through these hooks with
+     * its *own* transcript. The pane then describes somebody else's
+     * conversation — see `isInteractiveTranscript`, which is where the
+     * symptoms and the evidence are written down.
+     *
+     * The verdict is cached per path because a background agent fires a hook
+     * on every tool call, and `null` (too early to tell) is deliberately not
+     * cached: the pane's own transcript is undecidable for a moment after it
+     * is created, and caching that would reject it for ever. Undecidable is
+     * accepted, so the reading stays what it was before this check existed,
+     * and the next report corrects it — including by *dropping* a path we
+     * accepted and have since learned is not ours.
+     */
+    const offered = ref.transcriptPath;
+    if (offered && isSearchableTranscript(offered)) {
+      if (this.isSpawnedTranscript(offered)) {
+        if (prev?.transcriptPath === offered) {
+          this.agentSessions.set(sessionId, { ...prev, transcriptPath: undefined });
+          this.persistSession(sessionId);
+        }
+        return;
+      }
+    }
+
+    const transcriptPath = offered && isSearchableTranscript(offered)
+      ? offered : prev?.transcriptPath;
     const agentSessionId = ref.agentSessionId ?? prev?.agentSessionId;
     if (prev && prev.transcriptPath === transcriptPath && prev.agentSessionId === agentSessionId) return;
     // A new agent session id means a different conversation, so a path
@@ -1355,6 +1389,18 @@ export class DirectBridge {
     const next: AgentSessionRef = { transcriptPath, agentSessionId, source: ref.source ?? prev?.source };
     this.agentSessions.set(sessionId, next);
     this.persistSession(sessionId);
+  }
+
+  /** Does this transcript belong to an agent somebody's agent started?
+   *  Cached per path: a background agent fires a hook on every tool call, and
+   *  undecidable is not cached — see setAgentSession. */
+  private isSpawnedTranscript(path: string): boolean {
+    const known = this.spawnedTranscripts.get(path);
+    if (known !== undefined) return known;
+    const r = isInteractiveTranscript(path);
+    if (r === null) return false;
+    this.spawnedTranscripts.set(path, !r);
+    return !r;
   }
 
   getAgentSession(sessionId: string): AgentSessionRef | undefined {
@@ -1410,6 +1456,16 @@ export class DirectBridge {
       return found;
     }
     if (!ref) return null;
+    // Checked on the way out as well as on the way in, and the difference
+    // matters twice: a path stored before this check existed is persisted and
+    // would otherwise never be re-examined, and a transcript is undecidable
+    // for a moment after it is created, so the ref that was accepted then can
+    // only be corrected now. Cached per path, so this is a Map hit on every
+    // call but the first.
+    if (ref.transcriptPath && this.isSpawnedTranscript(ref.transcriptPath)) {
+      ref.transcriptPath = undefined;
+      this.persistSession(sessionId);
+    }
     if (ref.transcriptPath && existsSync(ref.transcriptPath)) return ref.transcriptPath;
     if (!ref.agentSessionId) return null;
 
@@ -1975,6 +2031,13 @@ export class DirectBridge {
         // derived from this field, so it inherits the same wrongness.
         last_activity: Math.floor(sess.createdAt / 1000),
         busy: this.isSessionBusy(sess.id), fresh: this.isSessionFresh(sess.id),
+        // **Blocked on a person**, which is not the same question as busy and
+        // cannot be derived from it: an agent on a permission prompt prints
+        // nothing and burns no CPU, so only the hooks know. Carried on the
+        // session because the native view has to refuse to type into a pane
+        // holding a yes/no selector — see NativePane. It flips twice a turn at
+        // most, so it costs the sidebar nothing.
+        agentWaiting: this.agentStateOf(sess.id) === 'waiting',
         isClaudeCode: procs?.isClaudeCode ?? false,
         isCodex: procs?.isCodex ?? false, isOpencode: procs?.isOpencode ?? false, isHermes: procs?.isHermes ?? false,
         isPi: procs?.isPi ?? false,

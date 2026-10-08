@@ -52,8 +52,20 @@ const DEVICE_LOCAL = new Set([
   'sheepit:android-banner-dismissed',
 ]);
 
+/** Device-local families, for keys that carry a session id and so cannot be
+ *  listed one by one. */
+const DEVICE_LOCAL_PREFIXES = [
+  /** A half-typed message in a pane's composer. Per device because the
+   *  profile is shared by every browser looking at this machine, and nobody
+   *  else wants your unfinished sentence; per keystroke because it is a
+   *  localStorage write, which a profile PATCH is not. See NativePane. */
+  'sheepit:draft:',
+];
+
 function isPreferenceKey(key: string): boolean {
-  return !DEVICE_LOCAL.has(key) && (key.startsWith('sheepit:') || key.startsWith('sheepit-'));
+  if (DEVICE_LOCAL.has(key)) return false;
+  if (DEVICE_LOCAL_PREFIXES.some(p => key.startsWith(p))) return false;
+  return key.startsWith('sheepit:') || key.startsWith('sheepit-');
 }
 
 function legacyValues(): PreferenceValues {

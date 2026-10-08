@@ -43,6 +43,54 @@ export interface AgentLink {
 
 /** How full the context is. A count always; a percentage only when the agent
  *  says how big its window is — see `limit`. */
+/**
+ * **Is this transcript the pane's own agent, or one it spawned?**
+ *
+ * `SHEEPIT_SESSION_ID` lives in the pane's environment, so *every* Claude Code
+ * started under it — a `claude -p` the agent runs, a tool that shells out to
+ * one, Hindsight's repository survey — inherits it and reports through the
+ * pane's hooks, handing over its own transcript path. The pane then describes
+ * somebody else's conversation.
+ *
+ * Found on a real pane: the model read as `claude-haiku-4-5` when the agent
+ * was on Opus, the native view showed a prompt nobody typed ("You are
+ * performing a one-time structural survey of THIS repository…"), and a
+ * SessionStart hook's output appeared as a message that is not in the real
+ * session. One wrong path, three symptoms.
+ *
+ * Claude Code writes `entrypoint` on its user and assistant rows, and it is
+ * exactly this distinction: `cli` for the interactive session a pane holds,
+ * `sdk-cli` for one started programmatically. Checked against both on this
+ * machine rather than taken from documentation.
+ *
+ * @returns true for the pane's own agent, false for a spawned one, and
+ *          **null when the file cannot say yet** — a transcript with no
+ *          conversation row in it is the normal state for a few hundred
+ *          milliseconds after a session starts, and "do not know" has to be
+ *          distinguishable from "no" or the pane's own first report is thrown
+ *          away.
+ */
+export function isInteractiveTranscript(path: string): boolean | null {
+  let head: string;
+  try {
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(HEAD_BYTES);
+      head = buf.subarray(0, readSync(fd, buf, 0, HEAD_BYTES, 0)).toString('utf8');
+    } finally { closeSync(fd); }
+  } catch { return null; }
+
+  for (const line of head.split('\n')) {
+    // The last line of a bounded read is routinely half-written.
+    if (!line.endsWith('}')) continue;
+    let row: Record<string, unknown>;
+    try { row = JSON.parse(line); } catch { continue; }
+    const entry = row.entrypoint;
+    if (typeof entry === 'string' && entry) return entry === 'cli';
+  }
+  return null;
+}
+
 export interface AgentContext {
   /** Tokens in the prompt: fresh input + cache read + cache creation. The
    *  cached part is nearly all of it on a long session, so counting only the

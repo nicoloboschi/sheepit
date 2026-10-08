@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { readAgentInfo, claudePrompt, codexPrompt, piPrompt, parseSlashCommand, readClaudeUsage, readCodexUsage, readPiUsage, readOpeningPrompt, agentKindOf, type AgentInfo } from '../agent-info.js'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { readAgentInfo, claudePrompt, codexPrompt, piPrompt, parseSlashCommand, readClaudeUsage, readCodexUsage, readPiUsage, readOpeningPrompt, agentKindOf, isInteractiveTranscript, type AgentInfo } from '../agent-info.js'
 
 /** Row shapes copied from real transcripts — the filter is only worth what the
  *  samples are, so these are what the files actually hold, not what is tidy. */
@@ -322,5 +325,46 @@ describe('codex parity', () => {
     expect(info.sandboxPolicy).toBe('read-only')
     expect(info.gitBranch).toBe('agent-hook-state')
     expect(readOpeningPrompt(file)).toBe('draw the diagram')
+  })
+})
+
+describe('whose transcript is this', () => {
+  // SHEEPIT_SESSION_ID is in the pane's environment, so a Claude Code the
+  // agent spawns reports through the pane's hooks with its own transcript.
+  // Found on a real pane: the model read as haiku while the agent was on
+  // Opus, and the conversation shown was a repository survey nobody typed.
+  const write = (rows: unknown[]) => {
+    const p = join(mkdtempSync(join(tmpdir(), 'sheepit-entry-')), 't.jsonl')
+    writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + '\n')
+    return p
+  }
+
+  it('calls an interactive session the pane\'s own', () => {
+    expect(isInteractiveTranscript(write([
+      { type: 'queue-operation' },
+      { type: 'user', entrypoint: 'cli', message: { role: 'user', content: 'hi' } },
+    ]))).toBe(true)
+  })
+
+  it('calls a programmatically started one somebody else\'s', () => {
+    expect(isInteractiveTranscript(write([
+      { type: 'user', entrypoint: 'sdk-cli', message: { role: 'user', content: 'survey this repo' } },
+    ]))).toBe(false)
+  })
+
+  it('says "do not know" before any conversation row exists', () => {
+    // The normal state for a moment after a session starts. It must not read
+    // as "not ours", or the pane's own first report is thrown away for good.
+    expect(isInteractiveTranscript(write([{ type: 'queue-operation' }]))).toBe(null)
+  })
+
+  it('says "do not know" for a file that is not there', () => {
+    expect(isInteractiveTranscript('/no/such/transcript.jsonl')).toBe(null)
+  })
+
+  it('ignores a half-written trailing line', () => {
+    const p = write([{ type: 'queue-operation' }])
+    writeFileSync(p, '{"type":"queue-operation"}\n{"type":"user","entrypo')
+    expect(isInteractiveTranscript(p)).toBe(null)
   })
 })

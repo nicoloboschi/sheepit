@@ -4109,6 +4109,10 @@
   max-height: 180px;
 }
 .nat-input:focus { border-color: var(--primary); }
+/* While the agent holds a dialog the composer takes nothing: a message typed
+   into a permission selector does not merely fail, its Enter picks whatever
+   row is highlighted. See the note on `blocked` in NativePane. */
+.nat-input:disabled { opacity: 0.55; cursor: not-allowed; }
 .nat-send {
   flex-shrink: 0;
   display: grid; place-items: center;

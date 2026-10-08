@@ -54,6 +54,11 @@ export interface Session {
    *  `activity` messages; this is only read to seed a tab that has just
    *  loaded and has never seen one (see renderSessions). */
   busy?: boolean;
+  /** **Blocked on a person** — a permission prompt or another TUI dialog.
+   *  Not derivable from `busy`: an agent sitting on a prompt prints nothing
+   *  and burns no CPU, so only its hooks know. The native view refuses to
+   *  type into a pane in this state. */
+  agentWaiting?: boolean;
 }
 
 export interface ConfirmState {
@@ -366,7 +371,7 @@ function countChangedField(p: Session, s: Session): void {
     'id', 'name', 'path', 'isClaudeCode', 'isCodex', 'isOpencode', 'isAntigravity',
     'isCopilot', 'isGrok', 'isCursor', 'isPi', 'isHermes', 'gitBranch', 'gitDirty',
     'prNum', 'prState', 'last_activity', 'isHeadless', 'ctxTokens', 'ctxLimit',
-    'sideOf', 'fresh',
+    'sideOf', 'fresh', 'agentWaiting',
   ];
   for (const f of fields) {
     if (p[f] !== s[f]) { perf.count(`ident:field:${f}`); return; }
@@ -417,6 +422,10 @@ function sameSession(p: Session, s: Session): boolean {
     // after the count on a fresh Codex pane, and that sweep changes nothing
     // else.
     && p.ctxTokens === s.ctxTokens && p.ctxLimit === s.ctxLimit
+    // Flips twice a turn at most, so it costs the sidebar nothing — and
+    // leaving it out would freeze the composer's blocked notice exactly the
+    // way omitting ctxTokens froze the count.
+    && p.agentWaiting === s.agentWaiting
     // A pane's Terminals split is `sessions.filter(sideOf === id)`, so a new
     // side terminal has to reach the list or the split never draws it — and the
     // sweep that carries it changes nothing else.
