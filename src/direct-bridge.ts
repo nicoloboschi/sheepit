@@ -230,6 +230,44 @@ export const AGENT_STATES: readonly AgentState[] = ['busy', 'idle', 'waiting', '
  * SessionStart hook arrives, and it gets an entry of its own rather than being
  * glued onto the previous user's question.
  */
+/**
+ * **A tool ping does not mean the question was answered.**
+ *
+ * `waiting` is the agent blocked on a person — a permission prompt. It used to
+ * be cleared by the very next `busy`, on the reasoning that new work means the
+ * prompt had been dealt with. That holds for one agent working alone and fails
+ * completely the moment there are subagents: they go on calling tools while
+ * the main thread sits on the approval, so the pane went back to busy within a
+ * second or two and the one state the flock exists to show was gone.
+ *
+ * Measured off the hook trace on a real pane running five background agents:
+ * `PermissionRequest -> waiting` at 09:34:39.230, wiped by `PreToolUse ->
+ * busy` at 09:34:42.022; `Notification -> waiting` at 09:34:45.359, wiped 1.3s
+ * later. What the person saw was a pane saying "working…" while the terminal
+ * held *Do you want to proceed?*.
+ *
+ * So a plain busy ping cannot take it back. Three things can, and between them
+ * they cover every way a prompt ends:
+ *
+ *  - **`idle`** — the turn finished, so whatever it was is over.
+ *  - **a prompt** (`UserPromptSubmit`) — you asked for something new.
+ *  - **typing into the pane** — answering it *is* typing, and it is the only
+ *    signal there is, because the agent reports no event for it. `sendInput`
+ *    reports `busy` from the source `typed`, which is the one busy report this
+ *    lets past.
+ *
+ * @returns true when the pane should stay `waiting` and this report be treated
+ *          as a refresh.
+ */
+export function keepsWaiting(
+  current: AgentState | undefined,
+  next: AgentState,
+  hasPrompt: boolean,
+  source: string,
+): boolean {
+  return current === 'waiting' && next === 'busy' && !hasPrompt && source !== 'typed';
+}
+
 export function appendAgentTurn(
   history: readonly AgentTurn[], turn: { prompt?: string; response?: string }, at: number,
 ): AgentTurn[] {
@@ -1189,6 +1227,12 @@ export class DirectBridge {
       return true;
     }
 
+    if (keepsWaiting(current?.state, state, !!turn?.prompt, source)) {
+      current!.at = Date.now();
+      current!.source = source;
+      return true;
+    }
+
     // A prompt means a human asked for something, which is the only thing that
     // ends freshness. Context injected by another plugin's SessionStart hook
     // reaches us as a *response* with no prompt, so it cannot fake this.
@@ -1705,6 +1749,15 @@ export class DirectBridge {
     // Someone is at the keyboard, so a queued resume is no longer ours to send:
     // it would land in the middle of whatever they are typing.
     if (this.pendingResumes.size) this.cancelAgentResume(sessionId);
+    // **Answering a permission prompt is typing**, and it is the only signal
+    // there is that one was answered: the agent reports no event for it, and
+    // `waiting` is now sticky against tool pings (see setAgentState), so
+    // without this a pane stays blocked-looking until the turn ends. One Map
+    // lookup per keystroke, on a path where that is the budget — the branch
+    // is taken approximately never.
+    if (this.agentState.get(sessionId)?.state === 'waiting') {
+      this.setAgentState(sessionId, 'busy', 'typed');
+    }
     this.daemon.sendFire({ type: 'write', id: sessionId, data });
     // Nothing else happens here on purpose. This is the path a keystroke
     // travels, so anything added to it is felt. See the note on `current_input`

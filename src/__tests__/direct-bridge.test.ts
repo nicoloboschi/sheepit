@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { isSafeSessionId } from '../session-store.js'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn, keepsWaiting } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -390,5 +390,33 @@ describe('isSafeSessionId', () => {
   it('refuses anything that could climb out of the directory', () => {
     for (const id of ['../../etc/passwd', '..%2fsecret', 'a/b', 'a\\b', '', 'a b'])
       expect(isSafeSessionId(id)).toBe(false)
+  })
+})
+
+describe('a pane blocked on a permission prompt', () => {
+  // Found on a real pane running five background agents: the subagents keep
+  // calling tools while the main thread sits on the approval, so a plain busy
+  // ping arrived 1–3s after every `waiting` and erased it. The pane said
+  // "working…" while the terminal held *Do you want to proceed?*.
+  it('is not un-blocked by a tool ping', () => {
+    expect(keepsWaiting('waiting', 'busy', false, 'claude')).toBe(true)
+  })
+
+  it('is un-blocked by the turn ending', () => {
+    expect(keepsWaiting('waiting', 'idle', false, 'claude')).toBe(false)
+  })
+
+  it('is un-blocked by a new prompt', () => {
+    expect(keepsWaiting('waiting', 'busy', true, 'claude')).toBe(false)
+  })
+
+  it('is un-blocked by somebody typing, which is how a prompt gets answered', () => {
+    expect(keepsWaiting('waiting', 'busy', false, 'typed')).toBe(false)
+  })
+
+  it('does nothing to a pane that was not blocked', () => {
+    expect(keepsWaiting('busy', 'busy', false, 'claude')).toBe(false)
+    expect(keepsWaiting('idle', 'busy', false, 'claude')).toBe(false)
+    expect(keepsWaiting(undefined, 'busy', false, 'claude')).toBe(false)
   })
 })
