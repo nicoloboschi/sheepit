@@ -4085,6 +4085,30 @@
 }
 .nat-status-clear:hover { color: var(--foreground); border-color: var(--muted-foreground); }
 
+/* A file is being dragged over the pane. Without it, a drop that lands and a
+   drop that does not look identical until the thumbnail appears — which was
+   half of "the screenshot didn't attach". */
+.nat-pane-dropping { outline: 2px dashed var(--primary); outline-offset: -3px; }
+
+/* An upload that failed, said out loud. The old code swallowed these, so a
+   screenshot that failed and one that was never picked up looked the same. */
+.nat-attach-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 5px 12px;
+  border: none;
+  border-top: 1px solid var(--chrome-line);
+  background: color-mix(in srgb, var(--destructive) 14%, var(--chrome));
+  color: var(--destructive);
+  font: inherit;
+  font-size: calc(var(--nat-size) * 0.8);
+  text-align: left;
+  cursor: pointer;
+}
+
 .nat-compose {
   display: flex;
   align-items: flex-end;

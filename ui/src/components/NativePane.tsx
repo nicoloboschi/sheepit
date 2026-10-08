@@ -436,6 +436,12 @@ const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
  *  agent, and so are drawn as one. */
 const CHOICE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
+/** How long a local echo may wait for its real transcript row. Measured at
+ *  about three seconds in practice, so this is an order of magnitude of
+ *  headroom — it is a deadline for a placeholder, not a timeout anybody
+ *  should reach. See the dedup effect in NativePane. */
+const ECHO_TTL_MS = 60_000;
+
 /**
  * What you asked, clamped to three lines.
  *
@@ -1013,6 +1019,11 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
    */
   const [attached, setAttached] = useState<{ path: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(0);
+  /** An upload that did not land. Silence here reads as "the app ignored me",
+   *  which is what it did: the old code swallowed every failure. */
+  const [attachError, setAttachError] = useState<string | null>(null);
+  /** Something is being dragged over the pane. */
+  const [dropping, setDropping] = useState(false);
 
   const attach = useCallback(async (files: { blob: Blob; name: string }[]) => {
     if (!files.length) return;
@@ -1024,9 +1035,19 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
           `/api/fs/upload?dir=${encodeURIComponent(cwd)}&name=${encodeURIComponent(name)}`,
           { method: 'POST', body: blob },
         );
-        const { ok, path } = await res.json();
-        if (ok && path) setAttached(a => [...a, { path, name }]);
-      } catch { /* a failed upload is one missing thumbnail, not a broken send */ }
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body.ok && body.path) {
+          setAttached(a => [...a, { path: body.path, name }]);
+          setAttachError(null);
+        } else {
+          // **Say so.** This used to be swallowed, so a screenshot that failed
+          // to upload and one that was never picked up looked identical — and
+          // both looked like the app ignoring you.
+          setAttachError(`${name}: ${body.error ?? `upload failed (${res.status})`}`);
+        }
+      } catch (e) {
+        setAttachError(`${name}: ${e instanceof Error ? e.message : 'upload failed'}`);
+      }
       setUploading(n => n - 1);
     }
   }, [sessionId]);
@@ -1083,15 +1104,52 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     atBottom.current = true;
   }, [draft, attached, sessionId, blocked]);
 
-  // Drop an echo as soon as the real row for it is in the conversation.
+  /**
+   * Drop an echo once the real row for it is in the conversation — **or once
+   * it is too old to still be waiting for one.**
+   *
+   * The echo exists to cover the ~3 seconds between the TUI taking a message
+   * and the agent flushing the row, and it was dropped by matching the text
+   * exactly. That is right when it works and unbounded when it does not: any
+   * message Claude Code records in a form we did not send — a path it expands,
+   * an attachment it folds into content blocks, whitespace it normalises —
+   * strands the echo for the rest of the session, and the message is on screen
+   * **twice**, which is exactly how it was reported.
+   *
+   * So the match is now a floor, not the only exit. Two changes:
+   *
+   *  - **The first line is enough.** The paths of attachments are appended to
+   *    what you typed, and those are the lines most likely to come back
+   *    changed; the words you wrote do not.
+   *  - **An echo expires.** `ECHO_TTL_MS` is many times the three seconds this
+   *    is covering, so it cannot fire on a slow flush — and if it ever does,
+   *    the message blinks out and arrives from the transcript a moment later,
+   *    which is strictly better than standing there twice for ever. The
+   *    transcript is the source of truth; the echo is a placeholder, and a
+   *    placeholder with no deadline is a second copy.
+   */
   useEffect(() => {
     if (!pending.length || !state) return;
-    const real = new Set(state.messages.filter(m => m.kind === 'user').map(m => (m as { text: string }).text.trim()));
+    const firstLine = (t: string) => t.trim().split('\n', 1)[0]!.trim();
+    const real = new Set(
+      state.messages.filter(m => m.kind === 'user').map(m => firstLine((m as { text: string }).text)),
+    );
+    const now = Date.now();
     setPending(p => {
-      const next = p.filter(m => !real.has((m as { text: string }).text.trim()));
+      const next = p.filter(m =>
+        !real.has(firstLine((m as { text: string }).text)) && now - m.at < ECHO_TTL_MS);
       return next.length === p.length ? p : next;
     });
   }, [state?.messages, pending.length]);
+
+  // An echo that outlived its deadline while nothing else re-rendered — the
+  // effect above only runs when a message arrives or one is sent, and a lone
+  // stuck echo is precisely the case where neither happens.
+  useEffect(() => {
+    if (!pending.length) return;
+    const t = setTimeout(() => setPending(p => p.filter(m => Date.now() - m.at < ECHO_TTL_MS)), ECHO_TTL_MS);
+    return () => clearTimeout(t);
+  }, [pending]);
 
   /**
    * **The question you are currently reading the answer to.**
@@ -1392,7 +1450,36 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     <FileHandler.Provider value={onOpenFile ?? null}>
     <PaneCwd.Provider value={state?.cwd ?? ""}>
     <div
-      className="nat-pane"
+      className={`nat-pane${dropping ? ' nat-pane-dropping' : ''}`}
+      /**
+       * **A file dropped anywhere on the pane is attached.**
+       *
+       * This was on the composer, which is 51px of a 701px pane — measured.
+       * So 93% of the place you are looking at silently swallowed the
+       * screenshot you dragged onto it, which is the whole of "sometimes it
+       * doesn't work": it depended on hitting a strip most people never aim
+       * at. The terminal has always taken a drop anywhere in the pane.
+       *
+       * The outline is not decoration — without it a drop that lands is
+       * indistinguishable from one that does not until the thumbnail appears.
+       */
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        // Only when the pointer has actually left the pane: dragging across a
+        // child fires dragleave for the child on the way past.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        setDropping(false);
+        const files = Array.from(e.dataTransfer.files);
+        if (!files.length) return;
+        e.preventDefault();
+        takeFiles(files);
+      }}
       style={{
         '--nat-code-family': terminalFont,
         '--nat-base': `${nativeFontSize}px`,
@@ -1560,6 +1647,12 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         </div>
       )}
 
+      {attachError && (
+        <button className="nat-attach-error" onClick={() => setAttachError(null)} title="Dismiss">
+          <AlertTriangle size={12} /> {attachError}
+        </button>
+      )}
+
       {/* The status line, on the composer's top edge — where the TUI keeps it,
           and what you check before asking for something big. */}
       {(status?.used !== undefined || status?.model || gitBranch) && (
@@ -1639,16 +1732,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         </div>
       )}
 
-      <div
-        className="nat-compose"
-        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
-        onDrop={(e) => {
-          const files = Array.from(e.dataTransfer.files);
-          if (!files.length) return;
-          e.preventDefault();
-          takeFiles(files);
-        }}
-      >
+      <div className="nat-compose">
         <textarea
           ref={inputRef}
           className="nat-input"
