@@ -17,6 +17,8 @@ import TerminalTiles from './TerminalTiles';
 import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
 import AgentPane from './AgentPane';
+import SheepitPane from './SheepitPane';
+import SheepIcon from './SheepIcon';
 import { TERMINAL_THEMES, TERMINAL_LINE_HEIGHT } from '../theme';
 import type { AppTheme } from '../theme';
 
@@ -122,7 +124,7 @@ interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
  * reopens the tool that was showing last. `split` keeps its name — it is the
  * oldest of them and the persisted value.
  */
-export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals' | 'split-agent';
+export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals' | 'split-agent' | 'split-sheepit';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 // `showsTerminal()` used to live here, answering "does xterm have a size right
 // now". Every view keeps the terminal since the git group became a split, so
@@ -139,7 +141,7 @@ function readPaneView(sid: string): PaneView | undefined {
     // GitHub took the whole pane for one release, and now sits beside the
     // terminal like the other two things you read while typing.
     if (raw === 'github') return 'split-github';
-    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals', 'split-agent'] as const).includes(raw) ? raw : undefined;
+    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals', 'split-agent', 'split-sheepit'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 /** The git family's tabs, as a rail rather than a strip. Vertical because the
@@ -174,6 +176,11 @@ const TOOL_TABS = [
   // at the repository or of acting on it, and this is the pane's own history —
   // what you have asked the agent, read back from the agent's own transcript.
   { id: 'split-agent' as const, Icon: Bot, label: 'Agent — what you have asked this pane' },
+  // Last, and the only tab that is about sheepit rather than about the work:
+  // the pane's own id, the pen holding it, the files on disk behind it. The
+  // sheep is the right mark for exactly that reason — everything else on this
+  // rail is somebody else's icon because it is somebody else's thing.
+  { id: 'split-sheepit' as const, Icon: SheepIcon, label: 'sheepit — this pane\u2019s own ids and paths' },
 ];
 
 function ToolRail({ view, onPick }: { view: PaneView; onPick: (v: PaneView) => void }) {
@@ -569,7 +576,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
         // Hidden, then rail order — so cycling walks the rail top to bottom.
-        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview', 'split-terminals', 'split-agent'];
+        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview', 'split-terminals', 'split-agent', 'split-sheepit'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
@@ -1769,6 +1776,8 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
                 <SideTerminals sessionId={sessionId} />
               ) : view === 'split-agent' ? (
                 <AgentPane sessionId={sessionId} />
+              ) : view === 'split-sheepit' ? (
+                <SheepitPane sessionId={sessionId} />
               ) : view === 'split' ? (
                 <FilesPane
                   sessionId={sessionId}

@@ -1072,6 +1072,10 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   /** The agent is sitting on a dialog only the terminal can draw. Its own
    *  report, through its hooks — see `agentWaiting` on the session. */
   const blocked = useStore(s => !!s.sessionMap[sessionId]?.agentWaiting);
+  /** There is an agent in this pane, whatever the transcript says yet. The
+   *  difference between "this pane is empty" and "we have not found its
+   *  conversation" — see the splash. */
+  const isClaudeCode = useStore(s => !!s.sessionMap[sessionId]?.isClaudeCode);
 
   const submit = useCallback(() => {
     /**
@@ -1554,7 +1558,19 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
             <div className="nat-splash-line">Build something.</div>
             {state.cwd && <div className="nat-splash-where">{state.cwd.replace(/^\/Users\/[^/]+/, '~')}</div>}
             <div className="nat-splash-hint">
-              {!state.transcriptPath
+              {/**
+                * **"Nothing has run here" is a claim, and it is often false.**
+                * A pane whose agent is running but whose transcript has not
+                * been handed over yet — the window after a server restart,
+                * before the agent's next hook — had no conversation to show
+                * and said that nothing had happened in it. It is one poll
+                * from being right, so it should not be asserting anything:
+                * `isClaudeCode` says an agent is in there, which is the whole
+                * difference between "empty" and "not known yet".
+                */}
+              {!state.transcriptPath && isClaudeCode
+                ? 'Looking for this pane\u2019s conversation. Its agent has not handed over the transcript yet — that usually takes a moment, or until its next turn.'
+                : !state.transcriptPath
                 ? 'Nothing has run here yet. Send a message to start, or check the terminal, which may be holding a dialog this view cannot show.'
                 : cleared
                   ? 'Context cleared. It remembers nothing from before — / lists the commands and skills it has.'
