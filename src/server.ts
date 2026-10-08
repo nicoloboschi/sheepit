@@ -9,6 +9,7 @@ import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'fs';
 import { gzipSync } from 'zlib';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
+import { createRepsRouter } from './reps.js';
 import { MAX_HEADLESS, MAX_SIDE_TERMINALS, type BridgeMessage } from './protocol.js';
 import type { AIService } from './ai.js';
 import { vibeSessionsDir } from './paths.js';
@@ -157,6 +158,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
   app.use(requireAuth);
 
   // REST API
+  app.use('/api/reps', createRepsRouter());
   app.use('/api', createApiRouter(bridge, logBuffer, ai));
 
   // The Android app, from the server you are about to point it at. Mounted

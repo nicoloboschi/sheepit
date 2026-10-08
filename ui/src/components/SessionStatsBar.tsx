@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Search, SquarePlus, TerminalSquare, Settings, FolderOpen, Github, ListPlus } from 'lucide-react';
+import { BookOpen, Search, SquarePlus, TerminalSquare, Settings, FolderOpen, Github, ListPlus, Repeat } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import SettingsDialog from './SettingsDialog';
 import FilesDialog from './FilesDialog';
 import GithubDialog from './GithubDialog';
 import TerminalsDialog from './TerminalsDialog';
+import RepsDialog from './RepsDialog';
 
 // Pen-level toolbar: the pen's name (click to rename) and its actions on the
 // left; add-a-sheep and zoom on the right. The terminal/git/files switch lives
@@ -52,6 +53,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
   const [filesFile, setFilesFile] = useState<{ path: string; line: number | null; seq: number } | null>(null);
   const [githubOpen,   setGithubOpen]   = useState(false);
   const [terminalsOpen, setTerminalsOpen] = useState(false);
+  const [repsOpen,     setRepsOpen]     = useState(false);
   // How the pen next to the name is doing. Hooks run before the early return.
   const { sheep, bleating, grazing } = useFlockCounts(sessionId);
 
@@ -204,6 +206,12 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
     () => setKnowledgeOpen(!knowledgeOpen), knowledgeOpen,
   );
 
+  /* reps: agent jobs that run on a schedule, each in its own worktree. */
+  const repsButton = action(
+    'reps', <Repeat size={14} />, 'Scheduled jobs (reps)',
+    () => setRepsOpen(v => !v), repsOpen,
+  );
+
   const newSessionButtons = onCreateSession && <>
     {action('new', <SquarePlus size={14} />, 'New session', () => onCreateSession(false))}
     {/* The scratch terminals, in their own panel — up to four of them. It
@@ -235,6 +243,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
       {filesButton}
       {githubButton}
       {knowledgeButton}
+      {repsButton}
       {newSessionButtons}
       <div style={{ flex: 1 }} />
       {addSheepButton && <div>{addSheepButton}</div>}
@@ -243,6 +252,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
       {filesOpen && <FilesDialog onClose={() => setFilesOpen(false)} openFile={filesFile} />}
       {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
       {terminalsOpen && <TerminalsDialog onClose={() => setTerminalsOpen(false)} />}
+      {repsOpen && <RepsDialog onClose={() => setRepsOpen(false)} />}
     </div>
   );
 }

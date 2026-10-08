@@ -627,6 +627,22 @@ Browser half is a native `WebContentsView` over the pane box
   **Never add a second path-bound `WebSocketServer`.**
 - Anyone who reaches sheepit can drive this browser. Don't add another way in.
 
+## reps (scheduled agent jobs)
+
+`RepsDialog` (top-bar button, a `FloatingPanel`) shows
+[reps](https://github.com/nicoloboschi/reps) jobs, their runs, each run's
+summary and output, plus Run now and Open worktree (a new pen in the job's
+worktree, or its folder when it has no repo).
+
+- `src/reps.ts` (`/api/reps`) is a pass-through to the CLI's `--json`
+  (`list`, `runs <job>`, `logs <job> --run <id>`). **Don't read `~/.reps`
+  directly** — what a run status means is reps' to define. Need more data?
+  Add it to the CLI in `~/dev/reps`.
+- The binary is found on PATH, then `~/.local/bin` (`REPS_BIN` overrides);
+  launchd and Electron start the server with a bare PATH.
+- Job names and run ids are checked against `SAFE_ID` (no leading `-`).
+- Run now spawns `reps run` detached; reps' own lock refuses a second run.
+
 ## Android app (`ui/android`, Capacitor)
 
 - Update banner: `GET /download/version` → `{available, version}`; compare
