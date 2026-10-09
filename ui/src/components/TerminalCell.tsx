@@ -583,8 +583,12 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     };
   }, [isActive, tile]);
 
-  // Resolve a path clicked in the terminal against this pane's cwd, then open
-  // it in the app-wide Files panel.
+  /** The line a file link asked for, for the pane's own Files view. */
+  const [filesLine, setFilesLine] = useState<number | null>(null);
+
+  // Resolve a path clicked in the terminal or the chat against this pane's
+  // cwd, then open it — in the pane's own Files view when it is inside the
+  // pane's directory, in the app-wide Files panel when it is anywhere else.
   const handleFileLink = useCallback(async (rawPath: string) => {
     let cleaned = rawPath;
     let line: number | null = null;
@@ -593,29 +597,41 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     if (colonMatch) { cleaned = colonMatch[1]!; line = parseInt(colonMatch[2]!, 10); }
     else if (parenMatch) { cleaned = parenMatch[1]!; line = parseInt(parenMatch[2]!, 10); }
     cleaned = cleaned.replace(/[.,;)'">\]]+$/, '');
-    let absPath = cleaned;
-    if (!cleaned.startsWith('/') && !cleaned.startsWith('~/')) {
-      try {
-        // Resolve against the live foreground-process cwd (e.g. Claude Code's
-        // working directory), so a relative path it printed — `out/foo.mp4` —
-        // points at the file IT created, not wherever the shell happens to be.
-        const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/cwd`);
-        const data = await res.json();
-        const cwd = (data.cwd as string) ?? '';
-        absPath = cwd ? `${cwd}/${cleaned.replace(/^\.\//, '')}` : cleaned;
-      } catch { /* use cleaned as-is */ }
+    // The live foreground-process cwd (e.g. Claude Code's working directory):
+    // a relative path it printed — `out/foo.mp4` — points at the file IT
+    // created, not wherever the shell happens to be. Also what decides which
+    // Files view the path belongs to, below.
+    let cwd = '';
+    try {
+      const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/cwd`);
+      cwd = ((await res.json()).cwd as string) ?? '';
+    } catch { /* resolve nothing, open globally */ }
+    const absPath = cleaned.startsWith('/') || cleaned.startsWith('~/') || !cwd
+      ? cleaned
+      : `${cwd}/${cleaned.replace(/^\.\//, '')}`;
+
+    // **Inside the pane's directory, the pane's own Files view.** That is the
+    // repository the pane is working in, and the split keeps the file beside
+    // the conversation that mentioned it. A tile has no tools, so it never
+    // takes this branch.
+    if (!tile && cwd && (absPath === cwd || absPath.startsWith(cwd.replace(/\/$/, '') + '/'))) {
+      setFilesLine(line);
+      setView('split');
+      // The split may be mounting right now; its open handle arrives with it.
+      setTimeout(() => openFileRef.current?.(absPath), 60);
+      return;
     }
-    // The app-wide Files panel, not the pane's own split: a path printed in a
-    // terminal is usually somewhere else entirely — a scratchpad under /private
-    // /tmp, a file in another checkout — and the pane's Files view is about the
-    // repository the pane is standing in. The panel floats over the whole app,
-    // so it also costs the terminal none of its width.
+
+    // **Anywhere else, the app-wide Files panel.** A path printed in a pane is
+    // as often somewhere else entirely — a scratchpad under /private/tmp, a
+    // file in another checkout — and the panel floats over the whole app, so
+    // it costs the terminal none of its width.
     //
     // A window event rather than a prop threaded up to the workspace bar, which
     // is where the panel's state lives — the same channel StatChips already
     // uses to push a PR into a pane, in the other direction.
     window.dispatchEvent(new CustomEvent('sheepit:open-file', { detail: { path: absPath, line } }));
-  }, [sessionId]);
+  }, [sessionId, tile]);
   const handleFileLinkRef = useRef(handleFileLink);
   handleFileLinkRef.current = handleFileLink;
 
@@ -1782,6 +1798,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
                 <FilesPane
                   sessionId={sessionId}
                   openFileRef={openFileRef}
+                  highlightLine={filesLine}
                   onPreviewFile={(path: string) => {
                     setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
                     setView('split-preview');
@@ -1798,7 +1815,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
             </div>
           </div>
         </Profiler>
-  ) : null, [isSplit, view, sessionId, previewUrl, previewNav, githubRef, stacked,
+  ) : null, [isSplit, view, sessionId, previewUrl, previewNav, githubRef, stacked, filesLine,
              // Stable by construction, and listed rather than silenced with an
              // eslint-disable: the next person to edit this block needs the
              // linter to tell them when they have added a dependency, because
