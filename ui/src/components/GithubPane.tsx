@@ -608,6 +608,10 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
 
   // ── Top toolbar: filters and search, over both columns ──────────────────────
 
+  /** `owner/repo` the list is reading; absent when there is no GitHub remote
+   *  (the server then answers for the cwd and there is nothing to link). */
+  const slug = repo ?? list?.repo ?? (sessionId ? repoOf.get(sessionId) : undefined);
+
   const toolbar = (
     <div
       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0, flexWrap: 'wrap' }}
@@ -632,6 +636,20 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
           }}
         />
       </span>
+      {slug && (
+        <a
+          href={`https://github.com/${slug}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={externalClick(`https://github.com/${slug}`)}
+          title="Open the repository on GitHub"
+          style={{ ...iconBtn, gap: 4, fontSize: 11.5, fontFamily: mono, textDecoration: 'none', maxWidth: 180 }}
+          className="hover:text-foreground"
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{slug}</span>
+          <ExternalLink size={12} style={{ flexShrink: 0 }} />
+        </a>
+      )}
       {listLoading
         ? <RefreshCw size={13} color="var(--muted-foreground)" className="animate-spin" />
         : <button onClick={() => loadList(true)} title="Refresh the list" style={iconBtn} className="hover:text-foreground"><RefreshCw size={13} /></button>}
