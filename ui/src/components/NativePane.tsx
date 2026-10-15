@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
+import { Square, ArrowUp, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -648,6 +648,20 @@ function When({ at, tookMs }: { at: number; tookMs?: number }) {
 }
 
 /** `451k`, the way every other count in sheepit is written. */
+/** Room left in the context window, as a ring that empties: green, amber
+ *  under a quarter, terracotta under a tenth. */
+function CtxRing({ left }: { left: number }) {
+  const r = 5.5, c = 2 * Math.PI * r;
+  const tone = left < 0.1 ? 'var(--destructive)' : left < 0.25 ? 'var(--warning)' : 'var(--primary)';
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
+      <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+      <circle cx="7" cy="7" r={r} fill="none" stroke={tone} strokeWidth="2" strokeLinecap="round"
+        strokeDasharray={c} strokeDashoffset={c * (1 - left)} />
+    </svg>
+  );
+}
+
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
@@ -1642,213 +1656,212 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         </button>
       )}
 
-      {/* What you are about to send with the message. A thumbnail, because
-          that is what says *which* screenshot; the path is what goes on the
-          wire and is no use to read. */}
-      {(attached.length > 0 || uploading > 0) && (
-        <div className="nat-attach">
-          {attached.map(a => (
-            <div className="nat-attach-item" key={a.path} title={a.path}>
-              <img src={`/api/fs/raw?path=${encodeURIComponent(a.path)}`} alt={a.name} />
-              <button
-                className="nat-attach-x"
-                aria-label={`Remove ${a.name}`}
-                onClick={() => setAttached(list => list.filter(x => x.path !== a.path))}
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))}
-          {uploading > 0 && <div className="nat-attach-item nat-attach-busy"><span className="nat-tool-spin" /></div>}
-        </div>
-      )}
-
       {attachError && (
         <button className="nat-attach-error" onClick={() => setAttachError(null)} title="Dismiss">
           <AlertTriangle size={12} /> {attachError}
         </button>
       )}
 
-      {/* The status line, on the composer's top edge — where the TUI keeps it,
-          and what you check before asking for something big. */}
-      {(status?.used !== undefined || status?.model || gitBranch) && (
-        <div className="nat-status">
-          {status?.model && <span className="nat-status-model">{status.model}</span>}
-
-          {/* **Clear is here because this is the line about the context.** It
-              is the one thing you do *to* a context rather than with it, and
-              the number beside it is what makes you want to. It types
-              `/clear` into the pane, like everything else this view does —
-              the agent clears its own session and the pane is renamed `-`
-              until it titles itself again.
-
-              It fires on the first click, by request. It did ask twice; the
-              argument against that is simply that `/clear` typed in the
-              terminal asks nothing either, and a button that needs two
-              presses is a button you press twice every time to pay for the
-              once you did not mean it. Nothing is destroyed that is not on
-              disk: the transcript stays, and ⌘K still finds it. */}
-          <button
-            className="nat-status-clear"
-            title="Clear this conversation — the agent starts fresh in the same pane"
-            onClick={() => sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' })}
-          >
-            Clear
-          </button>
-
-          <button
-            className="nat-status-clear"
-            title="Find in this conversation (⌘F)"
-            onClick={() => { setFinding(true); requestAnimationFrame(() => findRef.current?.select()); }}
-          >
-            <Search size={10} />
-          </button>
-
-          {/* Which checkout this pane is standing in, and what it is about.
-              Both come off the session object the sidebar already reads — no
-              second poll, and no second opinion about the branch. The pane bar
-              says the same two things above the terminal; in this view there
-              is no pane bar in sight once you have scrolled, and these are
-              exactly the facts you want before you ask for a commit. */}
-          {gitBranch && (
-            <span className={`nat-status-branch${gitDirty ? ' nat-status-dirty' : ''}`} title={gitDirty ? `${gitBranch} — uncommitted changes` : gitBranch}>
-              <GitBranch size={10} />{gitBranch}
-            </span>
-          )}
-          {topRef && (
-            <a
-              className="nat-status-pr"
-              href={topRefUrl ?? undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`${topRef.kind === 'issue' ? 'Issue' : 'Pull request'} #${topRef.num}`}
-              onClick={(e) => {
-                if (e.button !== 0 || !topRefUrl || !onOpenLink) return;
-                e.preventDefault();
-                onOpenLink(e.nativeEvent, topRefUrl);
-              }}
-            >#{topRef.num}</a>
-          )}
-
-          {status?.used !== undefined && (
-            <span
-              className="nat-status-ctx"
-              title={status.limit
-                ? `${status.used.toLocaleString()} of ${status.limit.toLocaleString()} tokens`
-                : `${status.used.toLocaleString()} tokens — this agent does not record its window size`}
-            >
-              {/* Remaining, not used: "how much room is left" is the question
-                  asked before a big request. A count when the agent does not
-                  record its window — see AgentContext.limit. */}
-              {status.limit
-                ? `${Math.max(0, 100 - Math.round((status.used / status.limit) * 100))}% context left`
-                : `${fmtTokens(status.used)} context`}
-            </span>
-          )}
-        </div>
-      )}
-
+      {/* One card: what you are about to send, the box you type it in, and
+          under it the facts you check before asking for something big — the
+          model, the checkout, how much context is left — beside Send. */}
       <div className="nat-compose">
-        <textarea
-          ref={inputRef}
-          className="nat-input"
-          value={draft}
-          disabled={blocked}
-          placeholder={
-            // Says what to do about it, not just that it will not take one:
-            // the terminal is where the dialog is, and it is one click away.
-            blocked ? 'Answer the prompt in the terminal first…'
-              : busy ? 'Claude is working — type the next one…'
-                : 'Message Claude Code…  (/ for its own commands)'}
-          rows={1}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            // Grow with the text, to a ceiling: a composer that can take the
-            // whole pane leaves nowhere to read the answer.
-            const el = e.target;
-            el.style.height = 'auto';
-            el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-          }}
-          onPaste={(e) => {
-            // A screenshot arrives as a file on the clipboard, not as text, so
-            // a textarea drops it silently. Text pastes are left alone.
-            const files = Array.from(e.clipboardData.files);
-            if (!files.length) return;
-            e.preventDefault();
-            takeFiles(files);
-          }}
-          onKeyDown={(e) => {
-            // The completion menu takes the keys it needs, and only while it is
-            // open — so Enter still sends the moment there is nothing to pick.
-            if (slash.open) {
-              if (e.key === 'ArrowDown') {
-                e.preventDefault(); setSlashIdx(i => (i + 1) % slash.matches.length); e.stopPropagation(); return;
-              }
-              if (e.key === 'ArrowUp') {
-                e.preventDefault(); setSlashIdx(i => (i - 1 + slash.matches.length) % slash.matches.length); e.stopPropagation(); return;
-              }
-              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-                const c = slash.matches[slashIdx];
-                if (c) { e.preventDefault(); pickSlash(c); e.stopPropagation(); return; }
-              }
-              if (e.key === 'Escape') {
-                // Closes the menu by making the draft no longer look like a
-                // bare command, rather than by a second piece of state that
-                // could disagree with it.
-                e.preventDefault(); setDraft(d => d + ' '); e.stopPropagation(); return;
-              }
-            }
-            // Enter sends, Shift+Enter is a newline — the same contract the
-            // agent's own prompt box has, so muscle memory survives the switch.
-            if (e.key === 'Enter' && !e.shiftKey) {
+        <div className="nat-box">
+          {/* What you are about to send with the message. A thumbnail, because
+              that is what says *which* screenshot; the path is what goes on the
+              wire and is no use to read. */}
+          {(attached.length > 0 || uploading > 0) && (
+            <div className="nat-attach">
+              {attached.map(a => (
+                <div className="nat-attach-item" key={a.path} title={a.path}>
+                  <img src={`/api/fs/raw?path=${encodeURIComponent(a.path)}`} alt={a.name} />
+                  <button
+                    className="nat-attach-x"
+                    aria-label={`Remove ${a.name}`}
+                    onClick={() => setAttached(list => list.filter(x => x.path !== a.path))}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              {uploading > 0 && <div className="nat-attach-item nat-attach-busy"><span className="nat-tool-spin" /></div>}
+            </div>
+          )}
+          <textarea
+            ref={inputRef}
+            className="nat-input"
+            value={draft}
+            disabled={blocked}
+            placeholder={
+              // Says what to do about it, not just that it will not take one:
+              // the terminal is where the dialog is, and it is one click away.
+              blocked ? 'Answer the prompt in the terminal first…'
+                : busy ? 'Claude is working — type the next one…'
+                  : 'Message Claude Code…  (/ for its own commands)'}
+            rows={1}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              // Grow with the text, to a ceiling: a composer that can take the
+              // whole pane leaves nowhere to read the answer.
+              const el = e.target;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+            }}
+            onPaste={(e) => {
+              // A screenshot arrives as a file on the clipboard, not as text, so
+              // a textarea drops it silently. Text pastes are left alone.
+              const files = Array.from(e.clipboardData.files);
+              if (!files.length) return;
               e.preventDefault();
-              submit();
-            }
-            /**
-             * Never let a keystroke here reach the app's global shortcuts —
-             * **except the two that walk the flock.** ⌘↑/⌘↓ is how you move
-             * between sheep without leaving the keyboard, and the composer
-             * holds the focus for the whole time this view is open, so
-             * swallowing them here turned them off wherever the chat was on
-             * screen. In a textarea the native meaning is jump to the start
-             * or end of the field, which in a three-line box is nothing
-             * anybody reaches for.
-             *
-             * The rest of the ⌘ chords stay swallowed on purpose: ⌘←/→ is
-             * line start/end in a text field, which matters more here than
-             * cycling the tools, and ⌘A/C/V/Z are the field's own.
-             */
-            const passThrough = (e.metaKey || e.ctrlKey)
-              && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'f');
-            if (!passThrough) e.stopPropagation();
-          }}
-        />
-        {busy ? (
-          /**
-           * **Stop says Stop.** It was the send button's 34px square wearing a
-           * different colour, which is the one control on this view you go
-           * looking for in a hurry — and an unlabelled icon in the place the
-           * send button normally sits is not a thing you find in a hurry.
-           *
-           * It sends Escape, exactly as the keyboard would. Measured against a
-           * real turn: a Bash tool running two `python3` processes, both gone
-           * three seconds after this button — the agent's own interrupt tears
-           * down the whole subprocess tree, and the session, its context and
-           * its transcript all survive. There is nothing here to kill by hand,
-           * and killing one would be worse than the keystroke.
-           */
-          <button
-            className="nat-send nat-stop-btn"
-            title="Stop the turn"
-            onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
-          >
-            <Square size={11} fill="currentColor" /> Stop
-          </button>
-        ) : (
-          <button className="nat-send" title="Send (Enter)" onClick={submit} disabled={!draft.trim() && !attached.length}>
-            <CornerDownLeft size={13} />
-          </button>
-        )}
+              takeFiles(files);
+            }}
+            onKeyDown={(e) => {
+              // The completion menu takes the keys it needs, and only while it is
+              // open — so Enter still sends the moment there is nothing to pick.
+              if (slash.open) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault(); setSlashIdx(i => (i + 1) % slash.matches.length); e.stopPropagation(); return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault(); setSlashIdx(i => (i - 1 + slash.matches.length) % slash.matches.length); e.stopPropagation(); return;
+                }
+                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                  const c = slash.matches[slashIdx];
+                  if (c) { e.preventDefault(); pickSlash(c); e.stopPropagation(); return; }
+                }
+                if (e.key === 'Escape') {
+                  // Closes the menu by making the draft no longer look like a
+                  // bare command, rather than by a second piece of state that
+                  // could disagree with it.
+                  e.preventDefault(); setDraft(d => d + ' '); e.stopPropagation(); return;
+                }
+              }
+              // Enter sends, Shift+Enter is a newline — the same contract the
+              // agent's own prompt box has, so muscle memory survives the switch.
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+              /**
+               * Never let a keystroke here reach the app's global shortcuts —
+               * **except the two that walk the flock.** ⌘↑/⌘↓ is how you move
+               * between sheep without leaving the keyboard, and the composer
+               * holds the focus for the whole time this view is open, so
+               * swallowing them here turned them off wherever the chat was on
+               * screen. In a textarea the native meaning is jump to the start
+               * or end of the field, which in a three-line box is nothing
+               * anybody reaches for.
+               *
+               * The rest of the ⌘ chords stay swallowed on purpose: ⌘←/→ is
+               * line start/end in a text field, which matters more here than
+               * cycling the tools, and ⌘A/C/V/Z are the field's own.
+               */
+              const passThrough = (e.metaKey || e.ctrlKey)
+                && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'f');
+              if (!passThrough) e.stopPropagation();
+            }}
+          />
+          <div className="nat-bar">
+            {status?.model && <span className="nat-status-model">{status.model}</span>}
+            {/* Which checkout this pane is standing in, and what it is about.
+                Both come off the session object the sidebar already reads — no
+                second poll, and no second opinion about the branch. The pane bar
+                says the same two things above the terminal; in this view there
+                is no pane bar in sight once you have scrolled, and these are
+                exactly the facts you want before you ask for a commit. */}
+            {gitBranch && (
+              <span className={`nat-status-branch${gitDirty ? ' nat-status-dirty' : ''}`} title={gitDirty ? `${gitBranch} — uncommitted changes` : gitBranch}>
+                <GitBranch size={11} />{gitBranch}
+              </span>
+            )}
+            {topRef && (
+              <a
+                className="nat-status-pr"
+                href={topRefUrl ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`${topRef.kind === 'issue' ? 'Issue' : 'Pull request'} #${topRef.num}`}
+                onClick={(e) => {
+                  if (e.button !== 0 || !topRefUrl || !onOpenLink) return;
+                  e.preventDefault();
+                  onOpenLink(e.nativeEvent, topRefUrl);
+                }}
+              >#{topRef.num}</a>
+            )}
+            <span className="nat-bar-gap" />
+            {status?.used !== undefined && (
+              <span
+                className="nat-status-ctx"
+                title={status.limit
+                  ? `${status.used.toLocaleString()} of ${status.limit.toLocaleString()} tokens`
+                  : `${status.used.toLocaleString()} tokens — this agent does not record its window size`}
+              >
+                {/* Remaining, not used: "how much room is left" is the question
+                    asked before a big request. The ring only when the agent
+                    records its window — see AgentContext.limit; never a guess. */}
+                {status.limit ? (
+                  <>
+                    <CtxRing left={Math.max(0, 1 - status.used / status.limit)} />
+                    {`${Math.max(0, 100 - Math.round((status.used / status.limit) * 100))}% left`}
+                  </>
+                ) : `${fmtTokens(status.used)} context`}
+              </span>
+            )}
+            <button
+              className="nat-bar-btn"
+              title="Find in this conversation (⌘F)"
+              onClick={() => { setFinding(true); requestAnimationFrame(() => findRef.current?.select()); }}
+            >
+              <Search size={12} />
+            </button>
+            {/* **Clear is here because this is the line about the context.** It
+                is the one thing you do *to* a context rather than with it, and
+                the number beside it is what makes you want to. It types
+                `/clear` into the pane, like everything else this view does —
+                the agent clears its own session and the pane is renamed `-`
+                until it titles itself again.
+
+                It fires on the first click, by request. It did ask twice; the
+                argument against that is simply that `/clear` typed in the
+                terminal asks nothing either, and a button that needs two
+                presses is a button you press twice every time to pay for the
+                once you did not mean it. Nothing is destroyed that is not on
+                disk: the transcript stays, and ⌘K still finds it. */}
+            <button
+              className="nat-bar-btn"
+              title="Clear this conversation — the agent starts fresh in the same pane"
+              onClick={() => sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' })}
+            >
+              Clear
+            </button>
+            {busy ? (
+              /**
+               * **Stop says Stop.** It was the send button's 34px square wearing a
+               * different colour, which is the one control on this view you go
+               * looking for in a hurry — and an unlabelled icon in the place the
+               * send button normally sits is not a thing you find in a hurry.
+               *
+               * It sends Escape, exactly as the keyboard would. Measured against a
+               * real turn: a Bash tool running two `python3` processes, both gone
+               * three seconds after this button — the agent's own interrupt tears
+               * down the whole subprocess tree, and the session, its context and
+               * its transcript all survive. There is nothing here to kill by hand,
+               * and killing one would be worse than the keystroke.
+               */
+              <button
+                className="nat-send nat-stop-btn"
+                title="Stop the turn"
+                onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
+              >
+                <Square size={11} fill="currentColor" /> Stop
+              </button>
+            ) : (
+              <button className="nat-send" title="Send (Enter)" onClick={submit} disabled={!draft.trim() && !attached.length}>
+                <ArrowUp size={15} strokeWidth={2.4} />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
     </PaneCwd.Provider>
