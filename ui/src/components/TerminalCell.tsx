@@ -474,9 +474,18 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    *  The terminal stays mounted underneath (see the style below): switching
    *  back is instant, the scrollback is intact, and the PTY never knew. */
   const [paneMode, setPaneMode] = useState(readPaneMode);
+  /** **This pane alone is lent to the terminal** while the agent waits on
+   *  something only the TUI can draw — a question with choices, a permission
+   *  prompt, a `/model` picker. The device keeps its mode; the conversation
+   *  stays mounted out of sight, sees the answer land, and takes the pane
+   *  back. Set and cleared by NativePane (`onHandoff`). */
+  const [handoff, setHandoff] = useState(false);
   const toggleNative = useCallback(() => {
+    // Mid-handoff the pane shows the terminal while the device says chat, so
+    // the button means "back to the chat", not "turn the chat off".
+    if (handoff) { setHandoff(false); return; }
     setPaneMode(m => { const next = m === 'native' ? 'terminal' : 'native'; writePaneMode(next); return next; });
-  }, []);
+  }, [handoff]);
   // Another pane in this window just flipped it — follow, so the app is in one
   // mode rather than in as many modes as it has mounted panes.
   useEffect(() => subscribePaneMode(setPaneMode), []);
@@ -492,7 +501,17 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    *
    *  Derived also means it follows the pane: an agent started in a shell a
    *  minute from now flips this on by itself, and a `/exit` flips it back. */
-  const nativeOn = !tile && isClaudeCode && paneMode === 'native';
+  const nativeWanted = !tile && isClaudeCode && paneMode === 'native';
+  const nativeOn = nativeWanted && !handoff;
+  // A handoff is for one wait; leaving the chat ends it.
+  useEffect(() => { if (!nativeWanted) setHandoff(false); }, [nativeWanted]);
+  // Lent to the terminal: the cursor goes there, so the answer is one
+  // keystroke or one click away.
+  useEffect(() => {
+    if (!handoff || !isActive) return;
+    const id = requestAnimationFrame(() => { safeFit(); termRef.current?.focus(); sendResize(); });
+    return () => cancelAnimationFrame(id);
+  }, [handoff, isActive]);
   /** Set when the browser is opened on a file from the tree; null when it is
    *  opened from the switch, where the address bar starts empty. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -1927,21 +1946,20 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
         className="terminal-pane"
         style={nativeOn ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
       />
-      {nativeOn && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: 'flex' }}>
+      {nativeWanted && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: handoff ? 'none' : 'flex' }}>
           <NativePane
             sessionId={sessionId}
             // The same link policy the terminal uses — see handleWebLink.
             onOpenLink={handleWebLink}
             // Only the pane on screen takes the keyboard; the rest stay mounted.
-            isActive={isActive}
+            isActive={isActive && !handoff}
+            onHandoff={setHandoff}
             // A path clicked here opens the same Files panel the terminal
             // opens — see handleFileLink.
             onOpenFile={handleFileLink}
-            // The card's "answer this in the terminal" button. It flips the
-            // whole device back, which is right: if a dialog needs the TUI,
-            // the next pane you open probably does too.
-            onOpenTerminal={() => { writePaneMode('terminal'); setPaneMode('terminal'); }}
+            // "Open terminal" on a question card: lend this pane, as above.
+            onOpenTerminal={() => setHandoff(true)}
           />
         </div>
       )}

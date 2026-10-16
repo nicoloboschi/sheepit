@@ -541,6 +541,9 @@ export function agentEnv(sessionId: string, port: number): Record<string, string
   return {
     SHEEPIT_SESSION_ID: sessionId,
     SHEEPIT_URL: `http://127.0.0.1:${port}`,
+    // Claude Code's "How is Claude doing?" prompt waits on a keypress in the
+    // TUI that the native view cannot draw or see, and eats the next key typed.
+    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1',
   };
 }
 

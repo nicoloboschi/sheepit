@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, ArrowUp, CornerDownLeft, ChevronRight, Wrench, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
+import { Square, ArrowUp, Paperclip, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -143,10 +143,8 @@ const ToolBlock = memo(function ToolBlock({ m }: { m: Extract<NativeMessage, { k
   return (
     <div className={`nat-tool${m.isError ? ' nat-tool-error' : ''}${running ? ' nat-tool-running' : ''}`} data-mid={m.id}>
       <button className="nat-tool-head" onClick={() => setOpen(o => !o)}>
-        <ChevronRight size={11} className={`nat-tool-chev${open ? ' nat-tool-chev-open' : ''}`} />
-        {m.isError ? <AlertTriangle size={11} /> : <Wrench size={11} />}
         <span className="nat-tool-name">{m.name}</span>
-        <span className="nat-tool-sum">{summary}</span>
+        {summary && <span className="nat-tool-sum">({summary})</span>}
         {running && <span className="nat-tool-spin" aria-label="running" />}
       </button>
       {open && (
@@ -442,6 +440,14 @@ const CHOICE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
  *  should reach. See the dedup effect in NativePane. */
 const ECHO_TTL_MS = 60_000;
 
+/** Built-ins that, sent with no arguments, open a TUI dialog (a picker or a
+ *  panel) that the transcript never sees. `/model opus` does not; `/model`
+ *  does. */
+const TUI_DIALOG_COMMANDS = new Set([
+  'model', 'resume', 'rewind', 'config', 'permissions', 'agents', 'memory', 'hooks',
+  'mcp', 'plugin', 'status', 'help', 'login', 'doctor', 'export', 'theme', 'output-style',
+]);
+
 /**
  * What you asked, clamped to three lines.
  *
@@ -641,27 +647,12 @@ function When({ at, tookMs }: { at: number; tookMs?: number }) {
       dateTime={new Date(at).toISOString()}
       title={new Date(at).toLocaleString()}
     >
-      {agoOf(at, now)}
-      {tookMs !== undefined && ` · took ${tookOf(tookMs)}`}
+      {tookMs !== undefined ? `Worked for ${tookOf(tookMs)} · ${agoOf(at, now)}` : agoOf(at, now)}
     </time>
   );
 }
 
 /** `451k`, the way every other count in sheepit is written. */
-/** Room left in the context window, as a ring that empties: green, amber
- *  under a quarter, terracotta under a tenth. */
-function CtxRing({ left }: { left: number }) {
-  const r = 5.5, c = 2 * Math.PI * r;
-  const tone = left < 0.1 ? 'var(--destructive)' : left < 0.25 ? 'var(--warning)' : 'var(--primary)';
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
-      <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
-      <circle cx="7" cy="7" r={r} fill="none" stroke={tone} strokeWidth="2" strokeLinecap="round"
-        strokeDasharray={c} strokeDashoffset={c * (1 - left)} />
-    </svg>
-  );
-}
-
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
@@ -809,10 +800,13 @@ function useSlashCommands(sessionId: string, draft: string) {
   return { open: open && matches.length > 0, matches, loading: open && !all, token };
 }
 
-export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOpenFile, isActive }: {
+export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpenLink, onOpenFile, isActive }: {
   sessionId: string;
   /** Flip the pane back to the TUI — for the dialogs this view cannot draw. */
   onOpenTerminal?: () => void;
+  /** Lend this pane to the terminal (`true`) and take it back (`false`). This
+   *  view stays mounted, hidden, while it is lent — see the effect below. */
+  onHandoff?: (on: boolean) => void;
   /** The pane's own link policy — see LinkHandler. */
   onOpenLink?: (e: MouseEvent, url: string) => void;
   /** Clicking a file path — the Files panel, as in the terminal. */
@@ -850,6 +844,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
   }, [draft, draftKey]);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   /** Whether the list is parked at the bottom. Only then does new output
    *  scroll it: yanking someone back down while they are reading a tool result
    *  further up is the single worst thing a chat log can do. */
@@ -1091,6 +1086,63 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
    *  conversation" — see the splash. */
   const isClaudeCode = useStore(s => !!s.sessionMap[sessionId]?.isClaudeCode);
 
+  /**
+   * **What only the terminal can draw goes to the terminal, and comes back.**
+   *
+   * A question with choices, a permission prompt, a bare `/model` picker: the
+   * TUI takes the keyboard for them, and from here the pane just looked dead.
+   * So the pane is lent to the terminal (cursor in it) for exactly that wait,
+   * and handed back to the conversation when it ends:
+   *  - a choice — when its tool call gets a result;
+   *  - a permission prompt — when the agent stops reporting it waits;
+   *  - a dialog command — when Claude Code records the command, which it does
+   *    as the dialog closes.
+   * Choices already in the transcript when it loads are history, not a wait.
+   * Coming back by hand (the pane bar) ends the loan too.
+   */
+  const lentFor = useRef<
+    | { kind: 'choice'; id: string }
+    | { kind: 'blocked' }
+    | { kind: 'dialog'; name: string; after: number }
+    | null
+  >(null);
+  const seenChoices = useRef<Set<string> | null>(null);
+  /** A permission prompt lends the pane when it starts, not while it lasts —
+   *  else coming back by hand would be undone at once. */
+  const wasBlocked = useRef(blocked);
+  const pendingChoice = useMemo(() => {
+    const list = state?.messages ?? [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]!;
+      if (m.kind === 'tool' && CHOICE_TOOLS.has(m.name)) return m.result === undefined ? m.id : null;
+    }
+    return null;
+  }, [state?.messages]);
+  useEffect(() => {
+    if (!onHandoff || !state) return;
+    if (!seenChoices.current) seenChoices.current = new Set(pendingChoice ? [pendingChoice] : []);
+    const blockedNow = blocked && !wasBlocked.current;
+    wasBlocked.current = blocked;
+    const lent = lentFor.current;
+    if (lent) {
+      const over = lent.kind === 'choice' ? pendingChoice !== lent.id
+        : lent.kind === 'blocked' ? !blocked
+          : state.messages.slice(lent.after).some(m => m.kind === 'command' && m.name === `/${lent.name}`);
+      if (over) { lentFor.current = null; onHandoff(false); }
+      return;
+    }
+    if (pendingChoice && !seenChoices.current.has(pendingChoice)) {
+      seenChoices.current.add(pendingChoice);
+      lentFor.current = { kind: 'choice', id: pendingChoice };
+      onHandoff(true);
+    } else if (blockedNow) {
+      lentFor.current = { kind: 'blocked' };
+      onHandoff(true);
+    }
+  }, [state, pendingChoice, blocked, onHandoff]);
+  // Back on screen as the conversation means the loan ended, by hand or not.
+  useEffect(() => { if (isActive) lentFor.current = null; }, [isActive]);
+
   const submit = useCallback(() => {
     /**
      * **Nothing is typed into a pane that is holding a dialog.**
@@ -1116,11 +1168,19 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
     const text = [body, ...attached.map(a => a.path)].filter(Boolean).join('\n');
     if (!text) return;
     sharedWs.send({ type: 'native_send', session_id: sessionId, text });
+    // A bare `/model`, `/resume`… opens a picker only the terminal can draw,
+    // and until it is answered nothing typed here reaches the agent. Take the
+    // person to it rather than leave the chat looking dead.
+    const bare = text.match(/^\/([\w:-]+)$/);
+    if (bare && TUI_DIALOG_COMMANDS.has(bare[1]!) && onHandoff) {
+      lentFor.current = { kind: 'dialog', name: bare[1]!, after: state?.messages.length ?? 0 };
+      onHandoff(true);
+    }
     setAttached([]);
     setPending(p => [...p, { id: `pending-${Date.now()}`, kind: 'user', text, at: Date.now() }]);
     setDraft('');
     atBottom.current = true;
-  }, [draft, attached, sessionId, blocked]);
+  }, [draft, attached, sessionId, blocked, onHandoff, state?.messages.length]);
 
   /**
    * Drop an echo once the real row for it is in the conversation — **or once
@@ -1430,7 +1490,6 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
       ?? (topRef.repo ? `https://github.com/${topRef.repo}/${topRef.kind === 'issue' ? 'issues' : 'pull'}/${topRef.num}` : null)
     : null;
 
-  const terminalFont = useStore(s => s.terminalFontFamily);
   /** Its own size, not the terminal's — see DEFAULT_NATIVE_FONT_SIZE. */
   const nativeFontSize = useStore(s => s.nativeFontSize);
 
@@ -1499,7 +1558,6 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
         takeFiles(files);
       }}
       style={{
-        '--nat-code-family': terminalFont,
         '--nat-base': `${nativeFontSize}px`,
       } as React.CSSProperties}
     >
@@ -1519,7 +1577,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
             if (el) { atBottom.current = false; el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
           }}
         >
-          <CornerDownLeft size={11} className="nat-ask-icon" />
+          <span className="nat-ask-icon" aria-hidden="true">❯</span>
           <span className="nat-ask-text">{sticky.text}</span>
         </button>
       )}
@@ -1666,27 +1724,32 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
           under it the facts you check before asking for something big — the
           model, the checkout, how much context is left — beside Send. */}
       <div className="nat-compose">
-        <div className="nat-box">
-          {/* What you are about to send with the message. A thumbnail, because
-              that is what says *which* screenshot; the path is what goes on the
-              wire and is no use to read. */}
-          {(attached.length > 0 || uploading > 0) && (
-            <div className="nat-attach">
-              {attached.map(a => (
-                <div className="nat-attach-item" key={a.path} title={a.path}>
-                  <img src={`/api/fs/raw?path=${encodeURIComponent(a.path)}`} alt={a.name} />
-                  <button
-                    className="nat-attach-x"
-                    aria-label={`Remove ${a.name}`}
-                    onClick={() => setAttached(list => list.filter(x => x.path !== a.path))}
-                  >
-                    <X size={11} />
-                  </button>
-                </div>
-              ))}
-              {uploading > 0 && <div className="nat-attach-item nat-attach-busy"><span className="nat-tool-spin" /></div>}
-            </div>
-          )}
+        {/* What you are about to send with the message. A thumbnail, because
+            that is what says *which* screenshot; the path is what goes on the
+            wire and is no use to read. */}
+        {(attached.length > 0 || uploading > 0) && (
+          <div className="nat-attach">
+            {attached.map(a => (
+              <div className="nat-attach-item" key={a.path} title={a.path}>
+                {/\.(png|jpe?g|gif|webp|bmp|svg|heic)$/i.test(a.name)
+                  ? <img src={`/api/fs/raw?path=${encodeURIComponent(a.path)}`} alt={a.name} />
+                  : <span className="nat-attach-file">{a.name}</span>}
+                <button
+                  className="nat-attach-x"
+                  aria-label={`Remove ${a.name}`}
+                  onClick={() => setAttached(list => list.filter(x => x.path !== a.path))}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+            {uploading > 0 && <div className="nat-attach-item nat-attach-busy"><span className="nat-tool-spin" /></div>}
+          </div>
+        )}
+        {/* A prompt, like the TUI's: a mark, the line you type on, and
+            nothing else. Enter sends; the button is for touch screens. */}
+        <div className="nat-prompt">
+          <span className="nat-prompt-mark" aria-hidden="true">❯</span>
           <textarea
             ref={inputRef}
             className="nat-input"
@@ -1761,107 +1824,125 @@ export default function NativePane({ sessionId, onOpenTerminal, onOpenLink, onOp
               if (!passThrough) e.stopPropagation();
             }}
           />
-          <div className="nat-bar">
-            {status?.model && <span className="nat-status-model">{status.model}</span>}
-            {/* Which checkout this pane is standing in, and what it is about.
-                Both come off the session object the sidebar already reads — no
-                second poll, and no second opinion about the branch. The pane bar
-                says the same two things above the terminal; in this view there
-                is no pane bar in sight once you have scrolled, and these are
-                exactly the facts you want before you ask for a commit. */}
-            {gitBranch && (
-              <span className={`nat-status-branch${gitDirty ? ' nat-status-dirty' : ''}`} title={gitDirty ? `${gitBranch} — uncommitted changes` : gitBranch}>
-                <GitBranch size={11} />{gitBranch}
-              </span>
-            )}
-            {topRef && (
-              <a
-                className="nat-status-pr"
-                href={topRefUrl ?? undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`${topRef.kind === 'issue' ? 'Issue' : 'Pull request'} #${topRef.num}`}
-                onClick={(e) => {
-                  if (e.button !== 0 || !topRefUrl || !onOpenLink) return;
-                  e.preventDefault();
-                  onOpenLink(e.nativeEvent, topRefUrl);
-                }}
-              >#{topRef.num}</a>
-            )}
-            <span className="nat-bar-gap" />
-            {status?.used !== undefined && (
-              <span
-                className="nat-status-ctx"
-                title={status.limit
-                  ? `${status.used.toLocaleString()} of ${status.limit.toLocaleString()} tokens`
-                  : `${status.used.toLocaleString()} tokens — this agent does not record its window size`}
-              >
-                {/* Remaining, not used: "how much room is left" is the question
-                    asked before a big request. The ring only when the agent
-                    records its window — see AgentContext.limit; never a guess. */}
-                {status.limit ? (
-                  <>
-                    <CtxRing left={Math.max(0, 1 - status.used / status.limit)} />
-                    {`${Math.max(0, 100 - Math.round((status.used / status.limit) * 100))}% left`}
-                  </>
-                ) : `${fmtTokens(status.used)} context`}
-              </span>
-            )}
+          <button
+            className="nat-attach-btn"
+            title="Attach files"
+            aria-label="Attach files"
+            disabled={blocked}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Paperclip size={14} />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = ''; // the same file can be picked again
+              if (files.length) takeFiles(files);
+              inputRef.current?.focus();
+            }}
+          />
+          {busy ? (
+            /**
+             * **Stop says Stop.** It was the send button's 34px square wearing a
+             * different colour, which is the one control on this view you go
+             * looking for in a hurry — and an unlabelled icon in the place the
+             * send button normally sits is not a thing you find in a hurry.
+             *
+             * It sends Escape, exactly as the keyboard would. Measured against a
+             * real turn: a Bash tool running two `python3` processes, both gone
+             * three seconds after this button — the agent's own interrupt tears
+             * down the whole subprocess tree, and the session, its context and
+             * its transcript all survive. There is nothing here to kill by hand,
+             * and killing one would be worse than the keystroke.
+             */
             <button
-              className="nat-bar-btn"
-              title="Find in this conversation (⌘F)"
-              onClick={() => { setFinding(true); requestAnimationFrame(() => findRef.current?.select()); }}
+              className="nat-send nat-stop-btn"
+              title="Stop the turn"
+              onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
             >
-              <Search size={12} />
+              <Square size={11} fill="currentColor" /> Stop
             </button>
-            {/* **Clear is here because this is the line about the context.** It
-                is the one thing you do *to* a context rather than with it, and
-                the number beside it is what makes you want to. It types
-                `/clear` into the pane, like everything else this view does —
-                the agent clears its own session and the pane is renamed `-`
-                until it titles itself again.
-
-                It fires on the first click, by request. It did ask twice; the
-                argument against that is simply that `/clear` typed in the
-                terminal asks nothing either, and a button that needs two
-                presses is a button you press twice every time to pay for the
-                once you did not mean it. Nothing is destroyed that is not on
-                disk: the transcript stays, and ⌘K still finds it. */}
-            <button
-              className="nat-bar-btn"
-              title="Clear this conversation — the agent starts fresh in the same pane"
-              onClick={() => sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' })}
-            >
-              Clear
+          ) : (
+            <button className="nat-send" title="Send (Enter)" aria-label="Send" onClick={submit} disabled={!draft.trim() && !attached.length}>
+              <ArrowUp size={15} strokeWidth={2.4} />
             </button>
-            {busy ? (
-              /**
-               * **Stop says Stop.** It was the send button's 34px square wearing a
-               * different colour, which is the one control on this view you go
-               * looking for in a hurry — and an unlabelled icon in the place the
-               * send button normally sits is not a thing you find in a hurry.
-               *
-               * It sends Escape, exactly as the keyboard would. Measured against a
-               * real turn: a Bash tool running two `python3` processes, both gone
-               * three seconds after this button — the agent's own interrupt tears
-               * down the whole subprocess tree, and the session, its context and
-               * its transcript all survive. There is nothing here to kill by hand,
-               * and killing one would be worse than the keystroke.
-               */
-              <button
-                className="nat-send nat-stop-btn"
-                title="Stop the turn"
-                onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
-              >
-                <Square size={11} fill="currentColor" /> Stop
-              </button>
-            ) : (
-              <button className="nat-send" title="Send (Enter)" onClick={submit} disabled={!draft.trim() && !attached.length}>
-                <ArrowUp size={15} strokeWidth={2.4} />
-              </button>
-            )}
-          </div>
+          )}
         </div>
+      </div>
+      <div className="nat-bar">
+        {status?.model && <span className="nat-status-model">{status.model}</span>}
+        {/* Which checkout this pane is standing in, and what it is about.
+            Both come off the session object the sidebar already reads — no
+            second poll, and no second opinion about the branch. The pane bar
+            says the same two things above the terminal; in this view there
+            is no pane bar in sight once you have scrolled, and these are
+            exactly the facts you want before you ask for a commit. */}
+        {gitBranch && (
+          <span className={`nat-status-branch${gitDirty ? ' nat-status-dirty' : ''}`} title={gitDirty ? `${gitBranch} — uncommitted changes` : gitBranch}>
+            <GitBranch size={11} />{gitBranch}
+          </span>
+        )}
+        {topRef && (
+          <a
+            className="nat-status-pr"
+            href={topRefUrl ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`${topRef.kind === 'issue' ? 'Issue' : 'Pull request'} #${topRef.num}`}
+            onClick={(e) => {
+              if (e.button !== 0 || !topRefUrl || !onOpenLink) return;
+              e.preventDefault();
+              onOpenLink(e.nativeEvent, topRefUrl);
+            }}
+          >#{topRef.num}</a>
+        )}
+        <span className="nat-bar-gap" />
+        {status?.used !== undefined && (
+          <span
+            className="nat-status-ctx"
+            title={status.limit
+              ? `${status.used.toLocaleString()} of ${status.limit.toLocaleString()} tokens`
+              : `${status.used.toLocaleString()} tokens — this agent does not record its window size`}
+          >
+            {/* Remaining, not used: "how much room is left" is the question
+                asked before a big request. A percentage only when the agent
+                records its window — see AgentContext.limit; never a guess. */}
+            {status.limit
+              ? `Ctx: ${Math.max(0, 100 - Math.round((status.used / status.limit) * 100))}% left`
+              : `Ctx: ${fmtTokens(status.used)}`}
+          </span>
+        )}
+        <button
+          className="nat-bar-btn"
+          title="Find in this conversation (⌘F)"
+          onClick={() => { setFinding(true); requestAnimationFrame(() => findRef.current?.select()); }}
+        >
+          <Search size={12} />
+        </button>
+        {/* **Clear is here because this is the line about the context.** It
+            is the one thing you do *to* a context rather than with it, and
+            the number beside it is what makes you want to. It types
+            `/clear` into the pane, like everything else this view does —
+            the agent clears its own session and the pane is renamed `-`
+            until it titles itself again.
+
+            It fires on the first click, by request. It did ask twice; the
+            argument against that is simply that `/clear` typed in the
+            terminal asks nothing either, and a button that needs two
+            presses is a button you press twice every time to pay for the
+            once you did not mean it. Nothing is destroyed that is not on
+            disk: the transcript stays, and ⌘K still finds it. */}
+        <button
+          className="nat-bar-btn"
+          title="Clear this conversation — the agent starts fresh in the same pane"
+          onClick={() => sharedWs.send({ type: 'native_send', session_id: sessionId, text: '/clear' })}
+        >
+          Clear
+        </button>
       </div>
     </div>
     </PaneCwd.Provider>

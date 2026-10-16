@@ -501,22 +501,39 @@ the transcript tailed (`src/claude-native.ts`). No stream-json fork.
 
 - Liveness comes only from the pane's busy flag.
 - `AskUserQuestion` / `ExitPlanMode` drawn by `ChoiceBlock`, read-only (no
-  answering from here).
+  answering from here: keystrokes into an unseen picker can answer wrong).
+- **Handoff**: what only the TUI can draw lends *this pane* to the terminal
+  (`onHandoff`, cursor in the terminal); the device mode is untouched and the
+  view stays mounted hidden. Returns when it's over: choice gets a result,
+  `agentWaiting` clears, or the dialog command's row lands. Triggers: a new
+  choice (not ones present on load), `agentWaiting` turning on, a bare
+  `TUI_DIALOG_COMMANDS` send. The pane-bar toggle mid-handoff = back to chat.
 - `/` menu (`src/slash-commands.ts`, `useSlashCommands`): user/project/plugin
   skills from disk (plugin ones as `plugin:skill`), built-ins static. Handle
   YAML block-scalar descriptions. Opens only when `/` is first and there is no space.
 - TUI dialogs (permission, trust, `/resume` picker) aren't in the transcript;
   don't guess at them.
+- `agentEnv` sets `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1`: the "How is Claude
+  doing?" prompt is a TUI keypress the view can't see.
+- `isMeta` user rows are Claude Code's, not the person's: hidden, except a
+  skill body (drawn as its command) and `[Image: source: …]`, whose path joins
+  the message before it. `[Image #N]` is stripped from user text.
 - Send = bracketed paste, then Enter as a separate write. Interrupt = Escape.
 - Re-ask the transcript path every poll; a change emits `reset`.
 - Only non-sidechain user/assistant rows; drop `<...>`-wrapped notices. Keep
   partial trailing lines for the next read.
 - Echo the sent message until the real row arrives (matched on text).
 - `.nat-list > *` gets `flex-shrink: 0`.
-- Tool call = ruled line with brand-green left rail.
-- `--nat-size` on `.nat-pane`: 14.5px, 16px below 768px.
+- **Looks like Claude Code's TUI**: JetBrains Mono (`--font-mono`, not the
+  terminal's font), one size for everything incl. code, line-height 1.45.
+  Reply = `●` in a 2ch gutter; tool = `● Name(args)` one line (dot white,
+  red on error, blinking while running); `✱ Worked for … · ago` ends a turn;
+  your message = full-width row, `❯`, green rail. Inline code amber, bold
+  white 700, `-` list marks. Composer = `❯` line between hairlines, status
+  line under it; Send button only on phones.
+- `--nat-base` comes from Appearance (`nativeFontSize`); +1.5px below 768px.
 - Agent output is Markdown (react-markdown + remark-gfm, `.md-preview`);
-  `white-space: normal` on it; `.nat-text` max 74ch; `li > p { margin: 0 }`.
+  `white-space: normal` on it; `.nat-text` max 120ch; `li > p { margin: 0 }`.
   User messages are plain text.
 - `clearAgentSession` on `/clear` drops the pane's agent ref.
 - Terminal stays mounted while hidden. Mode is app-wide and device-local
@@ -591,7 +608,11 @@ Browser half is a native `WebContentsView` over the pane box
 - Profile `persist:sheepit-browser`.
 - External links go through `ui/src/openExternal.ts` → `shell.openExternal`.
   Main window's `setWindowOpenHandler` denies all `window.open` and hands
-  http/https/mailto to the OS. The pane's own view loads `_blank` in the pane.
+  http/https/mailto to the OS. The pane's own view loads `_blank` in the pane,
+  but a real popup (`disposition: 'new-window'`) opens as a child window: OAuth
+  ("Continue with Google") answers through `window.opener`.
+- `app.userAgentFallback` drops the `Electron/` token; Google won't sign in to
+  Electron. App-wide because popups don't inherit a session's agent.
 - Dev: window loads Vite on 4444; only `electron/` changes need a relaunch.
   `./dev.sh --desktop` waits for both ports. `scripts/brand-dev-electron.sh`
   patches the dev Electron bundle's name/icon and re-signs ad hoc.
