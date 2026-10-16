@@ -12,6 +12,10 @@ const rootDir = path.resolve(__dirname, '..');
 // icon fixes what a running process can fix; the bundle itself is Electron's,
 // so the menu bar may still say so in dev.
 app.setName('Sheepit');
+// Every page sees plain Chrome, like the streamed browser does: Google refuses
+// to sign in to a browser that names itself Electron. App-wide, because a
+// sign-in popup does not inherit a session's agent.
+app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|sheepit)\/\S+/gi, '');
 const backendPort = Number(process.env.SHEEPIT_DESKTOP_PORT ?? 4445);
 const vitePort = Number(process.env.SHEEPIT_VITE_PORT ?? 4444);
 
@@ -308,7 +312,19 @@ ipcMain.on('browser:open', (event, id, url) => {
     push();
   });
   // A target=_blank link stays in the pane rather than opening a bare window.
-  view.webContents.setWindowOpenHandler(({ url: next }) => {
+  // A real popup (`window.open` with features: "Continue with Google" and
+  // every other OAuth flow) opens as one: it hands its result back through
+  // `window.opener`, so loading it in the pane dead-ends the sign-in.
+  view.webContents.setWindowOpenHandler(({ url: next, disposition }) => {
+    if (disposition === 'new-window' && /^https?:/i.test(next)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520, height: 680, parent: win, autoHideMenuBar: true,
+          webPreferences: { partition: 'persist:sheepit-browser', sandbox: true, contextIsolation: true },
+        },
+      };
+    }
     view.webContents.loadURL(next).catch(() => {});
     return { action: 'deny' };
   });
