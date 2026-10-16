@@ -166,9 +166,11 @@ function resultText(content: unknown): string {
  * message must not be built one way on load and another way live, or the
  * conversation changes shape when you reload it.
  */
-class RowReader {
+export class RowReader {
   /** tool_use id → the message we drew it as, so its result can find it. */
   private tools = new Map<string, Extract<NativeMessage, { kind: 'tool' }>>();
+  /** The last thing a person typed, so an image's source can join it. */
+  private lastUser: Extract<NativeMessage, { kind: 'user' }> | null = null;
 
   /** @returns the messages this row added, and any it changed in place. */
   read(row: Record<string, any>): { added: NativeMessage[]; changed: NativeMessage[] } {
@@ -264,7 +266,30 @@ class RowReader {
       // Anything else that opens with a tag, or is mostly tags, is machinery.
       if (/^<[a-z-]+[\s>]/i.test(text)) return { added, changed };
 
-      added.push({ id: `u-${uuid}`, kind: 'user', text, at });
+      /**
+       * **`isMeta` is Claude Code saying "I wrote this, not the person"**: hook
+       * feedback, notices from other sessions, and one row per attached image
+       * naming its file. None of it is a message. (Skill bodies are meta too,
+       * and are kept above as the command they stand for.)
+       *
+       * The image row is the one worth reading: its path joins the message it
+       * belongs to, so the bubble shows the picture.
+       */
+      if (row.isMeta === true) {
+        const source = text.match(/^\[Image: source: (.+)\]$/);
+        if (source && this.lastUser) {
+          this.lastUser.text = `${this.lastUser.text}\n${source[1]}`.trim();
+          changed.push(this.lastUser);
+        }
+        return { added, changed };
+      }
+
+      // `[Image #2]` is the TUI's own placeholder for a picture in the prompt.
+      // The picture is shown from its path; the marker would only be noise.
+      const typed = text.replace(/\[Image #\d+\]\s*/g, '').trim();
+      const m: Extract<NativeMessage, { kind: 'user' }> = { id: `u-${uuid}`, kind: 'user', text: typed, at };
+      this.lastUser = m;
+      added.push(m);
       return { added, changed };
     }
 
