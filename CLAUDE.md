@@ -697,8 +697,13 @@ Anything that reaches sheepit has a shell as this user.
 - Fetch interceptor must cover both bare `/api/...` and `apiUrl()`-absolute
   URLs, and add `ngrok-skip-browser-warning` (else ngrok returns its HTML
   page with 200).
-- Tunnel: launchd `~/Library/LaunchAgents/dev.sheepit.ngrok.plist` running
-  `ngrok start sheepit` (needs `HOME` and `PATH`).
+- Tunnel: launchd `~/Library/LaunchAgents/dev.sheepit.cloudflared.plist` runs
+  the named Cloudflare tunnel `sheepit` (`~/.cloudflared/sheepit.yml`) to 4445:
+  **https://sheepit.nicoloboschi.com**, fixed (needs `HOME` and `PATH`).
+  cloudflared sends `x-forwarded-for`, so auth applies (checked: 401 without
+  the password; a WebSocket without it is refused, which Cloudflare shows as
+  502). The `ricettine` tunnel beside it is another app's. The old ngrok agent
+  (`dev.sheepit.ngrok`) is unloaded, not deleted.
 - **Never expose sheepit through a tunnel without auth.**
 
 ## PTY daemon — keep it empty
