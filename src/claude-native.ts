@@ -105,6 +105,8 @@ const POLL_MS = 400;
  * box instead of submitting. See `send`.
  */
 const PASTE_SETTLE_MS = 250;
+/** Longer than this, a single line is pasted rather than typed (see `send`). */
+const TYPE_MAX_CHARS = 200;
 
 function clip(s: string, n = MAX_RESULT_CHARS): string {
   return s.length <= n ? s : s.slice(0, n) + `\n… [${s.length - n} more characters]`;
@@ -179,11 +181,25 @@ export class RowReader {
     // A subagent's exchange belongs to the subagent. Same rule as ⌘K's search;
     // without it a Task tool's whole inner conversation lands in the pane's.
     if (row.isSidechain === true) return { added, changed };
-    if (row.type !== 'user' && row.type !== 'assistant') return { added, changed };
 
     const at = Date.parse(row.timestamp ?? '') || Date.now();
-    const content = row.message?.content;
     const uuid: string = row.uuid ?? randomUUID();
+
+    // **A message sent while the agent is working is not a `user` row.** It is
+    // folded into the running turn as a `queued_command` attachment, so it was
+    // never drawn: the echo stood in for a minute, then the message vanished.
+    // Its own `<task-notification>`s ride the same row and stay machinery.
+    if (row.type === 'attachment' && row.attachment?.type === 'queued_command') {
+      const text = textOf(row.attachment.prompt).replace(/\[Image #\d+\]\s*/g, '').trim();
+      if (!text || text.startsWith('<')) return { added, changed };
+      const m: Extract<NativeMessage, { kind: 'user' }> = { id: `u-${uuid}`, kind: 'user', text, at };
+      this.lastUser = m;
+      added.push(m);
+      return { added, changed };
+    }
+    if (row.type !== 'user' && row.type !== 'assistant') return { added, changed };
+
+    const content = row.message?.content;
 
     if (row.type === 'user') {
       // A `user` row is either something a person typed or a tool coming back.
@@ -380,8 +396,12 @@ export class NativeSession {
     // messages are one line and need none of it.
     //
     // Multi-line genuinely needs the brackets, or the first newline submits a
-    // half-written prompt.
-    this.write(body.includes('\n') ? `\x1b[200~${body}\x1b[201~` : body);
+    // half-written prompt. **So does a long line:** typed raw, it reaches the
+    // agent in several reads, Claude Code takes the burst for an unbracketed
+    // paste, and only the last chunk survived — a 1,200-character message
+    // arrived as its final 260.
+    const paste = body.includes('\n') || body.length > TYPE_MAX_CHARS;
+    this.write(paste ? `\x1b[200~${body}\x1b[201~` : body);
 
     /**
      * **The Enter is always a later write, never the same one.**

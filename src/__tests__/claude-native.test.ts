@@ -26,3 +26,13 @@ describe('RowReader: a message with an attached image', () => {
     expect(out.added).toHaveLength(0)
   })
 })
+
+describe('RowReader: a message sent while the agent works', () => {
+  it('is drawn from its queued_command attachment; task notifications are not', () => {
+    const r = new RowReader()
+    const typed = r.read({ type: 'attachment', uuid: 'q', timestamp: '2026-10-20T10:00:00Z', attachment: { type: 'queued_command', prompt: 'also check the docs' } })
+    expect(typed.added).toMatchObject([{ id: 'u-q', kind: 'user', text: 'also check the docs' }])
+    const note = r.read({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', prompt: '<task-notification>done</task-notification>' } })
+    expect(note.added).toHaveLength(0)
+  })
+})

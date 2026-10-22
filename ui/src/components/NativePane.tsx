@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, ArrowUp, Paperclip, AlertTriangle, Brain, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
+import { Square, ArrowUp, Paperclip, AlertTriangle, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -713,11 +713,13 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
         </div>
       );
     case 'thinking':
+      // Claude Code writes its running narration ("The key works — now I'll
+      // compare…") as a thinking block, and the terminal shows it as a reply.
+      // Folded away behind a toggle it read as a message the chat had lost.
       return (
-        <details className="nat-think" data-mid={m.id}>
-          <summary><Brain size={11} /> thinking</summary>
-          <div className="nat-text nat-think-body">{m.text}</div>
-        </details>
+        <div className="nat-msg nat-assistant" data-mid={m.id}>
+          <Markdown text={m.text} />
+        </div>
       );
     case 'tool':
       return CHOICE_TOOLS.has(m.name)
@@ -1804,6 +1806,15 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 submit();
+              }
+              // The composer holds the focus, so the page keys scroll the
+              // conversation, not the caret in a three-line box.
+              if (e.key === 'PageUp' || e.key === 'PageDown') {
+                const list = listRef.current;
+                if (list) {
+                  e.preventDefault();
+                  list.scrollBy({ top: (e.key === 'PageUp' ? -1 : 1) * list.clientHeight * 0.9 });
+                }
               }
               /**
                * Never let a keystroke here reach the app's global shortcuts —

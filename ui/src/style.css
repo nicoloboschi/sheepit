@@ -3517,27 +3517,6 @@
   color: var(--foreground);
 }
 
-/* Thinking is collapsed by default: it is long, it is the model talking to
-   itself, and leaving it open pushes the answer off the screen. */
-.nat-think {
-  border-left: 2px solid color-mix(in srgb, var(--muted-foreground) 35%, transparent);
-  padding-left: 9px;
-}
-.nat-think > summary {
-  cursor: pointer;
-  display: flex; align-items: center; gap: 5px;
-  font-size: calc(var(--nat-size) * 0.82);
-  color: var(--muted-foreground);
-  list-style: none;
-}
-.nat-think > summary::-webkit-details-marker { display: none; }
-.nat-think-body {
-  margin-top: 5px;
-  font-size: calc(var(--nat-size) * 0.92);
-  color: var(--muted-foreground);
-  font-style: italic;
-}
-
 /* A tool call: ONE LINE until you ask for more. It is the commonest block in
    a transcript and the least worth reading in full — a wall of JSON per call
    is how a chat log stops being readable. The head carries the only question
