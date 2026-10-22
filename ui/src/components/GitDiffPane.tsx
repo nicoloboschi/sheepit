@@ -84,6 +84,8 @@ export function ChangedFiles(
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
   const shownRef = useRef(-1);
+  // The diffs run in the tree's order, so scrolling down walks the tree down.
+  const order = useMemo(() => treeOrder(files), [files]);
   useEffect(() => {
     const root = scrollRoot?.current;
     const body = bodyRef.current;
@@ -96,7 +98,7 @@ export function ChangedFiles(
       const edge = root.getBoundingClientRect().top + 12;
       const els = body.querySelectorAll<HTMLElement>('[data-file]');
       let idx = 0;
-      els.forEach((el, i) => { if (el.getBoundingClientRect().top <= edge) idx = i; });
+      els.forEach(el => { if (el.getBoundingClientRect().top <= edge) idx = Number(el.dataset.index); });
       if (idx !== shownRef.current) { shownRef.current = idx; selectRef.current(idx); }
     };
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(sync); };
@@ -126,12 +128,13 @@ export function ChangedFiles(
       />
       <div ref={bodyRef} style={{ flex: 1, minWidth: 0, padding: '0 12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <Suspense fallback={<div style={{ padding: 16, color: 'var(--muted-foreground)', fontSize: 12 }}>Loading the diff…</div>}>
-          {files.map((f, i) => {
+          {order.map(i => {
+            const f = files[i]!;
             const displayPath = f.isDeleted ? f.oldPath : (f.newPath || f.oldPath);
             // `data-file` stays on the wrapper so the tree's and the keyboard's
             // "jump to file" can scroll to it.
             return (
-              <div key={`${displayPath}${i}`} data-file={displayPath}>
+              <div key={`${displayPath}${i}`} data-file={displayPath} data-index={i}>
                 <FileView
                   path={gitRoot ? `${gitRoot}/${displayPath}` : null}
                   sessionId={sessionId}
@@ -251,11 +254,7 @@ function FileSidebar({ files, focusedIndex, onJump, onSelect, onOpenFile }: File
 
   function renderNode(node: TreeNode, dirPath: string, dirLabel: string, depth: number): React.ReactNode {
     const sortedChildren = [...node.children.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    const sortedFiles = [...node.files].sort((a, b) => {
-      const aName = (a.file.isDeleted ? a.file.oldPath : a.file.newPath).split('/').pop()!;
-      const bName = (b.file.isDeleted ? b.file.oldPath : b.file.newPath).split('/').pop()!;
-      return aName.localeCompare(bName);
-    });
+    const sortedFiles = sortedTreeFiles(node);
 
     // Root: render children and root-level files directly
     if (depth < 0) {
@@ -499,6 +498,26 @@ interface TreeNode {
   fileCount: number;
 }
 
+/** File indices in the order the tree draws them: folders first, then files,
+ *  each by name. The diff column and the keyboard walk the same order. */
+function treeOrder(files: DiffFile[]): number[] {
+  const out: number[] = [];
+  const walk = (node: TreeNode): void => {
+    for (const [, child] of [...node.children.entries()].sort((a, b) => a[0].localeCompare(b[0]))) walk(child);
+    for (const { index } of sortedTreeFiles(node)) out.push(index);
+  };
+  walk(buildTree(files));
+  return out;
+}
+
+function sortedTreeFiles(node: TreeNode): TreeNode['files'] {
+  return [...node.files].sort((a, b) => {
+    const aName = (a.file.isDeleted ? a.file.oldPath : a.file.newPath).split('/').pop()!;
+    const bName = (b.file.isDeleted ? b.file.oldPath : b.file.newPath).split('/').pop()!;
+    return aName.localeCompare(bName);
+  });
+}
+
 function buildTree(files: DiffFile[]): TreeNode {
   const root: TreeNode = { files: [], children: new Map(), additions: 0, deletions: 0, fileCount: 0 };
   for (let i = 0; i < files.length; i++) {
@@ -620,18 +639,7 @@ export default function GitDiffPane({ sessionId, mode, onOpenFile }: GitDiffPane
   }, []);
 
   // Sorted file order (matching sidebar grouping) — maps visual position to original index
-  const sortedFileOrder = useMemo(() => {
-    if (!files?.length) return [];
-    const entries = files.map((file, i) => {
-      const path = file.isDeleted ? file.oldPath : (file.newPath || file.oldPath);
-      const parts = path.split('/');
-      const name = parts.pop()!;
-      const dir = parts.join('/') || '.';
-      return { index: i, dir, name };
-    });
-    entries.sort((a, b) => a.dir.localeCompare(b.dir) || a.name.localeCompare(b.name));
-    return entries.map(e => e.index);
-  }, [files]);
+  const sortedFileOrder = useMemo(() => (files?.length ? treeOrder(files) : []), [files]);
 
   const jumpToFile = (path: string): void => {
     const el = diffRef.current?.querySelector(`[data-file="${CSS.escape(path)}"]`);
