@@ -1381,6 +1381,14 @@ export class DirectBridge {
         }
         return;
       }
+      // **Too early to tell, and the pane already has a conversation: wait.**
+      // Accepting it let a background agent's brand-new file replace the
+      // pane's real one; when it was later found to be spawned the path was
+      // dropped, and the pane was left pointing at nothing — no chat at all.
+      // The pane's own new file is offered again on its next hook, decidable
+      // by then. (A cleared pane has no `prev` and still takes it at once.)
+      if (prev?.transcriptPath && prev.transcriptPath !== offered
+        && !this.spawnedTranscripts.has(offered) && isInteractiveTranscript(offered) === null) return;
     }
 
     const transcriptPath = offered && isSearchableTranscript(offered)
@@ -1913,8 +1921,12 @@ export class DirectBridge {
    *  Code happened to work because it runs as a direct child.
    *
    *  One `ps` call covers the whole machine — the per-session `pgrep`+`ps` pair
-   *  it replaced was the dominant source of keystroke stalls. */
-  private async snapshotDescendants(roots: Set<number>): Promise<Map<number, ProcSnapshot[]>> {
+   *  it replaced was the dominant source of keystroke stalls.
+   *
+   *  `null` means `ps` failed — under load it can outrun its timeout — and
+   *  must not be read as "nothing running": that flipped every pane's agent off
+   *  (the Claude mark gone, the chat back to the terminal) until the next try. */
+  private async snapshotDescendants(roots: Set<number>): Promise<Map<number, ProcSnapshot[]> | null> {
     const byRoot = new Map<number, ProcSnapshot[]>();
     if (roots.size === 0) return byRoot;
     try {
@@ -1970,7 +1982,10 @@ export class DirectBridge {
         }
         if (found.length) byRoot.set(root, found);
       }
-    } catch { /* leave empty — callers treat it as "no descendants known" */ }
+    } catch (e) {
+      logger.debug(`process snapshot failed, keeping the last one: ${e}`);
+      return null;
+    }
     return byRoot;
   }
 
@@ -1986,27 +2001,29 @@ export class DirectBridge {
     if (Date.now() - this.procInfoAt >= PROC_INFO_TTL_MS) {
       this.procInfoAt = Date.now();
       const descendantsByPid = await this.snapshotDescendants(new Set(pids.map(p => p.pid)));
-      this.procInfo.clear();
-      for (const { id, pid } of pids) {
-        const children = descendantsByPid.get(pid) ?? [];
-        let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, isHermes = false, isPi = false, cpuPercent = 0, memMb = 0;
-        for (const c of children) {
-          const app = detectAgentApp(c.args);
-          if (app === 'claude') isClaudeCode = true;
-          else if (app === 'codex') isCodex = true;
-          else if (app === 'opencode') isOpencode = true;
-          else if (app === 'hermes') isHermes = true;
-          else if (app === 'pi') isPi = true;
-          else if (app === 'antigravity') isAntigravity = true;
-          else if (app === 'copilot') isCopilot = true;
-          else if (app === 'grok') isGrok = true;
-          else if (app === 'cursor') isCursor = true;
-          cpuPercent += c.cpu; memMb += c.rssKb / 1024;
+      if (descendantsByPid) {
+        this.procInfo.clear();
+        for (const { id, pid } of pids) {
+          const children = descendantsByPid.get(pid) ?? [];
+          let isClaudeCode = false, isCodex = false, isOpencode = false, isAntigravity = false, isCopilot = false, isGrok = false, isCursor = false, isHermes = false, isPi = false, cpuPercent = 0, memMb = 0;
+          for (const c of children) {
+            const app = detectAgentApp(c.args);
+            if (app === 'claude') isClaudeCode = true;
+            else if (app === 'codex') isCodex = true;
+            else if (app === 'opencode') isOpencode = true;
+            else if (app === 'hermes') isHermes = true;
+            else if (app === 'pi') isPi = true;
+            else if (app === 'antigravity') isAntigravity = true;
+            else if (app === 'copilot') isCopilot = true;
+            else if (app === 'grok') isGrok = true;
+            else if (app === 'cursor') isCursor = true;
+            cpuPercent += c.cpu; memMb += c.rssKb / 1024;
+          }
+          this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, isHermes, isPi, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
+          // Any child at all means the shell isn't just sitting at a prompt.
+          const sess = this.sessions.get(id);
+          if (sess) sess.liveApp = children.length > 0;
         }
-        this.procInfo.set(id, { isClaudeCode, isCodex, isOpencode, isAntigravity, isCopilot, isGrok, isCursor, isHermes, isPi, cpuPercent: Math.round(cpuPercent * 10) / 10, memMb: Math.round(memMb) });
-        // Any child at all means the shell isn't just sitting at a prompt.
-        const sess = this.sessions.get(id);
-        if (sess) sess.liveApp = children.length > 0;
       }
     }
     const processInfo = this.procInfo;
@@ -2369,6 +2386,7 @@ export class DirectBridge {
   private async refreshLiveApps(): Promise<void> {
     const pids = new Set([...this.sessions.values()].map(s => s.pid).filter(p => p > 0));
     const childrenByPid = await this.snapshotDescendants(pids);
+    if (!childrenByPid) return;
     for (const sess of this.sessions.values()) {
       sess.liveApp = sess.pid > 0 && (childrenByPid.get(sess.pid)?.length ?? 0) > 0;
     }
