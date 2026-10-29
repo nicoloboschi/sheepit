@@ -1,6 +1,5 @@
-import type { Terminal } from 'xterm';
-import { TERMINAL_LINE_HEIGHT } from '../theme';
-import useStore, { activeTerminalSend } from '../store';
+import { useSyncExternalStore } from 'react';
+import { keybarTarget, subscribeKeybar } from '../store';
 
 interface KeyDef {
   label: string;
@@ -36,31 +35,16 @@ const BTN_STYLE: React.CSSProperties = {
   WebkitUserSelect: 'none',
 };
 
-interface MobileKeybarProps {
-  sendRef: React.MutableRefObject<(msg: Record<string, unknown>) => void>;
-  termRef: React.MutableRefObject<Terminal | null>;
-}
+/** Esc, Tab, arrows and Ctrl chords for a phone keyboard that has none. Types
+ *  into whichever terminal claimed it last (see `claimKeybar`): the shown pane
+ *  while it shows its terminal, or the scratch / side shell you last touched.
+ *  Nothing claimed (a chat view on screen) = no bar. */
+export default function MobileKeybar() {
+  const target = useSyncExternalStore(subscribeKeybar, keybarTarget);
+  if (!target) return null;
 
-export default function MobileKeybar({ termRef }: MobileKeybarProps) {
-  const currentSessionId = useStore(s => s.currentSessionId);
-
-  if (!currentSessionId) return null;
-
-  function press(data: string) {
-    activeTerminalSend.current({ type: 'input', data });
-  }
-
-  function scrollPage(direction: number) {
-    const vp = document.querySelector('.terminal-pane .xterm-viewport') as HTMLElement | null;
-    if (!vp) return;
-    const term = termRef?.current;
-    const lineH = (term?.options?.fontSize ?? 14) * (term?.options?.lineHeight ?? TERMINAL_LINE_HEIGHT);
-    const lines = term ? Math.max(1, term.rows - 1) : 20;
-    vp.scrollTop = Math.max(0, Math.min(
-      vp.scrollTop + direction * lines * lineH,
-      vp.scrollHeight - vp.clientHeight,
-    ));
-  }
+  const press = (data: string) => keybarTarget()?.send({ type: 'input', data });
+  const scrollPage = (pages: number) => keybarTarget()?.scrollPages(pages);
 
   return (
     <div

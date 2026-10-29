@@ -28,7 +28,6 @@ import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
 const KnowledgeDialog = lazy(() => import('./components/KnowledgeDialog'));
 import MobileKeybar from './components/MobileKeybar';
 import AndroidInstallBanner from './components/AndroidInstallBanner';
-import { readPaneMode, subscribePaneMode } from './components/NativePane';
 import ConfirmDialog from './components/ConfirmDialog';
 import LogsModal from './components/LogsModal';
 import CommandsDialog, { loadCommands } from './components/CommandsDialog';
@@ -470,12 +469,6 @@ export default function App() {
   }, []);
   const dndEnabled = !isMobile;
 
-  /** Terminal or the native conversation view — one setting for this device.
-   *  App reads it only to decide whether the mobile key bar belongs on screen;
-   *  the panes own the rest. See NativePane.tsx. */
-  const [paneMode, setPaneMode] = useState(readPaneMode);
-  useEffect(() => subscribePaneMode(setPaneMode), []);
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -713,13 +706,10 @@ export default function App() {
               send={send}
             />
           </Profiler>
-          {/* The key bar types Esc, Tab and the arrows into the PTY, which is
-              what a terminal wants and the opposite of what the conversation
-              view does — there, Esc *interrupts the agent*. So it is drawn only
-              in terminal mode. The composer has the keys it needs. */}
-          {paneMode === 'terminal' && (
-            <MobileKeybar sendRef={{ current: sharedWs.send }} termRef={{ current: null }} />
-          )}
+          {/* Drawn only while a terminal claims it (see `claimKeybar`): in
+              the conversation view Esc would *interrupt the agent*, and the
+              composer has the keys it needs. */}
+          <MobileKeybar />
         </div>
 
         <ConfirmDialog />

@@ -93,7 +93,23 @@ export default function FloatingPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [title, onClose]);
 
-  const beginResize = (dir: ResizeDir, e: React.PointerEvent) => {
+  // A press anywhere outside puts the panel away, like a popover. Not inside
+  // another panel (several can be open), a menu or dialog portalled out of
+  // this one, or a toolbar button (each toggles its own panel; closing here
+  // first would make its click reopen it). Armed a tick late, so the press
+  // that opened the panel does not close it.
+  const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (!el?.closest || el.closest('.floating-panel, .stats-action, [role="menu"], [role="dialog"], [role="listbox"]')) return;
+      onCloseRef.current();
+    };
+    const t = setTimeout(() => document.addEventListener('pointerdown', onDown, true), 0);
+    return () => { clearTimeout(t); document.removeEventListener('pointerdown', onDown, true); };
+  }, []);
+
+  const beginResize =(dir: ResizeDir, e: React.PointerEvent) => {
     const box = boxRef.current;
     if (!box) return;
     toFront();

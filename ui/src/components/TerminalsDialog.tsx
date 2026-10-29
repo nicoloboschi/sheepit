@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { TerminalSquare } from 'lucide-react';
 import FloatingPanel from './FloatingPanel';
+import MobileKeybar from './MobileKeybar';
 import TerminalTiles from './TerminalTiles';
 import useStore from '../store';
 import * as sharedWs from '../sharedWs';
@@ -53,6 +54,8 @@ export default function TerminalsDialog({ onClose }: { onClose: () => void }) {
         emptyLabel="Open a scratch terminal"
         addLabel="Another scratch terminal"
       />
+      {/* The app's own key bar is under this panel on a phone. */}
+      <MobileKeybar />
     </FloatingPanel>
   );
 }

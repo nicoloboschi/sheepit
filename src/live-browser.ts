@@ -275,6 +275,9 @@ export interface ViewState {
   canGoForward: boolean;
 }
 
+/** A basic-auth challenge, for the pane to draw a sign-in form from. */
+export interface AuthAsk { host: string; realm: string; proxy: boolean }
+
 export interface BrowserDownload {
   id: string;
   name: string;
@@ -303,6 +306,10 @@ interface View {
   onActive: (active: boolean) => void;
   onCursor: (cursor: string) => void;
   onDownload: (download: BrowserDownload) => void;
+  /** The page hit HTTP basic auth (null: the ask is over). */
+  onAuth: (auth: AuthAsk | null) => void;
+  /** The paused request waiting on that answer. */
+  authRequestId: string | null;
   /** Called after the TTL has closed this view's page. */
   onExpired: () => void;
   /** When the pane last said it was on screen, or was used. */
@@ -323,6 +330,7 @@ export interface OpenViewOptions {
   onActive: (active: boolean) => void;
   onCursor: (cursor: string) => void;
   onDownload: (download: BrowserDownload) => void;
+  onAuth: (auth: AuthAsk | null) => void;
   onExpired: () => void;
 }
 
@@ -524,6 +532,20 @@ export class LiveBrowser {
       view?.onCursor(String(params.payload ?? 'auto'));
     });
 
+    cdp.on('Fetch.requestPaused', (params, sessionId) => {
+      cdp.post('Fetch.continueRequest', { requestId: params.requestId }, sessionId);
+    });
+    cdp.on('Fetch.authRequired', (params, sessionId) => {
+      const view = sessionId ? this.viewBySession(sessionId) : undefined;
+      if (!view) return;
+      // A newer challenge replaces one never answered.
+      if (view.authRequestId) this.answerAuth(view.id, null);
+      const challenge = (params.authChallenge ?? {}) as { origin?: string; realm?: string; source?: string };
+      let host = String(challenge.origin ?? '');
+      try { host = new URL(host).host; } catch { /* keep what we were given */ }
+      view.authRequestId = String(params.requestId);
+      view.onAuth({ host, realm: String(challenge.realm ?? ''), proxy: challenge.source === 'Proxy' });
+    });
     cdp.on('Browser.downloadWillBegin', params => this.downloadWillBegin(params));
     cdp.on('Browser.downloadProgress', params => this.downloadProgress(params));
     try {
@@ -650,6 +672,7 @@ export class LiveBrowser {
       height: Math.max(200, Math.round(opts.height)),
       onFrame: opts.onFrame, onState: opts.onState, onActive: opts.onActive,
       onCursor: opts.onCursor, onDownload: opts.onDownload, onExpired: opts.onExpired, lastSeen: Date.now(),
+      onAuth: opts.onAuth, authRequestId: null,
       mainFrameId: null, loading: false,
       casting: false, lastUrl: '', lastTitle: '',
     };
@@ -658,6 +681,10 @@ export class LiveBrowser {
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId).catch(() => {});
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
+    // Basic auth: headless Chromium has no prompt, so without this a protected
+    // site just shows its 401 body. Only documents are paused (each is let
+    // straight through in `Fetch.requestPaused`), not every image and script.
+    await cdp.send('Fetch.enable', { handleAuthRequests: true, patterns: [{ urlPattern: '*', resourceType: 'Document' }] }, sessionId).catch(() => {});
     // The cursor reporter: a binding for the page to call, the script that
     // calls it on every future document, and one evaluation for the document
     // that is already here.
@@ -772,6 +799,18 @@ export class LiveBrowser {
     await cdp.send('Page.stopScreencast', {}, view.sessionId).catch(() => {});
     await this.applyMetrics(view, scale);
     await this.startCast(view, scale);
+  }
+
+  /** The pane's answer to a basic-auth ask: credentials, or null to cancel. */
+  answerAuth(id: string, creds: { username: string; password: string } | null): void {
+    const view = this.views.get(id);
+    if (!view?.authRequestId) return;
+    this.cdp?.post('Fetch.continueWithAuth', {
+      requestId: view.authRequestId,
+      authChallengeResponse: creds ? { response: 'ProvideCredentials', ...creds } : { response: 'CancelAuth' },
+    }, view.sessionId);
+    view.authRequestId = null;
+    view.onAuth(null);
   }
 
   navigate(id: string, url: string): void {

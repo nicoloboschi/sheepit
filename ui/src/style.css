@@ -926,6 +926,12 @@
   font-size: 11px; color: var(--foreground);
 }
 .preview-error-retry:hover { border-color: var(--primary); color: var(--primary); }
+.preview-auth-input {
+  width: min(260px, 100%); padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--card);
+  font-size: 12px; color: var(--foreground); outline: none;
+}
+.preview-auth-input:focus { border-color: var(--ring); }
 
 /* Word-level diff: the row's background says the line changed, these say which
    part of it did. They sit on top of that background, so they have to be
@@ -2200,6 +2206,48 @@
   animation: file-list-enter 0.18s ease-out;
   will-change: opacity;
 }
+
+/* Files list: Name | Modified | Size, like Finder's list view. The date and
+   size columns drop as the list narrows (a pane's tool column), the name never. */
+.file-list { container-type: inline-size; }
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px 64px;
+  align-items: center;
+  gap: 10px;
+}
+.file-col-date, .file-col-size {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.file-col-size { text-align: right; justify-content: flex-end; }
+@container (max-width: 380px) {
+  .file-row { grid-template-columns: minmax(0, 1fr) 64px; }
+  .file-col-date { display: none !important; }
+}
+@container (max-width: 200px) {
+  .file-row { grid-template-columns: minmax(0, 1fr); }
+  .file-col-size { display: none !important; }
+}
+.file-list-head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 3px 10px 3px 12px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.file-list-head button {
+  display: flex; align-items: center; gap: 3px;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+.file-list-head button:hover,
+.file-list-head button[aria-sort="ascending"],
+.file-list-head button[aria-sort="descending"] { color: var(--foreground); }
 
 /* Soft, delayed loading indicator for directory browsing — a thin sliding bar
    instead of a layout-shifting "Loading…" line. */
@@ -3781,6 +3829,27 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A live question: options are buttons, picked = lift + brand rail, like a
+   selected card (selection is a lift, not a hue). */
+.nat-opt-live {
+  align-items: flex-start; text-align: left;
+  cursor: pointer; color: inherit; font-family: inherit;
+}
+.nat-opt-live:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.nat-opt-on {
+  border-color: var(--primary);
+  box-shadow: inset 3px 0 0 var(--primary), 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.nat-opt-other { color: inherit; font-family: inherit; outline: none; }
+.nat-opt-other:focus { border-color: var(--ring); }
+.nat-q-hint { font-weight: 400; color: var(--muted-foreground); }
+.nat-choice-send {
+  padding: 4px 14px; border-radius: var(--nat-input-radius); border: none;
+  background: var(--primary-gradient); color: var(--primary-foreground);
+  font-family: inherit; font-weight: 600; cursor: pointer;
+}
+.nat-choice-send:hover:not(:disabled) { background: var(--primary-gradient-hover); }
+.nat-choice-send:disabled { opacity: 0.5; cursor: default; }
 .nat-choice-foot {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
   font-size: calc(var(--nat-size) * 0.85);

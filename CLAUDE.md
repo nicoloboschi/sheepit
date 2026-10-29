@@ -500,13 +500,18 @@ session**: input is typed into the PTY (`DirectBridge.sendInput`), output is
 the transcript tailed (`src/claude-native.ts`). No stream-json fork.
 
 - Liveness comes only from the pane's busy flag.
-- `AskUserQuestion` / `ExitPlanMode` drawn by `ChoiceBlock`, read-only (no
-  answering from here: keystrokes into an unseen picker can answer wrong).
+- `AskUserQuestion` is answered in `ChoiceBlock`: picks go as `native_answer`
+  and `answerKeys` (`claude-native.ts`) types them into the picker, one key
+  per write, chained 150ms apart (two keys in one read are dropped as a
+  paste). Key map measured on v2.1.308; re-measure if the picker changes.
+  Claude Code fires `PermissionRequest` for it too, so `agentWaiting` counts as
+  a terminal dialog only after `DIALOG_SETTLE_MS` with no question pending.
+  `ExitPlanMode` stays read-only and hands off to the terminal.
 - **Handoff**: what only the TUI can draw lends *this pane* to the terminal
   (`onHandoff`, cursor in the terminal); the device mode is untouched and the
   view stays mounted hidden. Returns when it's over: choice gets a result,
   `agentWaiting` clears, or the dialog command's row lands. Triggers: a new
-  choice (not ones present on load), `agentWaiting` turning on, a bare
+  plan (not ones present on load), `agentWaiting` turning on, a bare
   `TUI_DIALOG_COMMANDS` send. The pane-bar toggle mid-handoff = back to chat.
 - `/` menu (`src/slash-commands.ts`, `useSlashCommands`): user/project/plugin
   skills from disk (plugin ones as `plugin:skill`), built-ins static. Handle
@@ -586,9 +591,14 @@ own port is dropped.
   only panes showing a browser.
 - Last page per pane in `sheepit:pane-url:<sessionId>` (its own key).
 - Loading bar from main-frame `Page.frameStartedLoading/StoppedLoading`.
+- HTTP basic auth: neither browser has its own prompt. Electron's `login`
+  event / CDP `Fetch.authRequired` (Fetch enabled for `Document` only) become
+  `auth` on the pane state; `PreviewPane` draws the form (covering the native
+  view hides it) and answers via `answerAuth`. Chromium caches the creds.
 - Screenshot: `Page.captureScreenshot` PNG to `~/.config/sheepit/screenshots`,
   **path** goes on the clipboard (`execCommand` fallback for plain http).
-- Local `.html` via `/api/fs/raw?as=html` on `127.0.0.1:<serverPort>`
+- Local files (`.html`, video) via `/api/fs/at/<path>` on `127.0.0.1:<serverPort>`
+  (path in the URL, so a page's relative `clip.mp4` resolves)
   (`/api/browser/status` gives the port).
 
 ### Desktop app (Electron)

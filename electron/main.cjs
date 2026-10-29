@@ -200,7 +200,9 @@ let nextDownloadId = 1;
 /** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
 const APP_SHORTCUTS = new Set(['k', 'n', 'ArrowUp', 'ArrowDown']);
 
-function browserState(view, error) {
+/** What the pane draws from: the page's state plus a pending basic-auth ask. */
+function browserState(entry) {
+  const { view, error, auth } = entry;
   const wc = view.webContents;
   return {
     url: wc.getURL(),
@@ -209,12 +211,14 @@ function browserState(view, error) {
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
     error: error ?? null,
+    auth: auth ?? null,
   };
 }
 
 function closeView(id) {
   const entry = views.get(id);
   if (!entry) return;
+  entry.authCallback?.();
   views.delete(id);
   if (!entry.win.isDestroyed()) entry.win.contentView.removeChildView(entry.view);
   if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
@@ -287,7 +291,7 @@ ipcMain.on('browser:open', (event, id, url) => {
 
   const push = () => {
     if (!event.sender.isDestroyed() && views.has(id)) {
-      event.sender.send('browser:state', id, browserState(view, views.get(id)?.error));
+      event.sender.send('browser:state', id, browserState(views.get(id)));
     }
   };
   for (const name of ['did-navigate', 'did-navigate-in-page', 'did-start-loading', 'did-stop-loading', 'page-title-updated']) {
@@ -333,6 +337,19 @@ ipcMain.on('browser:open', (event, id, url) => {
   // were reading a page. Only chords a page has no use for: ⌘←/→ stay with it
   // (line start/end in a text field), as do ⌘+/−/0 and every editing chord.
   // What the page found, on its way to the pane's find bar.
+  // A site behind HTTP basic auth. Electron draws no prompt of its own and,
+  // left alone, cancels: the page shows its 401 body and nothing asks you.
+  // The pane draws the form (it covers the view, so the view hides) and the
+  // answer comes back through `browser:auth`.
+  view.webContents.on('login', (loginEvent, details, authInfo, callback) => {
+    loginEvent.preventDefault();
+    const entry = views.get(id);
+    if (!entry) return callback();
+    entry.authCallback?.(); // a newer challenge replaces one never answered
+    entry.authCallback = callback;
+    entry.auth = { host: authInfo.host + (authInfo.port && ![80, 443].includes(authInfo.port) ? `:${authInfo.port}` : ''), realm: authInfo.realm || '', proxy: !!authInfo.isProxy };
+    push();
+  });
   view.webContents.on('found-in-page', (_e, result) => {
     if (event.sender.isDestroyed() || !views.has(id)) return;
     event.sender.send('browser:find-result', id, { matches: result.matches, active: result.activeMatchOrdinal });
@@ -372,6 +389,17 @@ timedIpc('browser:bounds', (_event, id, rect) => {
 });
 
 ipcMain.on('browser:close', (_event, id) => closeView(id));
+// The pane's answer to a `login`: credentials, or null to cancel.
+ipcMain.on('browser:auth', (event, id, username, password) => {
+  const entry = views.get(id);
+  if (!entry?.authCallback) return;
+  const callback = entry.authCallback;
+  entry.authCallback = null;
+  entry.auth = null;
+  if (typeof username === 'string') callback(username, String(password ?? ''));
+  else callback();
+  if (!event.sender.isDestroyed()) event.sender.send('browser:state', id, browserState(entry));
+});
 // loadURL rejects when a navigation is superseded; that is not an error here.
 ipcMain.on('browser:navigate', (_event, id, url) => viewOf(id)?.webContents.loadURL(url).catch(() => {}));
 ipcMain.on('browser:back', (_event, id) => viewOf(id)?.webContents.navigationHistory.goBack());

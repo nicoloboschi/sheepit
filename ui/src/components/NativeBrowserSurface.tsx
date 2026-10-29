@@ -15,6 +15,7 @@ interface DesktopBrowser {
   open(id: string, url: string): void;
   bounds(id: string, rect: { x: number; y: number; width: number; height: number } | null): void;
   close(id: string): void;
+  auth(id: string, username: string | null, password?: string): void;
   navigate(id: string, url: string): void;
   back(id: string): void;
   forward(id: string): void;
@@ -26,7 +27,7 @@ interface DesktopBrowser {
   onFindOpen(cb: (id: string) => void): () => void;
   onFindResult(cb: (id: string, result: FindResult) => void): () => void;
   onDownload(cb: (id: string, download: BrowserDownload) => void): () => void;
-  onState(cb: (id: string, state: Pick<LiveBrowserState, 'url' | 'title' | 'loading' | 'canGoBack' | 'canGoForward' | 'error'>) => void): () => void;
+  onState(cb: (id: string, state: Pick<LiveBrowserState, 'url' | 'title' | 'loading' | 'canGoBack' | 'canGoForward' | 'error' | 'auth'>) => void): () => void;
 }
 
 /** What the page found: how many matches, and which one is selected. */
@@ -289,6 +290,7 @@ export default function NativeBrowserSurface({ url, navSeq = 0, zoom = 1, onStat
       screenshot: () => b.screenshot(id),
       find: (text, forward, findNext) => b.find(id, text, forward, findNext),
       stopFind: () => b.stopFind(id),
+      answerAuth: creds => b.auth(id, creds?.username ?? null, creds?.password),
     };
     return () => { commands.current = null; };
   }, [b, id, commands]);

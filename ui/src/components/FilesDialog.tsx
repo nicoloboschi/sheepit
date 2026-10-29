@@ -98,9 +98,10 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
       title="Files"
       icon={<FolderOpen size={13} style={{ color: 'var(--primary)' }} />}
       onClose={onClose}
-      width={980}
-      height={640}
-      minWidth={720}
+      // Places + a list with its columns + a file whose header fits one row.
+      width={1180}
+      height={720}
+      minWidth={860}
       minHeight={420}
     >
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -220,6 +221,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
           initialPath={path}
           onDirChange={setDir}
           onRecentFilesChange={setRecentFiles}
+          finder
           highlightLine={hlLine}
           onFileSelect={(p: string) => { if (p !== openFile?.path) setHlLine(null); }}
         />

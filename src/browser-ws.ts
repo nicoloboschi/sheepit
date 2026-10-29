@@ -39,6 +39,8 @@ type ClientMessage =
   | { type: 'copy'; id: number }
   | { type: 'screenshot'; id: number }
   | { type: 'paste'; text: string }
+  // Answer to an `auth` ask; no username means cancel.
+  | { type: 'auth'; username?: string; password?: string }
   | { type: 'input'; method: string; params: Record<string, unknown> };
 
 /** `noServer`, and the caller routes upgrades to it — see the comment on the
@@ -91,6 +93,8 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
               // Downloads have no shelf in the streamed browser, so they are
               // reported to the pane chrome instead.
               onDownload: (download: BrowserDownload) => send({ type: 'download', download }),
+              // The page wants a username and password (HTTP basic auth).
+              onAuth: auth => send({ type: 'auth', auth }),
               // Out of sight past the TTL: the page is gone, the socket stays,
               // and the pane may ask for it again with another `open`.
               // The TTL travels with it, so the pane's wording cannot disagree
@@ -112,6 +116,9 @@ export function attachBrowserWs(browser: LiveBrowser, log: (m: string) => void):
           // waiting on this one answer and cannot take somebody else's.
           case 'screenshot': send({ type: 'shot', id: msg.id, data: await browser.screenshot(viewId) }); break;
           case 'paste':    browser.paste(viewId, msg.text); break;
+          case 'auth':
+            browser.answerAuth(viewId, typeof msg.username === 'string' ? { username: msg.username, password: String(msg.password ?? '') } : null);
+            break;
           case 'navigate': browser.navigate(viewId, msg.url); break;
           case 'reload':   browser.reload(viewId); break;
           case 'back':     await browser.history(viewId, -1); break;

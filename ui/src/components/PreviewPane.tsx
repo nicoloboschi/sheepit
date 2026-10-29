@@ -31,7 +31,7 @@
  * `localhost` port works whatever device you are looking from.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Camera, Check, Minus, Plus, Search, ChevronUp, ChevronDown, X, Download, Copy } from 'lucide-react';
+import { RotateCw, ExternalLink, ArrowLeft, ArrowRight, ShieldAlert, Lock, Camera, Check, Minus, Plus, Search, ChevronUp, ChevronDown, X, Download, Copy } from 'lucide-react';
 import { externalClick } from '../openExternal';
 import { copyText } from '../utils';
 
@@ -416,6 +416,28 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
                 {live.url && live.url !== 'about:blank' && <div className="preview-error-url">{live.url}</div>}
                 <button className="preview-error-retry" onClick={() => liveCommands.current?.reload()}>Try again</button>
               </div>
+            )}
+            {/* HTTP basic auth: the browser has no prompt of its own here.
+                Like the error card, covering the native view hides it. */}
+            {live?.auth && (
+              <form
+                className="preview-error"
+                onSubmit={e => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  liveCommands.current?.answerAuth({ username: String(f.get('username') ?? ''), password: String(f.get('password') ?? '') });
+                }}
+              >
+                <Lock size={16} color="var(--primary)" />
+                <div className="preview-error-code">{live.auth.proxy ? 'Proxy' : live.auth.host} wants a username and password</div>
+                {live.auth.realm && <div className="preview-error-url">“{live.auth.realm}”</div>}
+                <input className="preview-auth-input" name="username" placeholder="Username" autoComplete="username" autoFocus />
+                <input className="preview-auth-input" name="password" type="password" placeholder="Password" autoComplete="current-password" />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="preview-error-retry" onClick={() => liveCommands.current?.answerAuth(null)}>Cancel</button>
+                  <button type="submit" className="preview-error-retry">Sign in</button>
+                </div>
+              </form>
             )}
             {desktopBrowser
               ? <NativeBrowserSurface

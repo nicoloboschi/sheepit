@@ -1,3 +1,4 @@
+import { wsUrl } from '../serverUrl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
@@ -112,7 +113,11 @@ export interface LiveBrowserState {
    *  its own browser window, so they all composite at once — and false only
    *  when the browser refused to cast this one. */
   streaming: boolean;
+  /** The page asked for a username and password (HTTP basic auth). */
+  auth?: BrowserAuthAsk | null;
 }
+
+export interface BrowserAuthAsk { host: string; realm: string; proxy: boolean }
 
 export interface BrowserDownload {
   id: string;
@@ -137,6 +142,8 @@ export interface LiveBrowserCommands {
    *  browser leaves it undefined, and the pane's find bar stays away. */
   find?: (text: string, forward: boolean, findNext: boolean) => void;
   stopFind?: () => void;
+  /** Answer the page's basic-auth ask; null cancels. */
+  answerAuth: (creds: { username: string; password: string } | null) => void;
 }
 
 export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom = 1, onState, onDownload, commands }: {
@@ -239,8 +246,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom =
 
     const connect = () => {
       if (stopped) return;
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws/browser`);
+      const ws = new WebSocket(wsUrl('/ws/browser'));
       socket = ws;
       wsRef.current = ws;
 
@@ -264,6 +270,8 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom =
             url: msg.url, title: msg.title, loading: Boolean(msg.loading),
             canGoBack: msg.canGoBack, canGoForward: msg.canGoForward,
           });
+        } else if (msg.type === 'auth') {
+          report({ auth: msg.auth ?? null });
         } else if (msg.type === 'active') {
           setPaused(!msg.active);
           report({ streaming: Boolean(msg.active) });
@@ -340,6 +348,7 @@ export default function LiveBrowserSurface({ url: initialUrl, navSeq = 0, zoom =
       back: () => send({ type: 'back' }),
       forward: () => send({ type: 'forward' }),
       screenshot: askForScreenshot,
+      answerAuth: creds => send({ type: 'auth', ...creds }),
     };
     return () => { commands.current = null; };
   }, [commands, send, askForScreenshot]);

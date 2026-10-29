@@ -4,7 +4,8 @@ import { usePaneOnScreen } from '../store';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
-  Search, X, Filter, Upload, FilePlus, FolderPlus, Globe,
+  Search, X, Filter, Upload, FilePlus, FolderPlus, Globe, PanelRightClose, Eye, EyeOff,
+  ChevronUp, ChevronDown,
 } from 'lucide-react';
 // Deferred: the editor stack (CodeMirror + language packs + highlighter) is
 // the single biggest thing in the bundle, and it is not needed until you
@@ -21,6 +22,33 @@ interface Entry {
   path: string;
   isDir: boolean;
   size: number;
+  /** Last modified, ms since epoch. 0 when the server could not stat it. */
+  mtime?: number;
+}
+
+type SortKey = 'name' | 'mtime' | 'size';
+interface Sort { key: SortKey; dir: 1 | -1 }
+const SORT_KEY = 'sheepit:files-sort';
+
+function readSort(): Sort {
+  try {
+    const raw = JSON.parse(preferences.getItem(SORT_KEY) ?? '');
+    if (['name', 'mtime', 'size'].includes(raw?.key) && (raw.dir === 1 || raw.dir === -1)) return raw;
+  } catch { /* fall through */ }
+  return { key: 'name', dir: 1 };
+}
+
+/** Folders first when sorting by name or size (a folder has no size), mixed
+ *  when sorting by date — "what changed last" is the point of that sort, and
+ *  a folder can be the answer. */
+function sortEntries(entries: Entry[], { key, dir }: Sort): Entry[] {
+  return [...entries].sort((a, b) => {
+    if (key !== 'mtime' && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    const d = key === 'name' ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+      : key === 'size' ? a.size - b.size
+      : (a.mtime ?? 0) - (b.mtime ?? 0);
+    return d * dir || a.name.localeCompare(b.name);
+  });
 }
 
 interface SearchResultData {
@@ -79,6 +107,17 @@ function fmtSize(b: number): string {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Finder's "Date Modified": today and yesterday by time, older by date. */
+function fmtDate(ms: number | undefined): string {
+  if (!ms) return '--';
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(ms).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Yesterday ${time}`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const ext     = (name: string): string => (name ?? '').split('.').pop()?.toLowerCase() ?? '';
 const MAX_RECENT_FILES = 12;
 
@@ -127,8 +166,9 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
     <div
       data-entry-idx={index}
       onClick={() => entry.isDir ? onNavigate(entry.path) : onOpen(entry.path)}
+      className="file-row"
+      title={entry.path}
       style={{
-        display: 'flex', alignItems: 'center', gap: 7,
         padding: '4px 10px', cursor: 'pointer', userSelect: 'none',
         background: active ? 'var(--accent)' : focused ? 'var(--accent)' : 'transparent',
         borderLeft: focused ? '2px solid #9cbc7f' : '2px solid transparent',
@@ -137,6 +177,7 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
       onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'var(--card)'; }}
       onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
     >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
       <Icon size={13} color={iconColor} style={{ flexShrink: 0 }} />
       <span style={{ fontSize: 12, color: fileColor, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
         {entry.name}{entry.isDir ? '/' : ''}
@@ -152,9 +193,26 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
       {dirHasChanges && (
         <span title="Contains modified files" style={{ width: 6, height: 6, borderRadius: '50%', background: '#D9B84A', flexShrink: 0 }} />
       )}
-      {!entry.isDir && entry.size > 0 && !status && (
-        <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0 }}>{fmtSize(entry.size)}</span>
-      )}
+      </span>
+      <span className="file-col-date">{fmtDate(entry.mtime)}</span>
+      <span className="file-col-size">{entry.isDir ? '--' : fmtSize(entry.size)}</span>
+    </div>
+  );
+}
+
+/** Column titles; clicking one sorts by it, clicking it again flips the order. */
+function ListHeader({ sort, onSort }: { sort: Sort; onSort: (key: SortKey) => void }) {
+  const col = (key: SortKey, label: string, className?: string) => (
+    <button className={className} onClick={() => onSort(key)} title={`Sort by ${label.toLowerCase()}`} aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
+      {label}
+      {sort.key === key && (sort.dir === 1 ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+    </button>
+  );
+  return (
+    <div className="file-row file-list-head">
+      {col('name', 'Name')}
+      {col('mtime', 'Modified', 'file-col-date')}
+      {col('size', 'Size', 'file-col-size')}
     </div>
   );
 }
@@ -611,9 +669,13 @@ interface FilesPaneProps {
   onDirChange?: (dir: string) => void;
   /** LIFO of visited files, for the floating Files dialog's left sidebar. */
   onRecentFilesChange?: (files: string[]) => void;
+  /** The Files dialog: walking into another folder puts the open file away,
+   *  so the folder gets the whole width, like Finder. The pane keeps reading
+   *  its file while you browse beside it. */
+  finder?: boolean;
 }
 
-export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile, initialPath, onDirChange, browseRef, onRecentFilesChange }: FilesPaneProps) {
+export default function FilesPane({ sessionId, openFileRef, onFileSelect, highlightQuery, highlightLine, onPreviewFile, initialPath, onDirChange, browseRef, onRecentFilesChange, finder }: FilesPaneProps) {
   const [dir,          setDir]          = useState<string | null>(null);
   const [entries,      setEntries]      = useState<Entry[]>([]);
   const [cwd,          setCwd]          = useState<string | null>(null);
@@ -638,9 +700,25 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   //
   // Its own key, not the old `sheepit:files-list-h`: that value is a height, so
   // a 600px list would have come back as a 600px column.
+  // The dialog's list carries date and size columns, so it starts wider and
+  // keeps its own width.
+  const listWidthKey = finder ? 'sheepit:files-finder-w' : 'sheepit:files-list-w';
   const [listWidth, setListWidth] = useState<number>(() => {
-    try { return parseInt(preferences.getItem('sheepit:files-list-w') ?? '') || 240; } catch { return 240; }
+    const fallback = finder ? 400 : 240;
+    try { return parseInt(preferences.getItem(listWidthKey) ?? '') || fallback; } catch { return fallback; }
   });
+  const [sort, setSort] = useState<Sort>(readSort);
+  // Dotfiles: hidden in the dialog like Finder (⌘⇧. shows them), shown in a
+  // pane, where `.github` and `.env` are part of the project.
+  const [showHidden, setShowHidden] = useState(!finder);
+  const onSort = useCallback((key: SortKey) => {
+    setSort(prev => {
+      // Newest and biggest first on the first click, the way Finder does it.
+      const next: Sort = prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: key === 'name' ? 1 : -1 };
+      try { preferences.setItem(SORT_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   // Mobile: 'list' | 'preview'
   const [mobileView,   setMobileView]   = useState<'list' | 'preview'>('list');
   const [gitStatus,    setGitStatus]    = useState<Record<string, string> | null>(null);
@@ -761,11 +839,11 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       draggingRef.current = false;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setListWidth(w => { try { preferences.setItem('sheepit:files-list-w', String(w)); } catch {} return w; });
+      setListWidth(w => { try { preferences.setItem(listWidthKey, String(w)); } catch {} return w; });
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [listWidth]);
+  }, [listWidth, listWidthKey]);
 
   // Reset cwd (the per-session project root) so the next browse re-anchors to
   // THIS pane's root. `browse` pins cwd via `prev ?? data.cwd`, so without this
@@ -774,6 +852,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   useEffect(() => { if (!sessionId) return; setCwd(null); browse(initialPath ?? null, { autoReadme: !initialPath }); setSelectedFile(null); setMobileView('list'); setGitStatus(null); }, [sessionId]); // eslint-disable-line
 
   useEffect(() => { if (dir) onDirChange?.(dir); }, [dir]); // eslint-disable-line
+
+  // Finder: a file from another folder stops being shown once you walk away.
+  // An open request browses the file's folder first, so it is never this.
+  useEffect(() => {
+    if (finder && dir && selectedFile && selectedFile.slice(0, selectedFile.lastIndexOf('/')) !== dir) setSelectedFile(null);
+  }, [dir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load pinned tabs and recent files whenever the session changes (per-session
   // storage keys).
@@ -958,12 +1042,13 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     setTimeout(() => fileListRef.current?.focus(), 0);
   }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filteredEntries = fileFilter
-    ? entries.filter(e => e.name.toLowerCase().includes(fileFilter.toLowerCase()))
-    : entries;
+  const filteredEntries = sortEntries(entries.filter(e =>
+    (showHidden || !e.name.startsWith('.')) &&
+    (!fileFilter || e.name.toLowerCase().includes(fileFilter.toLowerCase()))), sort);
 
   const handleFileListKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    if (e.key === '.' && e.metaKey && e.shiftKey) { e.preventDefault(); setShowHidden(h => !h); return; }
     if (filteredEntries.length === 0) return;
 
     // File navigation: up/down or j/k to move through entries
@@ -1159,13 +1244,30 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           {/* An .html file has a rendered form, and reading its source is
               rarely why you opened it. Only shown when there is one selected:
               a button that does nothing to the current file is noise. */}
-          {onPreviewFile && selectedFile && /\.x?html?$/i.test(selectedFile) && (
+          {onPreviewFile && selectedFile && /\.(x?html?|mp4|webm|ogv|mov|m4v)$/i.test(selectedFile) && (
             <button
               onClick={() => onPreviewFile(selectedFile)}
-              title="Render this file in the Preview tab"
+              title="Open this file in the browser"
               style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
             >
               <Globe size={13} />
+            </button>
+          )}
+          <button
+            onClick={() => setShowHidden(h => !h)}
+            title={showHidden ? 'Hide dotfiles (⌘⇧.)' : 'Show dotfiles (⌘⇧.)'}
+            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showHidden ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
+          >
+            {showHidden ? <Eye size={13} /> : <EyeOff size={13} />}
+          </button>
+          {selectedFile && (
+            <button
+              className="hidden md:flex"
+              onClick={() => setSelectedFile(null)}
+              title="Hide the file, show the folder full width"
+              style={{ alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
+            >
+              <PanelRightClose size={13} />
             </button>
           )}
           <button onClick={() => browse(dir)} disabled={loading} title="Refresh" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--muted-foreground)' : 'var(--muted-foreground)', flexShrink: 0 }}>
@@ -1250,11 +1352,12 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           onOpenFile={openSearchHit}
         />
       ) : (
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div className="file-list" style={{ flex: 1, overflowY: 'auto' }}>
           {fileFilterInput}
           {createInput}
           {showLoading && <div className="file-loading-bar" />}
-          {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
+          {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : entries.length ? 'Only hidden files here' : 'Empty directory'}</div>}
+          {filteredEntries.length > 0 && <ListHeader sort={sort} onSort={onSort} />}
           <div key={dir ?? 'root'} className="file-list-anim">
             {filteredEntries.map(e => (
               <EntryRow key={e.path} entry={e} selected={selectedFile} onOpen={openFileTab} onNavigate={browse} gitStatus={gitStatus} />
@@ -1323,7 +1426,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
             ref={fileListRef}
             tabIndex={0}
             onKeyDown={searchMode ? undefined : handleFileListKeyDown}
-            style={{ width: listWidth, flexShrink: 0, minHeight: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
+            className="file-list"
+            // No file open: the folder takes the whole width, Finder's list view.
+            style={{ ...(selectedFile ? { width: listWidth, flexShrink: 1, minWidth: 140 } : { flex: 1, minWidth: 0 }), minHeight: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
           >
             {searchMode ? (
               <SearchPanel
@@ -1337,7 +1442,8 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
                 {fileFilterInput}
                 {createInput}
                 {showLoading && <div className="file-loading-bar" />}
-                {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : 'Empty directory'}</div>}
+                {!loading && filteredEntries.length === 0 && !creating && <div style={{ padding: '16px 12px', color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center' }}>{fileFilter ? 'No matches' : entries.length ? 'Only hidden files here' : 'Empty directory'}</div>}
+                {filteredEntries.length > 0 && <ListHeader sort={sort} onSort={onSort} />}
                 <div key={dir ?? 'root'} className="file-list-anim">
                   {filteredEntries.map((e, i) => (
                     <EntryRow key={e.path} entry={e} index={i} selected={selectedFile} focused={i === focusedEntry} onOpen={openFileTab} onNavigate={browse} gitStatus={gitStatus} />
@@ -1346,6 +1452,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
               </>
             )}
           </div>
+          {selectedFile && <>
           {/* Resize divider — drag to grow/shrink the file list beside it. */}
           <div
             onMouseDown={onDragStart}
@@ -1357,10 +1464,13 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
             onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.background = '#9cbc7f'}
             onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { if (!draggingRef.current) e.currentTarget.style.background = 'var(--border)'; }}
           />
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+          {/* The file's header (name, times, actions, view/edit) needs about
+              this much to stay on one row; the list gives way first. */}
+          <div style={{ flex: 1, minWidth: finder ? 460 : 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             {tabsBar}
-            <FileViewer path={selectedFile} cwd={cwd} sessionId={sessionId} gitStatus={selectedFile ? gitStatus?.[selectedFile] ?? null : null} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
+            <FileViewer path={selectedFile} cwd={cwd} sessionId={sessionId} gitStatus={gitStatus?.[selectedFile] ?? null} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
           </div>
+          </>}
         </div>
       </div>
     </div>

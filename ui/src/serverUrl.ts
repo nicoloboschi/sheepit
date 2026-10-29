@@ -77,8 +77,8 @@ export function apiUrl(path: string): string {
   return _serverUrl ? `${_serverUrl}${path}` : path;
 }
 
-/** Get the WebSocket URL for /ws. */
-export function wsUrl(): string {
+/** WebSocket URL for /ws (or another socket path, e.g. /ws/browser). */
+export function wsUrl(path = '/ws'): string {
   // **The password rides in the query string here, and only here.** Script
   // cannot set a header on a WebSocket handshake — there is no API for it —
   // so the header the HTTP side uses is not available. This is why the
@@ -86,10 +86,10 @@ export function wsUrl(): string {
   // a tunnel can only check the header, which the app can never send.
   const q = _serverKey ? `?k=${encodeURIComponent(_serverKey)}` : '';
   if (_serverUrl) {
-    return _serverUrl.replace(/^http/, 'ws') + '/ws' + q;
+    return _serverUrl.replace(/^http/, 'ws') + path + q;
   }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/ws${q}`;
+  return `${proto}//${location.host}${path}${q}`;
 }
 
 /**
@@ -124,4 +124,13 @@ export function installFetchInterceptor(): void {
     }
     return originalFetch.call(this, input, init);
   };
+}
+
+/** URL of a server file for an <img>/<video>/<iframe> `src`. Those load
+ *  outside fetch, so the interceptor never sees them: in the app a bare
+ *  `/api/...` hits the WebView's own origin, with no password. The password
+ *  rides in `?k=` (the server accepts it for exactly this). */
+export function rawFileUrl(path: string): string {
+  const k = _serverKey ? `&k=${encodeURIComponent(_serverKey)}` : '';
+  return apiUrl(`/api/fs/raw?path=${encodeURIComponent(path)}${k}`);
 }

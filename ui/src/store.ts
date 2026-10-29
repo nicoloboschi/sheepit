@@ -903,6 +903,37 @@ export const activeTerminalRefresh = { current: () => {} };
 export const activePaneCycleView = { current: (_dir: 'left' | 'right') => {} };
 
 
+/** Where the phone key bar types: the terminal last touched, or the shown
+ *  pane when it shows its terminal. A stack, so closing a scratch or side shell
+ *  hands the bar back to whatever was under it. Empty = no bar (a chat view, or
+ *  no terminal on screen). */
+export interface KeybarTarget {
+  id: string;
+  send: (msg: Record<string, unknown>) => void;
+  scrollPages: (pages: number) => void;
+}
+const _keybarTargets: KeybarTarget[] = [];
+const _keybarListeners = new Set<() => void>();
+const _keybarChanged = () => { for (const fn of _keybarListeners) fn(); };
+export function claimKeybar(t: KeybarTarget): void {
+  const i = _keybarTargets.findIndex(x => x.id === t.id);
+  if (i === _keybarTargets.length - 1 && i >= 0) { _keybarTargets[i] = t; return; }
+  if (i >= 0) _keybarTargets.splice(i, 1);
+  _keybarTargets.push(t);
+  _keybarChanged();
+}
+export function releaseKeybar(id: string): void {
+  const i = _keybarTargets.findIndex(x => x.id === id);
+  if (i < 0) return;
+  _keybarTargets.splice(i, 1);
+  _keybarChanged();
+}
+export const keybarTarget = (): KeybarTarget | undefined => _keybarTargets[_keybarTargets.length - 1];
+export function subscribeKeybar(fn: () => void): () => void {
+  _keybarListeners.add(fn);
+  return () => { _keybarListeners.delete(fn); };
+}
+
 // Registry for sending to a specific terminal cell by session ID
 const _terminalSendRegistry = new Map<string, (msg: Record<string, unknown>) => void>();
 export function registerTerminalSend(id: string, fn: (msg: Record<string, unknown>) => void) {

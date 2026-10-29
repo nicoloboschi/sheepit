@@ -7,6 +7,7 @@
 //   file has tracked changes.
 // - Git diff    → mounts with `defaultMode="diff"` and pre-parsed `hunks` (so
 //   it doesn't re-fetch); flipping to content fetches the raw file.
+import { rawFileUrl } from '../serverUrl';
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import CsvTable from './CsvTable';
@@ -228,7 +229,7 @@ export default function FileView({
       } else out.push(seg);
     }
     abs = (rooted ? '/' : '') + out.join('/');
-    return `/api/fs/raw?path=${encodeURIComponent(abs)}`;
+    return rawFileUrl(abs);
   };
 
   // A diff exists when hunks were supplied, or (files view) the git status says
@@ -581,7 +582,7 @@ export default function FileView({
         <>
           {imgFile && path && mode !== 'diff' && (!svgFile || mode === 'preview') && (
             <div style={{ padding: 16, overflow: 'auto', flex: fill ? 1 : undefined }}>
-              <img src={`/api/fs/raw?path=${encodeURIComponent(path)}`} alt={name} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--border)' }} />
+              <img src={rawFileUrl(path)} alt={name} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--border)' }} />
             </div>
           )}
           {/* `preload="metadata"` so opening a file in the list costs the
@@ -592,7 +593,7 @@ export default function FileView({
           {vidFile && path && mode !== 'diff' && (
             <div style={{ padding: 16, overflow: 'auto', flex: fill ? 1 : undefined, minHeight: 0 }}>
               <video
-                src={`/api/fs/raw?path=${encodeURIComponent(path)}`}
+                src={rawFileUrl(path)}
                 controls
                 preload="metadata"
                 style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: '1px solid var(--border)', background: '#000', display: 'block' }}
@@ -600,7 +601,7 @@ export default function FileView({
             </div>
           )}
           {pdfFile && path && mode !== 'diff' && (
-            <iframe src={`/api/fs/raw?path=${encodeURIComponent(path)}`} title={name} style={{ flex: fill ? 1 : undefined, height: fill ? undefined : 480, border: 'none', minHeight: 0, width: '100%' }} />
+            <iframe src={rawFileUrl(path)} title={name} style={{ flex: fill ? 1 : undefined, height: fill ? undefined : 480, border: 'none', minHeight: 0, width: '100%' }} />
           )}
 
           {mode === 'diff' && (

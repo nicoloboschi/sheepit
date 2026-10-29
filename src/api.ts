@@ -2123,9 +2123,11 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const result = entries
         .map(e => {
           const fullPath = nodePath.join(dir, e.name);
-          let size = 0;
-          try { if (!e.isDirectory()) size = statSync(fullPath).size; } catch { /* ignore */ }
-          return { name: e.name, isDir: e.isDirectory(), path: fullPath, size };
+          // stat, not the dirent: it follows symlinks, so a link to a folder
+          // opens as a folder, and it gives the modified time the list sorts on.
+          let isDir = e.isDirectory(), size = 0, mtime = 0;
+          try { const st = statSync(fullPath); isDir = st.isDirectory(); size = isDir ? 0 : st.size; mtime = st.mtimeMs; } catch { /* broken link: keep the dirent's answer */ }
+          return { name: e.name, isDir, path: fullPath, size, mtime };
         })
         .sort((a, b) => {
           if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
@@ -2647,18 +2649,23 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       if (stat.size > 2 * 1024 * 1024) return res.status(413).send('File too large (> 2 MB)');
       if (imageExts.has(ext)) return res.sendFile(filePath);
       if (pdfExts.has(ext))   return res.sendFile(filePath);
-      // Rendered rather than read, for the preview tab. Opt-in and narrow:
-      // everything else still comes back as text on purpose, and the client
-      // only ever puts this in a sandboxed iframe — served from sheepit's own
-      // origin, an unsandboxed local page could call sheepit's API.
-      if (req.query.as === 'html' && /\.x?html?$/.test(ext)) {
-        return res.type('text/html; charset=utf-8').send(readFileSync(filePath, 'utf-8'));
-      }
       // Serve as plain text for source files
       res.type('text/plain; charset=utf-8').send(readFileSync(filePath, 'utf-8'));
     } catch (e) {
       res.status(500).send(String(e));
     }
+  });
+
+  // A file at a URL shaped like its path, for the browser pane: a page opened
+  // here finds its own `clip.mp4` / `style.css` beside it, which a
+  // `?path=` URL can't give it (relative links resolve against `/api/fs/`).
+  // `sendFile` streams and honours Range, so video seeks.
+  router.get('/fs/at/*', (req, res) => {
+    const rest = (req.params as Record<string, string>)[0] ?? '';
+    const filePath = rest.startsWith('~') ? expandHome(rest) : '/' + rest;
+    res.sendFile(filePath, { dotfiles: 'allow' }, err => {
+      if (err && !res.headersSent) res.status(404).send('Not found');
+    });
   });
 
   router.get('/logs/stream', (req, res) => {

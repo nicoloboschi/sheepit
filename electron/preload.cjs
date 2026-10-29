@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('sheepitDesktop', {
     open: (id, url) => ipcRenderer.send('browser:open', id, url),
     bounds: (id, rect) => ipcRenderer.send('browser:bounds', id, rect),
     close: id => ipcRenderer.send('browser:close', id),
+    /** Answer the page's basic-auth challenge; null username cancels. */
+    auth: (id, username, password) => ipcRenderer.send('browser:auth', id, username, password),
     navigate: (id, url) => ipcRenderer.send('browser:navigate', id, url),
     back: id => ipcRenderer.send('browser:back', id),
     forward: id => ipcRenderer.send('browser:forward', id),

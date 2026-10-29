@@ -5,7 +5,7 @@ import { WebLinksAddon } from 'xterm-addon-web-links';
 import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree, Globe, TerminalSquare, Bot } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import { useShallow } from 'zustand/react/shallow';
-import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, DEFAULT_FONT_SIZE } from '../store';
+import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, claimKeybar, releaseKeybar, DEFAULT_FONT_SIZE } from '../store';
 import * as sharedWs from '../sharedWs';
 import { perf } from '../perf';
 import PaneHeader from './PaneHeader';
@@ -1354,6 +1354,27 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     }
   }, [isActive, tile]);
 
+  // The phone key bar. Unlike `activeTerminalSend` a tile may claim it — by
+  // being touched — because Esc, Tab and the arrows are what a scratch shell
+  // on a phone is missing too. The shown pane claims it while it shows its
+  // terminal and lets go when the chat takes over; leaving releases it.
+  useEffect(() => {
+    const target = {
+      id: sessionId,
+      send: (msg: Record<string, unknown>) => sendRef.current(msg),
+      scrollPages: (pages: number) => termRef.current?.scrollPages(pages),
+    };
+    if (isActive && !tile && !nativeOn) claimKeybar(target);
+    else if (!tile) releaseKeybar(sessionId);
+    const el = containerRef.current;
+    const onFocus = (e: FocusEvent) => {
+      if (!nativeOn && (e.target as Element | null)?.classList?.contains('xterm-helper-textarea')) claimKeybar(target);
+    };
+    el?.addEventListener('focusin', onFocus);
+    return () => el?.removeEventListener('focusin', onFocus);
+  }, [isActive, tile, nativeOn, sessionId]);
+  useEffect(() => () => releaseKeybar(sessionId), [sessionId]);
+
   // Refit + refocus when terminal tab becomes visible again
   useEffect(() => {
     const handler = () => {
@@ -1819,7 +1840,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
                   openFileRef={openFileRef}
                   highlightLine={filesLine}
                   onPreviewFile={(path: string) => {
-                    setPreviewUrl(`/api/fs/raw?as=html&path=${encodeURIComponent(path)}`);
+                    setPreviewUrl(`/api/fs/at/${path.replace(/^\//, '').split('/').map(encodeURIComponent).join('/')}`);
                     setView('split-preview');
                   }}
                 />
