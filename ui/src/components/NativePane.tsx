@@ -24,6 +24,7 @@
  *    pane is bleating — says so, and offers the terminal, which is one click
  *    away because it never went anywhere.
  */
+import { rawFileUrl } from '../serverUrl';
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
 import { Square, ArrowUp, Paperclip, AlertTriangle, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -261,7 +262,7 @@ function imageUrl(raw: string | undefined, cwd: string): string | null {
   // Any other scheme is something we should not be fetching into an <img>.
   if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
   const abs = raw.startsWith('/') || raw.startsWith('~') ? raw : `${cwd}/${raw.replace(/^\.\//, '')}`;
-  return `/api/fs/raw?path=${encodeURIComponent(abs)}`;
+  return rawFileUrl(abs);
 }
 
 /** The picture itself. Bounded, because a 4000px screenshot is not a message,
@@ -379,12 +380,11 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
  * every option's label and description are in the tool's input, which is in
  * the transcript — nothing here infers anything from the screen.
  *
- * **It deliberately cannot be answered from here.** Picking an option in the
- * TUI means arrow keys and Enter against a list this view cannot see, and a
- * wrong guess answers a real question wrongly in somebody's session. So it
- * shows the question in full and hands over to the terminal, which is one
- * click. Answering in place needs the agent to expose the choice as something
- * better than keystrokes; until then, showing it honestly is the whole win.
+ * **`AskUserQuestion` is answered here.** The picks become the same keys a
+ * person would press in the picker (`answerKeys` on the server, measured
+ * against the real TUI). Only the question the agent is waiting on right now
+ * takes an answer; an older one is history. `ExitPlanMode` still goes to the
+ * terminal: its choices are not in the transcript.
  */
 const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
   m: Extract<NativeMessage, { kind: 'tool' }>;
@@ -394,6 +394,29 @@ const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
   const answered = m.result !== undefined;
   const plan = m.name === 'ExitPlanMode';
   const questions: any[] = Array.isArray(input.questions) ? input.questions : [];
+  const { sessionId, pendingChoice } = useContext(ChoiceTarget);
+  const live = !plan && !answered && pendingChoice === m.id && questions.length > 0;
+  const [picks, setPicks] = useState<number[][]>(() => questions.map(() => []));
+  const [texts, setTexts] = useState<string[]>(() => questions.map(() => ''));
+  const [sent, setSent] = useState(false);
+
+  const pick = (qi: number, oi: number) => setPicks(all => all.map((p, i) => i !== qi ? p
+    : questions[qi].multiSelect ? (p.includes(oi) ? p.filter(x => x !== oi) : [...p, oi]) : [oi]));
+  const setText = (qi: number, t: string) => {
+    setTexts(all => all.map((x, i) => i === qi ? t : x));
+    // Single select: typing your own answer replaces a picked option.
+    if (t && !questions[qi].multiSelect) setPicks(all => all.map((p, i) => i === qi ? [] : p));
+  };
+  const ready = questions.every((_, qi) => picks[qi]!.length > 0 || texts[qi]!.trim());
+  const submit = () => {
+    if (!ready || sent) return;
+    setSent(true);
+    sharedWs.send({
+      type: 'native_answer', session_id: sessionId,
+      questions: questions.map(q => ({ options: Array.isArray(q.options) ? q.options : [], multiSelect: !!q.multiSelect })),
+      answers: questions.map((_, qi) => ({ picks: picks[qi], text: texts[qi]!.trim() })),
+    });
+  };
 
   return (
     <div className={`nat-choice${answered ? ' nat-choice-answered' : ''}`} data-mid={m.id}>
@@ -406,19 +429,47 @@ const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
 
       {questions.map((q, qi) => (
         <div className="nat-q" key={qi}>
-          <div className="nat-q-text">{q.question}</div>
-          {Array.isArray(q.options) && q.options.map((o: any, oi: number) => (
+          <div className="nat-q-text">{q.question}{live && q.multiSelect && <span className="nat-q-hint"> · pick any</span>}</div>
+          {Array.isArray(q.options) && q.options.map((o: any, oi: number) => live ? (
+            <button
+              type="button" key={oi} disabled={sent}
+              className={`nat-opt nat-opt-live${picks[qi]!.includes(oi) ? ' nat-opt-on' : ''}`}
+              aria-pressed={picks[qi]!.includes(oi)}
+              onClick={() => pick(qi, oi)}
+            >
+              <span className="nat-opt-label">{o.label}</span>
+              {o.description && <span className="nat-opt-desc">{o.description}</span>}
+            </button>
+          ) : (
             <div className="nat-opt" key={oi}>
               <span className="nat-opt-label">{o.label}</span>
               {o.description && <span className="nat-opt-desc">{o.description}</span>}
             </div>
           ))}
+          {live && (
+            <input
+              className="nat-opt nat-opt-other" disabled={sent}
+              placeholder="Or type your own answer"
+              value={texts[qi]}
+              onChange={e => setText(qi, e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+            />
+          )}
         </div>
       ))}
 
       {answered
         ? <div className="nat-choice-answer">{m.result}</div>
-        : (
+        : live ? (
+          <div className="nat-choice-foot">
+            <button className="nat-choice-send" disabled={!ready || sent} onClick={submit}>
+              {sent ? 'Sending…' : 'Answer'}
+            </button>
+            {onOpenTerminal && (
+              <button className="nat-needs-tui-btn" onClick={onOpenTerminal}>Open terminal</button>
+            )}
+          </div>
+        ) : (
           <div className="nat-choice-foot">
             Answer this in the terminal — the picker is drawn there.
             {onOpenTerminal && (
@@ -430,6 +481,9 @@ const ChoiceBlock = memo(function ChoiceBlock({ m, onOpenTerminal }: {
   );
 });
 
+/** Which pane a question is in, and which question its agent is waiting on. */
+const ChoiceTarget = createContext<{ sessionId: string; pendingChoice: string | null }>({ sessionId: '', pendingChoice: null });
+
 /** The tools that are a question for the reader rather than work for the
  *  agent, and so are drawn as one. */
 const CHOICE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
@@ -439,6 +493,10 @@ const CHOICE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
  *  headroom — it is a deadline for a placeholder, not a timeout anybody
  *  should reach. See the dedup effect in NativePane. */
 const ECHO_TTL_MS = 60_000;
+
+/** How long a reported wait must last, with no question in the transcript,
+ *  before it counts as a terminal-only dialog. Covers the transcript poll. */
+const DIALOG_SETTLE_MS = 1500;
 
 /** Built-ins that, sent with no arguments, open a TUI dialog (a picker or a
  *  panel) that the transcript never sees. `/model opus` does not; `/model`
@@ -1091,11 +1149,12 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
   /**
    * **What only the terminal can draw goes to the terminal, and comes back.**
    *
-   * A question with choices, a permission prompt, a bare `/model` picker: the
+   * A plan to approve, a permission prompt, a bare `/model` picker: the
    * TUI takes the keyboard for them, and from here the pane just looked dead.
    * So the pane is lent to the terminal (cursor in it) for exactly that wait,
    * and handed back to the conversation when it ends:
-   *  - a choice — when its tool call gets a result;
+   *  - a plan — when its tool call gets a result (an `AskUserQuestion` is
+   *    answered in the chat, so it stays here);
    *  - a permission prompt — when the agent stops reporting it waits;
    *  - a dialog command — when Claude Code records the command, which it does
    *    as the dialog closes.
@@ -1120,20 +1179,36 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     }
     return null;
   }, [state?.messages]);
+  /** The agent waits on an `AskUserQuestion`, answered here in the chat. */
+  const askPending = useMemo(() => !!pendingChoice && !!state?.messages.some(
+    m => m.id === pendingChoice && m.kind === 'tool' && m.name === 'AskUserQuestion'), [pendingChoice, state?.messages]);
+  /**
+   * Waiting on something only the terminal draws. Claude Code reports a
+   * `PermissionRequest` for an `AskUserQuestion` too, and the hook can beat the
+   * question's transcript row here — so a wait counts only once it has lasted
+   * `DIALOG_SETTLE_MS` without a question showing up.
+   */
+  const [dialogBlocked, setDialogBlocked] = useState(blocked);
+  useEffect(() => {
+    if (!blocked || askPending) { setDialogBlocked(false); return; }
+    const t = setTimeout(() => setDialogBlocked(true), DIALOG_SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [blocked, askPending]);
   useEffect(() => {
     if (!onHandoff || !state) return;
     if (!seenChoices.current) seenChoices.current = new Set(pendingChoice ? [pendingChoice] : []);
-    const blockedNow = blocked && !wasBlocked.current;
-    wasBlocked.current = blocked;
+    const blockedNow = dialogBlocked && !wasBlocked.current;
+    wasBlocked.current = dialogBlocked;
     const lent = lentFor.current;
     if (lent) {
       const over = lent.kind === 'choice' ? pendingChoice !== lent.id
-        : lent.kind === 'blocked' ? !blocked
+        : lent.kind === 'blocked' ? !dialogBlocked
           : state.messages.slice(lent.after).some(m => m.kind === 'command' && m.name === `/${lent.name}`);
       if (over) { lentFor.current = null; onHandoff(false); }
       return;
     }
-    if (pendingChoice && !seenChoices.current.has(pendingChoice)) {
+    if (pendingChoice && !seenChoices.current.has(pendingChoice)
+      && state.messages.some(m => m.id === pendingChoice && m.kind === 'tool' && m.name === 'ExitPlanMode')) {
       seenChoices.current.add(pendingChoice);
       lentFor.current = { kind: 'choice', id: pendingChoice };
       onHandoff(true);
@@ -1141,7 +1216,8 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
       lentFor.current = { kind: 'blocked' };
       onHandoff(true);
     }
-  }, [state, pendingChoice, blocked, onHandoff]);
+  }, [state, pendingChoice, dialogBlocked, onHandoff]);
+  const choiceTarget = useMemo(() => ({ sessionId, pendingChoice }), [sessionId, pendingChoice]);
   // Back on screen as the conversation means the loan ended, by hand or not.
   useEffect(() => { if (isActive) lentFor.current = null; }, [isActive]);
 
@@ -1528,6 +1604,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     <LinkHandler.Provider value={onOpenLink ?? null}>
     <FileHandler.Provider value={onOpenFile ?? null}>
     <PaneCwd.Provider value={state?.cwd ?? ""}>
+    <ChoiceTarget.Provider value={choiceTarget}>
     <div
       className={`nat-pane${dropping ? ' nat-pane-dropping' : ''}`}
       /**
@@ -1665,7 +1742,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             view does not guess at them: it notices the pane is blocked, which
             sheepit already knows from the agent's hooks, and hands over to the
             terminal. That is one click because the terminal never went away. */}
-        {(bleating || blocked) && (
+        {(bleating || blocked) && !askPending && (
           <div className="nat-needs-tui">
             <SquareTerminal size={14} />
             <div>
@@ -1734,7 +1811,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             {attached.map(a => (
               <div className="nat-attach-item" key={a.path} title={a.path}>
                 {/\.(png|jpe?g|gif|webp|bmp|svg|heic)$/i.test(a.name)
-                  ? <img src={`/api/fs/raw?path=${encodeURIComponent(a.path)}`} alt={a.name} />
+                  ? <img src={rawFileUrl(a.path)} alt={a.name} />
                   : <span className="nat-attach-file">{a.name}</span>}
                 <button
                   className="nat-attach-x"
@@ -1760,7 +1837,8 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             placeholder={
               // Says what to do about it, not just that it will not take one:
               // the terminal is where the dialog is, and it is one click away.
-              blocked ? 'Answer the prompt in the terminal first…'
+              askPending ? 'Answer the question above first…'
+                : blocked ? 'Answer the prompt in the terminal first…'
                 : busy ? 'Claude is working — type the next one…'
                   : 'Message Claude Code…  (/ for its own commands)'}
             rows={1}
@@ -1956,6 +2034,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
         </button>
       </div>
     </div>
+    </ChoiceTarget.Provider>
     </PaneCwd.Provider>
     </FileHandler.Provider>
     </LinkHandler.Provider>

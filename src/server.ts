@@ -336,6 +336,13 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
             break;
           }
 
+          case 'native_answer': {
+            const questions = Array.isArray(msg.questions) ? msg.questions : [];
+            const answers = Array.isArray(msg.answers) ? msg.answers : [];
+            native.get(msg.session_id as string)?.answer(questions, answers);
+            break;
+          }
+
           // Raw keys, for the TUI dialogs the conversation view cannot draw.
           case 'native_key': {
             native.get(msg.session_id as string)?.raw(String(msg.data ?? ''));

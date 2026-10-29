@@ -108,6 +108,46 @@ const PASTE_SETTLE_MS = 250;
 /** Longer than this, a single line is pasted rather than typed (see `send`). */
 const TYPE_MAX_CHARS = 200;
 
+/** Gap between keys sent to the `AskUserQuestion` picker. */
+const ANSWER_KEY_MS = 150;
+
+export type ChoiceQuestion = { options: unknown[]; multiSelect?: boolean };
+/** Option indexes picked (0-based), plus free text for "Type something". */
+export type ChoiceAnswer = { picks: number[]; text?: string };
+
+/**
+ * The keys that answer Claude Code's `AskUserQuestion` picker, as measured
+ * against the real TUI (v2.1.308):
+ *  - single select: digit N picks option N and moves on;
+ *  - "Type something" is the row after the options: its digit puts the cursor
+ *    there, the text is typed, Enter takes it;
+ *  - multi select: digits toggle (cursor stays on row 1); the "Submit" row sits
+ *    under "Type something", reached with Down, taken with Enter;
+ *  - more than one question, or any multi select, ends on a review screen
+ *    whose "1. Submit answers" is the digit 1.
+ * Options are 2–4, so a digit is always one key.
+ */
+export function answerKeys(questions: ChoiceQuestion[], answers: ChoiceAnswer[]): string[] {
+  const keys: string[] = [];
+  const DOWN = '\x1b[B';
+  questions.forEach((q, qi) => {
+    const n = q.options.length;
+    const a = answers[qi] ?? { picks: [] };
+    const picks = (Array.isArray(a.picks) ? a.picks : []).filter(p => Number.isInteger(p) && p >= 0 && p < n);
+    const text = String(a.text ?? '').replace(/[\r\n\x1b]+/g, ' ').trim();
+    if (!q.multiSelect) {
+      if (text) keys.push(String(n + 1), text, '\r');
+      else keys.push(String((picks[0] ?? 0) + 1));
+      return;
+    }
+    for (const p of picks) keys.push(String(p + 1));
+    if (text) keys.push(String(n + 1), ...Array(n).fill(DOWN), text, DOWN, '\r');
+    else keys.push(...Array(n + 1).fill(DOWN), '\r');
+  });
+  if (questions.length > 1 || questions.some(q => q.multiSelect)) keys.push('1');
+  return keys;
+}
+
 function clip(s: string, n = MAX_RESULT_CHARS): string {
   return s.length <= n ? s : s.slice(0, n) + `\n… [${s.length - n} more characters]`;
 }
@@ -440,6 +480,20 @@ export class NativeSession {
    *  terminal for those; this is the seam through which a future yes/no card
    *  could answer one without leaving. */
   raw(data: string): void { this.write(data); }
+
+  /** Answer an `AskUserQuestion` picker from the conversation view. The keys
+   *  come from `answerKeys`; each is its own write, a gap after the last one,
+   *  because the picker reads two keys in one read as a paste and drops them.
+   *  Chained, not scheduled up front: timers that all fire late fire together. */
+  answer(questions: ChoiceQuestion[], answers: ChoiceAnswer[]): void {
+    const keys = answerKeys(questions, answers);
+    const next = (i: number) => {
+      if (i >= keys.length) return;
+      this.write(keys[i]!);
+      setTimeout(() => next(i + 1), ANSWER_KEY_MS);
+    };
+    next(0);
+  }
 
   dispose(): void {
     if (this.timer) clearInterval(this.timer);

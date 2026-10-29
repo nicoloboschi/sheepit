@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RowReader } from '../claude-native.js'
+import { RowReader, answerKeys } from '../claude-native.js'
 
 describe('RowReader: a message with an attached image', () => {
   it('is one user message: marker dropped, image path joined, meta row hidden', () => {
@@ -34,5 +34,22 @@ describe('RowReader: a message sent while the agent works', () => {
     expect(typed.added).toMatchObject([{ id: 'u-q', kind: 'user', text: 'also check the docs' }])
     const note = r.read({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', prompt: '<task-notification>done</task-notification>' } })
     expect(note.added).toHaveLength(0)
+  })
+})
+
+describe('answerKeys: the keys that answer AskUserQuestion', () => {
+  const opts = (n: number) => Array.from({ length: n }, (_, i) => ({ label: `o${i}` }))
+  const D = '\x1b[B'
+  it('one single-select question is one digit, no review', () => {
+    expect(answerKeys([{ options: opts(2) }], [{ picks: [1] }])).toEqual(['2'])
+  })
+  it('free text goes on the row after the options', () => {
+    expect(answerKeys([{ options: opts(2) }], [{ picks: [], text: 'Mango\nplease' }])).toEqual(['3', 'Mango please', '\r'])
+  })
+  it('multi select toggles, walks to Submit, then the review', () => {
+    expect(answerKeys([{ options: opts(3), multiSelect: true }], [{ picks: [1], text: 'Hamster' }]))
+      .toEqual(['2', '4', D, D, D, 'Hamster', D, '\r', '1'])
+    expect(answerKeys([{ options: opts(3) }, { options: opts(3), multiSelect: true }], [{ picks: [1] }, { picks: [0, 2, 9] }]))
+      .toEqual(['2', '1', '3', D, D, D, D, '\r', '1'])
   })
 })
