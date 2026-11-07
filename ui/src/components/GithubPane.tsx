@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw, GitPullRequest, CircleDot, ExternalLink, Link2, Check,
-  CircleCheck, CircleX, Clock, MessageSquare, GitMerge, Search, X,
+  CircleCheck, CircleX, Clock, MessageSquare, GitMerge, Search, X, Tag,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -48,6 +48,8 @@ export interface GhRef {
 
 type Checks = 'PASS' | 'FAIL' | 'PENDING' | null;
 
+interface GhLabel { name: string; color: string; description?: string }
+
 interface ListRow {
   kind: 'pr' | 'issue';
   number: number;
@@ -60,6 +62,7 @@ interface ListRow {
   isDraft?: boolean;
   updatedAt: string;
   url: string;
+  labels?: GhLabel[];
   // No `checks` here on purpose — asking a list for them costs ten seconds and
   // fails on closed PRs. See the list route in api.ts. CI lives in the detail.
 }
@@ -190,13 +193,13 @@ function countLabel(shown: number, total: number | null | undefined): string {
 /** An explicit repo wins over the memo, here too: the GitHub panel names the
  *  repository it wants, which is usually not the one this session stands in. */
 const listKey = (
-  sid: string, kind: string, state: string, repo?: string, limit = PAGE, q = '',
+  sid: string, kind: string, state: string, repo?: string, limit = PAGE, q = '', labels = '',
 ): string =>
   // A search is its own answer: the kind and state filters are not part of it,
   // because the query says those itself.
   q
     ? `${repo ?? repoOf.get(sid) ?? sid}|search|${q}|${limit}`
-    : `${repo ?? repoOf.get(sid) ?? sid}|list|${kind}|${state}|${limit}`;
+    : `${repo ?? repoOf.get(sid) ?? sid}|list|${kind}|${state}|${limit}|${labels}`;
 
 /** An explicit repo wins over the memo: a link to somebody else's PR names its
  *  repository outright, so it is shared from the very first look. */
@@ -368,41 +371,155 @@ const retryBtn: React.CSSProperties = {
   color: 'var(--foreground)', cursor: 'pointer',
 };
 
+/** A label the way github.com draws it: a pill in its own colour. */
+/** A label's colours on a dark surface, the way github.com does it: the
+ *  fill and edge are the colour faint, and the text is the colour lifted
+ *  toward white by however dark it is — dark purple text on near-black is
+ *  what made ours hard to read. */
+function labelColors(hex: string): { text: string; bg: string; border: string } {
+  const h = /^[0-9a-f]{6}$/i.test(hex) ? hex : '888888';
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  const light = (0.2126 * r! + 0.7152 * g! + 0.0722 * b!) / 255;
+  const lift = Math.max(0, Math.min(0.75, 0.8 - light));
+  const mix = (c: number) => Math.round(c + (255 - c) * lift);
+  return {
+    text: `rgb(${mix(r!)}, ${mix(g!)}, ${mix(b!)})`,
+    bg: `rgba(${r}, ${g}, ${b}, 0.18)`,
+    border: `rgba(${mix(r!)}, ${mix(g!)}, ${mix(b!)}, 0.3)`,
+  };
+}
+
+/** A label the way github.com draws it: a pill in its own colour. */
+export function LabelChip({ label, onClick, small }: { label: GhLabel; onClick?: (e: React.MouseEvent) => void; small?: boolean }) {
+  const c = labelColors(label.color || '');
+  return (
+    <span
+      onClick={onClick}
+      title={onClick ? `Filter by ${label.name}` : label.description || label.name}
+      style={{
+        display: 'inline-block', fontSize: small ? 11.5 : 12, fontWeight: 500,
+        padding: small ? '0 7px' : '1px 9px', lineHeight: small ? '18px' : '20px', borderRadius: 999,
+        border: `1px solid ${c.border}`, color: c.text, background: c.bg, whiteSpace: 'nowrap',
+        cursor: onClick ? 'pointer' : 'default', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle',
+      }}
+    >
+      {label.name}
+    </span>
+  );
+}
+
+/** github.com's Labels menu: the repository's labels, a filter box, tick as
+ *  many as you like (they AND together). */
+function LabelPicker({ all, chosen, onToggle, onClear }: {
+  all: GhLabel[] | null; chosen: string[]; onToggle: (name: string) => void; onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', down);
+    return () => document.removeEventListener('pointerdown', down);
+  }, [open]);
+  const shown = (all ?? []).filter(l => !q || l.name.toLowerCase().includes(q.toLowerCase()));
+  // Chosen ones first, like GitHub.
+  shown.sort((a, b) => Number(chosen.includes(b.name)) - Number(chosen.includes(a.name)));
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px',
+          border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', lineHeight: 1.5,
+          background: chosen.length ? 'var(--accent)' : 'none',
+          color: chosen.length ? 'var(--foreground)' : 'var(--muted-foreground)',
+        }}
+      >
+        <Tag size={12} /> Labels{chosen.length ? ` · ${chosen.length}` : ''}
+      </button>
+      {open && (
+        <div role="dialog" style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, width: 280,
+          background: 'var(--popover, #181c16)', border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: '0 8px 24px rgb(0 0 0 / 0.4)', display: 'flex', flexDirection: 'column', maxHeight: 380,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 8, borderBottom: '1px solid var(--border)' }}>
+            <input
+              autoFocus value={q} onChange={e => setQ(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+                if (e.key === 'Enter' && shown[0]) onToggle(shown[0].name);
+              }}
+              placeholder="Filter labels"
+              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '4px 7px', background: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 6 }}
+            />
+            {chosen.length > 0 && <button onClick={onClear} style={{ ...iconBtn, fontSize: 11 }} className="hover:text-foreground">Clear</button>}
+          </div>
+          <div style={{ overflowY: 'auto' }}>
+            {all === null && <div style={{ padding: 10, fontSize: 12, color: 'var(--muted-foreground)' }}>Loading labels…</div>}
+            {all && shown.length === 0 && <div style={{ padding: 10, fontSize: 12, color: 'var(--muted-foreground)' }}>No labels match.</div>}
+            {shown.map(l => {
+              const on = chosen.includes(l.name);
+              return (
+                <button key={l.name} onClick={() => onToggle(l.name)}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%', padding: '6px 10px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--foreground)' }}
+                  className="hover:bg-white/5">
+                  <Check size={13} style={{ marginTop: 2, flexShrink: 0, opacity: on ? 1 : 0, color: 'var(--primary)' }} />
+                  <span style={{ width: 12, height: 12, marginTop: 2, borderRadius: 999, flexShrink: 0, background: `#${l.color || '888888'}` }} />
+                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: on ? 600 : 400 }}>{l.name}</span>
+                    {l.description && <span style={{ fontSize: 11, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── List row ──────────────────────────────────────────────────────────────────
 
 function Row(
-  { row, active, onSelect }: { row: ListRow; active: boolean; onSelect: (r: GhRef) => void },
+  { row, active, onSelect, onLabel }: { row: ListRow; active: boolean; onSelect: (r: GhRef) => void; onLabel: (name: string) => void },
 ) {
   const Icon = row.kind === 'issue' ? CircleDot : row.state === 'MERGED' ? GitMerge : GitPullRequest;
   const color = stateColor(row);
+  // github.com's row: the title and its labels on one line, the number and
+  // who/when quietly underneath. One line per idea is what makes it scan.
   return (
     <button
       onClick={() => onSelect({ kind: row.kind, num: row.number })}
       style={{
-        display: 'flex', flexDirection: 'column', gap: 3, width: '100%', textAlign: 'left',
+        display: 'flex', gap: 9, width: '100%', textAlign: 'left', alignItems: 'flex-start',
         background: active ? 'var(--accent)' : 'none',
-        borderLeft: active ? '2px solid var(--primary)' : '2px solid transparent',
         border: 'none', borderBottom: '1px solid var(--border)',
-        padding: '8px 10px', cursor: 'pointer',
+        boxShadow: active ? 'inset 2px 0 0 var(--primary)' : 'none',
+        padding: '9px 12px', cursor: 'pointer',
         // A draft is a pull request that is not asking anything of you yet, so
-        // the whole row steps back — the number and icon already did (see
-        // stateColor), and a title in full white kept pulling the eye to the
-        // one row that did not want it.
+        // the whole row steps back.
         color: row.isDraft ? 'var(--muted-foreground)' : 'var(--foreground)',
       }}
       className={active ? undefined : 'hover:bg-white/5'}
     >
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-        <Icon size={13} style={{ color, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontFamily: mono, color, flexShrink: 0 }}>#{row.number}</span>
-      </span>
-      <span style={{ fontSize: 13, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-        {row.title}
-      </span>
-      <span style={{ fontSize: 11.5, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {row.author} · {relTime(row.updatedAt)}
-        {row.isDraft && ' · draft'}
-        {row.state !== 'OPEN' && ` · ${row.state.toLowerCase()}`}
+      <Icon size={15} style={{ color, flexShrink: 0, marginTop: 2 }} />
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.45 }}>
+          {row.title}
+          {row.labels?.map(l => (
+            <span key={l.name} style={{ marginLeft: 6, display: 'inline-block', verticalAlign: '1px' }}>
+              <LabelChip label={l} small onClick={e => { e.stopPropagation(); onLabel(l.name); }} />
+            </span>
+          ))}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          #{row.number} · {row.author} · {relTime(row.updatedAt)}
+          {row.isDraft && ' · draft'}
+          {row.state !== 'OPEN' && ` · ${stateLabel(row).toLowerCase()}`}
+        </span>
       </span>
     </button>
   );
@@ -459,7 +576,14 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
   /** The submitted GitHub search, passed to GitHub exactly as typed. Empty
    *  means the plain list. */
   const [search, setSearch] = useState('');
-  useEffect(() => { setLimit(PAGE); }, [repo, kind, state, search]);
+  /** Label filter, ANDed (github.com's). Per repository: another repo has
+   *  other labels. */
+  const [labels, setLabels] = useState<string[]>([]);
+  const [repoLabels, setRepoLabels] = useState<GhLabel[] | null>(null);
+  const labelsKey = labels.join(',');
+  const toggleLabel = useCallback((name: string) => setLabels(ls => ls.includes(name) ? ls.filter(l => l !== name) : [...ls, name]), []);
+  useEffect(() => { setLabels([]); setRepoLabels(null); }, [repo]);
+  useEffect(() => { setLimit(PAGE); }, [repo, kind, state, search, labelsKey]);
   const [copied, setCopied] = useState(false);
   const [focusedFileIdx, setFocusedFileIdx] = useState(0);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -492,7 +616,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
 
   const loadList = useCallback(async (force = false) => {
     if (!sessionId || !slugReady) return;
-    const hit = force ? undefined : cacheGet<GhList>(listKey(sessionId, kind, state, repo ?? undefined, limit, search));
+    const hit = force ? undefined : cacheGet<GhList>(listKey(sessionId, kind, state, repo ?? undefined, limit, search, labelsKey));
     if (hit) {
       setList(hit.value);
       setListFailed(false);
@@ -505,7 +629,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
     // like a refresh, not like the list being emptied and refilled.
     setListLoading(true); setListFailed(false);
     try {
-      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/gh/list?kind=${kind}&state=${state}&limit=${limit}${repo ? `&repo=${encodeURIComponent(repo)}` : ''}${search ? `&q=${encodeURIComponent(search)}` : ''}`);
+      const res = await fetch(`/api/git/${encodeURIComponent(sessionId)}/gh/list?kind=${kind}&state=${state}&limit=${limit}${repo ? `&repo=${encodeURIComponent(repo)}` : ''}${search ? `&q=${encodeURIComponent(search)}` : ''}${labelsKey && !search ? `&labels=${encodeURIComponent(labelsKey)}` : ''}`);
       const data = await res.json() as GhList | null;
       if (!data) { setListFailed(true); setList(null); return; }
       // Only a wholly good answer is worth keeping: caching a half that failed
@@ -513,11 +637,21 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
       // Learn the repository before storing, so this lands under the shared
       // key rather than under the session that happened to ask first.
       if (data.repo) repoOf.set(sessionId, data.repo);
-      if (data.prs !== null && data.issues !== null) cacheSet(listKey(sessionId, kind, state, repo ?? undefined, limit, search), data);
+      if (data.prs !== null && data.issues !== null) cacheSet(listKey(sessionId, kind, state, repo ?? undefined, limit, search, labelsKey), data);
       setList(data);
     } catch { setListFailed(true); }
     finally { setListLoading(false); }
-  }, [sessionId, repo, kind, state, limit, search, slugReady]);
+  }, [sessionId, repo, kind, state, limit, search, labelsKey, slugReady]);
+
+  // The repository's labels, once per repository, for the picker.
+  useEffect(() => {
+    if (!sessionId || !slugReady) return;
+    let alive = true;
+    fetch(`/api/git/${encodeURIComponent(sessionId)}/gh/labels${repo ? `?repo=${encodeURIComponent(repo)}` : ''}`)
+      .then(r => r.json()).then((d: GhLabel[] | null) => { if (alive) setRepoLabels(Array.isArray(d) ? d : []); })
+      .catch(() => { if (alive) setRepoLabels([]); });
+    return () => { alive = false; };
+  }, [sessionId, repo, slugReady]);
 
   const loadItem = useCallback(async (force = false) => {
     if (!sessionId || !selected || !slugReady) return;
@@ -614,6 +748,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
 
   const toolbar = (
     <div
+      className="gh-toolbar"
       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--card)', flexShrink: 0, flexWrap: 'wrap' }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -622,6 +757,8 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
           `state:closed` itself, and leaving ours on screen beside it would be
           two controls claiming the same thing. */}
       {!search && <Segmented value={state} options={STATE_OPTIONS} onChange={setState} />}
+      {/* Like state, a search names its own `label:`s. */}
+      {!search && <LabelPicker all={repoLabels} chosen={labels} onToggle={toggleLabel} onClear={() => setLabels([])} />}
       <span style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 90 }}>
         <Search size={12} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
         <input
@@ -653,6 +790,20 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
       {listLoading
         ? <RefreshCw size={13} color="var(--muted-foreground)" className="animate-spin" />
         : <button onClick={() => loadList(true)} title="Refresh the list" style={iconBtn} className="hover:text-foreground"><RefreshCw size={13} /></button>}
+      {!search && labels.length > 0 && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, width: '100%', flexWrap: 'wrap' }}>
+          {labels.map(name => {
+            const l = repoLabels?.find(x => x.name === name) ?? { name, color: '888888' };
+            return (
+              <span key={name} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <LabelChip label={l} />
+                <button onClick={() => toggleLabel(name)} title={`Remove ${name}`} style={iconBtn} className="hover:text-foreground"><X size={11} /></button>
+              </span>
+            );
+          })}
+          <button onClick={() => setLabels([])} style={{ ...iconBtn, fontSize: 11 }} className="hover:text-foreground">Clear</button>
+        </span>
+      )}
       {search && (
         // What GitHub was actually asked, including the `repo:` scope the
         // server adds when the query names none — a search you cannot read
@@ -708,6 +859,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
                   row={r}
                   active={selected?.num === r.number}
                   onSelect={onSelect}
+                  onLabel={name => { setSearch(''); setLabels(ls => ls.includes(name) ? ls : [...ls, name]); }}
                 />
               ))
             )}
@@ -724,7 +876,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
   const hasMore = totalRows !== null ? shownRows < totalRows : shownRows >= limit;
 
   const listColumn = (
-    <div
+    <div className="gh-list"
       // Infinite scroll, not a button: the rows are a column you read
       // downwards, and "load more" at the bottom of a scroll you are already
       // doing is a click that says nothing the scroll did not.
@@ -736,11 +888,10 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
         }
       }}
       style={{
-        // ~20% of the half-pane, with a floor so it stays a list rather than a
-        // column of ellipses, and a ceiling so a wide window does not hand it
-        // space the diff wants.
-        width: '22%', minWidth: 170, maxWidth: 300,
-        flexShrink: 0, borderRight: '1px solid var(--border)',
+        // Nothing open: the list is the page, full width, like github.com's.
+        // One open: a column beside it, wide enough that titles and labels
+        // read, capped so the diff keeps the room it wants.
+        ...(selected ? { width: '32%', minWidth: 260, maxWidth: 440, flexShrink: 0 } : { flex: 1, minWidth: 0 }), borderRight: '1px solid var(--border)',
         overflowY: 'auto', background: 'var(--background)',
       }}
     >
@@ -791,6 +942,9 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
       <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={externalClick(item.url)} title="Open on GitHub" style={iconBtn} className="hover:text-foreground">
         <ExternalLink size={13} />
       </a>
+      <button onClick={() => onSelect(null)} title="Close — back to the full list" style={iconBtn} className="hover:text-foreground">
+        <X size={14} />
+      </button>
     </div>
   );
 
@@ -828,9 +982,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
         {item.labels.length > 0 && (
           <div style={{ display: 'flex', gap: 5, marginTop: 9, flexWrap: 'wrap' }}>
             {item.labels.map(l => (
-              <span key={l.name} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, border: `1px solid #${l.color || '888888'}`, color: `#${l.color || '888888'}` }}>
-                {l.name}
-              </span>
+              <LabelChip key={l.name} label={l} onClick={() => { setSearch(''); setLabels(ls => ls.includes(l.name) ? ls : [...ls, l.name]); }} />
             ))}
           </div>
         )}
@@ -959,7 +1111,7 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
   );
 
   const detailColumn = (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div className="gh-detail" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       {detailHeader}
       <div ref={detailRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {!selected ? (
@@ -981,11 +1133,11 @@ export default function GithubPane({ sessionId, repo, selected, onSelect }: Gith
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--background)', color: 'var(--foreground)' }}>
+    <div className="gh-pane" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--background)', color: 'var(--foreground)' }}>
       {toolbar}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+      <div className="gh-body" style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
         {listColumn}
-        {detailColumn}
+        {selected && detailColumn}
       </div>
     </div>
   );

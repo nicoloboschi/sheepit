@@ -84,11 +84,13 @@ export default function FloatingPanel({
   const toFront = () => setZ(z === topZ ? z : ++topZ);
 
   // Escape closes a panel that has a header — one with a close button is one
-  // you put away. A terminal panel has neither, because Escape belongs to
-  // whatever is running inside it.
+  // you put away. Never from inside a terminal: there Escape belongs to
+  // whatever is running in it (vim, Claude Code).
   useEffect(() => {
     if (!title) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !(e.target as Element | null)?.closest?.('.xterm')) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [title, onClose]);

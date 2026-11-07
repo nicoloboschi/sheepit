@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useMemo, memo, Profiler } fro
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, FolderTree, Globe, TerminalSquare, Bot } from 'lucide-react';
+import { ArrowDown, Upload, GripVertical, Diff, ScrollText, Github, Globe, TerminalSquare, Bot } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import { useShallow } from 'zustand/react/shallow';
 import useStore, { activeTerminalSend, activeTerminalRefresh, activePaneCycleView, registerTerminalSend, claimKeybar, releaseKeybar, DEFAULT_FONT_SIZE } from '../store';
@@ -14,7 +14,6 @@ import { findFileLinks } from '../utils';
 import GitDiffPane from './GitDiffPane';
 import GithubPane, { type GhRef } from './GithubPane';
 import TerminalTiles from './TerminalTiles';
-import FilesPane from './FilesPane';
 import PreviewPane from './PreviewPane';
 import AgentPane from './AgentPane';
 import SheepitPane from './SheepitPane';
@@ -124,7 +123,7 @@ interface WebglLike { dispose(): void; clearTextureAtlas?(): void }
  * reopens the tool that was showing last. `split` keeps its name — it is the
  * oldest of them and the persisted value.
  */
-export type PaneView = 'terminal' | 'split' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals' | 'split-agent' | 'split-sheepit';
+export type PaneView = 'terminal' | 'split-preview' | 'split-github' | 'working' | 'log' | 'split-terminals' | 'split-agent' | 'split-sheepit';
 const PANE_VIEW_KEY = 'sheepit:pane-views';
 // `showsTerminal()` used to live here, answering "does xterm have a size right
 // now". Every view keeps the terminal since the git group became a split, so
@@ -136,12 +135,14 @@ function readPaneView(sid: string): PaneView | undefined {
     if (raw === 'diff') return 'working';           // legacy persisted value
     // The two views that used to take the whole pane now only exist beside the
     // terminal, so a pane persisted in one of them opens in the split it means.
-    if (raw === 'files') return 'split';
+    // Files left the pane for the System panel; a pane persisted on it opens
+    // on the working tree, the nearest thing still on the rail.
+    if (raw === 'files' || raw === 'split') return 'working';
     if (raw === 'preview') return 'split-preview';
     // GitHub took the whole pane for one release, and now sits beside the
     // terminal like the other two things you read while typing.
     if (raw === 'github') return 'split-github';
-    return (['terminal', 'split', 'split-preview', 'split-github', 'working', 'log', 'split-terminals', 'split-agent', 'split-sheepit'] as const).includes(raw) ? raw : undefined;
+    return (['terminal', 'split-preview', 'split-github', 'working', 'log', 'split-terminals', 'split-agent', 'split-sheepit'] as const).includes(raw) ? raw : undefined;
   } catch { return undefined; }
 }
 /** The git family's tabs, as a rail rather than a strip. Vertical because the
@@ -165,7 +166,6 @@ const TOOL_TABS = [
   { id: 'split-github' as const, Icon: Github,     label: 'GitHub — pull requests and issues' },
   { id: 'working' as const,      Icon: Diff,       label: 'Working tree' },
   { id: 'log' as const,          Icon: ScrollText, label: 'Git log' },
-  { id: 'split' as const,        Icon: FolderTree, label: 'Files' },
   { id: 'split-preview' as const, Icon: Globe,     label: 'Browser' },
   // Last, after the browser. A shell beside the agent is the thing you reach
   // for *while* it works — `npm test`, a log tail, a git command you want to
@@ -454,7 +454,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
   // device choosing the other's layout. A second storage key would buy a
   // remembered tool across app launches, which is not what a phone is for.
   const narrow = tile || isNarrowScreen();
-  const [view, setView] = useState<PaneView>(() => (narrow ? 'terminal' : readPaneView(sessionId) ?? 'split'));
+  const [view, setView] = useState<PaneView>(() => (narrow ? 'terminal' : readPaneView(sessionId) ?? 'working'));
 
   /** Claude Code drawn as a conversation rather than as a terminal.
    *
@@ -523,10 +523,9 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    *  chip in the pane bar. */
   const [githubRef, setGithubRef] = useState<GhRef | null>(null);
   /** The terminal is sharing the pane with something — files or the browser. */
-  /** Everything except the bare terminal shares the pane with something: files,
+  /** Everything except the bare terminal shares the pane with something:
    *  the browser, or one of the three git views. */
   const isSplit = view !== 'terminal';
-  const openFileRef = useRef<((path: string, opts?: { pin?: boolean }) => void) | null>(null);
   // Wheel-scroll pacing for full-screen apps (e.g. Claude Code) that coalesce
   // rapid wheel bursts — we queue steps and drain them spaced out (see onWheel).
   const wheelPendingRef = useRef(0);
@@ -571,7 +570,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
   // desktop. See the comment on `narrow` above.
   useEffect(() => { if (!narrow) savePaneView(sessionId, view); }, [view, sessionId, narrow]);
   /** The tool to bring back when the tools are shown again. */
-  const lastToolRef = useRef<PaneView>(view === 'terminal' ? 'split' : view);
+  const lastToolRef = useRef<PaneView>(view === 'terminal' ? 'working' : view);
   if (view !== 'terminal') lastToolRef.current = view;
   const toggleTools = useCallback(() => {
     setView(v => v === 'terminal' ? lastToolRef.current : 'terminal');
@@ -595,19 +594,16 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     activePaneCycleView.current = (dir: 'left' | 'right') => {
       setView(prev => {
         // Hidden, then rail order — so cycling walks the rail top to bottom.
-        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split', 'split-preview', 'split-terminals', 'split-agent', 'split-sheepit'];
+        const order: PaneView[] = ['terminal', 'split-github', 'working', 'log', 'split-preview', 'split-terminals', 'split-agent', 'split-sheepit'];
         const i = order.indexOf(prev);
         return order[(i + (dir === 'right' ? 1 : -1) + order.length) % order.length]!;
       });
     };
   }, [isActive, tile]);
 
-  /** The line a file link asked for, for the pane's own Files view. */
-  const [filesLine, setFilesLine] = useState<number | null>(null);
-
   // Resolve a path clicked in the terminal or the chat against this pane's
-  // cwd, then open it — in the pane's own Files view when it is inside the
-  // pane's directory, in the app-wide Files panel when it is anywhere else.
+  // cwd, then open it in the System panel — the one file browser, floating
+  // over the whole app, so it costs the terminal none of its width.
   const handleFileLink = useCallback(async (rawPath: string) => {
     let cleaned = rawPath;
     let line: number | null = null;
@@ -618,39 +614,19 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     cleaned = cleaned.replace(/[.,;)'">\]]+$/, '');
     // The live foreground-process cwd (e.g. Claude Code's working directory):
     // a relative path it printed — `out/foo.mp4` — points at the file IT
-    // created, not wherever the shell happens to be. Also what decides which
-    // Files view the path belongs to, below.
+    // created, not wherever the shell happens to be.
     let cwd = '';
-    try {
-      const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/cwd`);
-      cwd = ((await res.json()).cwd as string) ?? '';
-    } catch { /* resolve nothing, open globally */ }
-    const absPath = cleaned.startsWith('/') || cleaned.startsWith('~/') || !cwd
-      ? cleaned
-      : `${cwd}/${cleaned.replace(/^\.\//, '')}`;
-
-    // **Inside the pane's directory, the pane's own Files view.** That is the
-    // repository the pane is working in, and the split keeps the file beside
-    // the conversation that mentioned it. A tile has no tools, so it never
-    // takes this branch.
-    if (!tile && cwd && (absPath === cwd || absPath.startsWith(cwd.replace(/\/$/, '') + '/'))) {
-      setFilesLine(line);
-      setView('split');
-      // The split may be mounting right now; its open handle arrives with it.
-      setTimeout(() => openFileRef.current?.(absPath), 60);
-      return;
+    if (!cleaned.startsWith('/') && !cleaned.startsWith('~/')) {
+      try {
+        const res = await fetch(`/api/fs/${encodeURIComponent(sessionId)}/cwd`);
+        cwd = ((await res.json()).cwd as string) ?? '';
+      } catch { /* open it as written */ }
     }
-
-    // **Anywhere else, the app-wide Files panel.** A path printed in a pane is
-    // as often somewhere else entirely — a scratchpad under /private/tmp, a
-    // file in another checkout — and the panel floats over the whole app, so
-    // it costs the terminal none of its width.
-    //
-    // A window event rather than a prop threaded up to the workspace bar, which
-    // is where the panel's state lives — the same channel StatChips already
-    // uses to push a PR into a pane, in the other direction.
+    const absPath = !cwd ? cleaned : `${cwd}/${cleaned.replace(/^\.\//, '')}`;
+    // A window event rather than a prop threaded up to App, where the panel's
+    // state lives — the same channel AgentPane uses.
     window.dispatchEvent(new CustomEvent('sheepit:open-file', { detail: { path: absPath, line } }));
-  }, [sessionId, tile]);
+  }, [sessionId]);
   const handleFileLinkRef = useRef(handleFileLink);
   handleFileLinkRef.current = handleFileLink;
 
@@ -1792,15 +1768,15 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
    * That is what a click cost — 180-230ms, scaling with how much you have open.
    *
    * A `useMemo` fixes it rather than a `memo()` wrapper or a visibility flag,
-   * for two reasons. `GitDiffPane`, `FilesPane`, `GithubPane` and `AgentPane`
+   * for two reasons. `GitDiffPane`, `GithubPane` and `AgentPane`
    * subscribe to the store **not at all**, so they re-render only because this
    * component does — hold the element still and the whole subtree stops. And
    * nothing unmounts, which matters: `PreviewPane` owns a live browser view,
-   * and `FilesPane` and `GitDiffPane` hold scroll and expansion state that an
+   * and `GitDiffPane` holds scroll and expansion state that an
    * unmount would throw away on every pen switch.
    *
    * Every dependency here is stable by construction — the three are `useState`
-   * setters, `openFileRef` is a ref and `startSplitDrag` is a `useCallback`. **An
+   * setters, `handleFileLink` and `startSplitDrag` are `useCallback`s. **An
    * inline lambda added to this block turns the whole thing off**, silently.
    */
   // Named per view, because "the split is slow" is not actionable: the six
@@ -1834,33 +1810,23 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
                 <AgentPane sessionId={sessionId} />
               ) : view === 'split-sheepit' ? (
                 <SheepitPane sessionId={sessionId} />
-              ) : view === 'split' ? (
-                <FilesPane
-                  sessionId={sessionId}
-                  openFileRef={openFileRef}
-                  highlightLine={filesLine}
-                  onPreviewFile={(path: string) => {
-                    setPreviewUrl(`/api/fs/at/${path.replace(/^\//, '').split('/').map(encodeURIComponent).join('/')}`);
-                    setView('split-preview');
-                  }}
-                />
               ) : (
                 <GitDiffPane
                   sessionId={sessionId}
                   mode={view === 'log' ? 'log' : 'head'}
-                  onOpenFile={(path: string) => { setView('split'); setTimeout(() => openFileRef.current?.(path), 60); }}
+                  onOpenFile={handleFileLink}
                 />
               )}
               </div>
             </div>
           </div>
         </Profiler>
-  ) : null, [isSplit, view, sessionId, previewUrl, previewNav, githubRef, stacked, filesLine,
+  ) : null, [isSplit, view, sessionId, previewUrl, previewNav, githubRef, stacked, handleFileLink,
              // Stable by construction, and listed rather than silenced with an
              // eslint-disable: the next person to edit this block needs the
              // linter to tell them when they have added a dependency, because
              // a missing one here does not crash — it quietly freezes the split.
-             startSplitDrag, setView, setGithubRef, setPreviewUrl, openFileRef]);
+             startSplitDrag, setView, setGithubRef, setPreviewUrl]);
 
   // One pane's own commit, so an expensive `commit:pane` can be divided by the
   // panes that caused it. The outer Profiler in App wraps the whole main area,

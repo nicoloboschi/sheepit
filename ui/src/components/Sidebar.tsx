@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PanelLeftClose } from 'lucide-react';
+import { PanelLeftClose, Bot, LayoutGrid } from 'lucide-react';
+import useStore from '../store';
 import SessionList from './SessionList';
 import { FlockBand, FlockFooter } from './FlockChrome';
 import { preferences } from '../preferences';
@@ -7,6 +8,28 @@ import { preferences } from '../preferences';
 interface SidebarProps {
   onConnect: (id: string) => void;
   send: (msg: Record<string, unknown>) => void;
+}
+
+/** The two top tabs: Agents (the pens) and System (files, terminals, GitHub,
+ *  reps, activity, disk). ⌘J flips between them. `compact` is the collapsed
+ *  sidebar: icons only, stacked. */
+function ViewTabs({ compact }: { compact?: boolean }) {
+  const systemOpen = useStore(s => s.systemOpen);
+  const set = useStore(s => s.setSystemOpen);
+  const tabs = [
+    { on: !systemOpen, label: 'Agents', icon: <Bot size={14} />, go: () => set(false) },
+    { on: systemOpen, label: 'System', icon: <LayoutGrid size={14} />, go: () => set(true) },
+  ];
+  return (
+    <div className={`view-tabs${compact ? ' is-compact' : ''}`} role="tablist">
+      {tabs.map(t => (
+        <button key={t.label} role="tab" aria-selected={t.on} className={t.on ? 'is-on' : ''}
+          onClick={t.go} title={`${t.label} (⌘J to switch)`} aria-label={t.label}>
+          {t.icon}{!compact && <span>{t.label}</span>}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export default function Sidebar({ onConnect, send }: SidebarProps) {
@@ -85,6 +108,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         >
           <PanelLeftClose size={14} style={{ transform: 'scaleX(-1)' }} />
         </button>
+        <ViewTabs compact />
       </aside>
     );
   }
@@ -122,6 +146,7 @@ export default function Sidebar({ onConnect, send }: SidebarProps) {
         </div>
       </div>
 
+      <ViewTabs />
       <FlockBand />
 
       <SessionList

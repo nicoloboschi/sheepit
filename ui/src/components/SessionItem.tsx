@@ -3,8 +3,8 @@ import { perf } from '../perf';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
 import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Plus, Pi, Feather } from 'lucide-react';
-import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { SortableContext, useSortable } from '@dnd-kit/sortable';
+import { noShift, useDropSide } from '../dropHint';
 import { useDroppable } from '@dnd-kit/core';
 import useStore, { addSheepToPen, type Session, type Workspace } from '../store';
 import { useDndEnabled } from '../dndEnabled';
@@ -132,17 +132,6 @@ function ctxTitle(used: number, limit?: number): string {
     : `Context in use: ${n} tokens`;
 }
 
-function PanePlaceholder({ tight, gridArea }: { tight?: boolean; gridArea?: string }): React.ReactElement {
-  return (
-    <div
-      className={['pane-card', 'pane-card-placeholder', tight && 'pane-card-tight'].filter(Boolean).join(' ')}
-      style={{ gridArea }}
-    >
-      <span className="pane-card-placeholder-label">Drop here</span>
-    </div>
-  );
-}
-
 /** Memoised, and that is the whole point of the handlers above being
  *  `useCallback`s: a pen holds 5.7 cards on average, and without this every
  *  one of their bodies — the agent mark, the context count, the age and a 26px
@@ -214,12 +203,13 @@ function PaneCardInner({
   const dndEnabled = useDndEnabled();
   const {
     attributes, listeners, setNodeRef,
-    transform, transition, isDragging, isOver,
+    isDragging,
   } = useSortable({
     id: sessionId || `__empty:${gridId}:${cellIdx}`,
     disabled: !sessionId || !dndEnabled,
     data: { kind: 'pane', sessionId, workspaceId: gridId, paneIdx: cellIdx },
   });
+  const dropSide = useDropSide(sessionId);
 
   return (
     <div
@@ -244,13 +234,12 @@ function PaneCardInner({
         tight && 'pane-card-tight',
         'pane-card-draggable',
         isDragging && 'pane-card-dragging',
-        isOver && 'pane-card-drop-target',
+        dropSide && `drop-line-${dropSide}`,
       ].filter(Boolean).join(' ')}
       style={{
         gridArea,
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0 : 1,
+        // Stays in place, dimmed: the ghost under the pointer is the drag.
+        opacity: isDragging ? 0.35 : 1,
       }}
       title={
         [name, session?.path, session?.gitBranch]
@@ -342,7 +331,7 @@ const PaneCard = memo(PaneCardInner);
 const noop = (): void => {};
 
 function PaneGrid({
-  gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, previewExtraSlot, onAddSheep,
+  gridId, cellIds, activeCell, isRowActive, unseenCells, onActivate, onAddSheep,
 }: {
   gridId: string;
   cellIds: string[];
@@ -355,8 +344,6 @@ function PaneGrid({
   /** Called when a specific pane card is clicked. Caller decides what happens
    *  (typically: switch active workspace + focus that pane). */
   onActivate: (cellIdx: number) => void;
-  /** A foreign pane is hovering this row: show where it would land. */
-  previewExtraSlot?: boolean;
 }): React.ReactElement {
   const unseenSet = new Set(unseenCells);
   // The cards run two abreast, so every card in a pen holding more than one
@@ -369,7 +356,7 @@ function PaneGrid({
   const sortableIds = cellIds.filter(Boolean);
 
   return (
-    <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+    <SortableContext items={sortableIds} strategy={noShift}>
       {/* `pane-grid-one` does what `:only-child` used to do on its own. The +
           strip is a second child, so a lone sheep stopped being an only child
           and lost its full-width row the moment the strip appeared. The count
@@ -388,7 +375,6 @@ function PaneGrid({
             onActivate={onActivate}
           />
         ))}
-        {previewExtraSlot && <PanePlaceholder tight={tight} />}
         {/* Another sheep in THIS pen, without going to it first. The workspace
             bar's + can only add to the pen you are standing in; from the flock
             you can see which pen the work belongs to, and this puts the new
@@ -496,7 +482,7 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
   // `data.kind` marks this as a workspace drag so the central onDragEnd
   // in App.tsx can dispatch correctly. Disabled entirely on mobile.
   const {
-    attributes, listeners, setNodeRef: setSortableRef, transform, transition, isDragging,
+    attributes, listeners, setNodeRef: setSortableRef, isDragging,
   } = useSortable({ id: workspace.id, data: { kind: 'workspace' }, disabled: !dndEnabled });
 
   // Row also acts as a dnd-kit droppable for pane drops (merge into this
@@ -514,14 +500,11 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
     && overlayActiveData?.kind === 'pane'
     && overlayActiveData.sourceWorkspaceId !== workspace.id;
 
-  const sortableStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    // Hide the original row while dragging — the DragOverlay in App.tsx
-    // shows a floating preview at the cursor instead. This avoids the
-    // "ghost double" effect.
-    opacity: isDragging ? 0 : 1,
-  };
+  // Nothing slides while a pen is dragged: the row stays, dimmed, and a line
+  // (`drop-line-*`) marks where it lands. The ghost under the pointer is the
+  // DragOverlay in App.tsx.
+  const sortableStyle: React.CSSProperties = { opacity: isDragging ? 0.35 : 1 };
+  const dropSide = useDropSide(workspace.id);
 
   // Unseen per cell — each pane can independently have new output. Shallow
   // compare so this row only re-renders when its own panes' flags flip.
@@ -637,6 +620,7 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
         isActive ? 'active' : '',
         unseen ? 'unseen' : '',
         dragOver ? 'pane-drop-target' : '',
+        dropSide ? `drop-line-${dropSide}` : '',
         !dndEnabled ? 'session-item-no-grip' : '',
       ].filter(Boolean).join(' ')}
       data-session-id={workspace.id}
@@ -699,7 +683,6 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
           activeCell={workspace.activeCell}
           isRowActive={isActive}
           unseenCells={unseenCells}
-          previewExtraSlot={dragOver}
           onAddSheep={addSheep}
           onActivate={activatePane}
           />

@@ -198,7 +198,7 @@ const watchedOwners = new WeakSet();
 const watchedDownloadSessions = new WeakSet();
 let nextDownloadId = 1;
 /** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
-const APP_SHORTCUTS = new Set(['k', 'n', 'ArrowUp', 'ArrowDown']);
+const APP_SHORTCUTS = new Set(['j', 'k', 'n', 'ArrowUp', 'ArrowDown']);
 
 /** What the pane draws from: the page's state plus a pending basic-auth ask. */
 function browserState(entry) {

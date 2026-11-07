@@ -9,6 +9,7 @@ import {
   TERMINAL_FONT_PRESETS,
   DEFAULT_TERMINAL_FONT,
 } from '../theme';
+import { CURSORS, readCursor, setCursor, readClickSound, setClickSound, type CursorId } from '../clickSound';
 import { resolveFontStack, type StackResolution } from '../fontAvailability';
 import {
   GOOGLE_MONO_FONTS,
@@ -81,6 +82,8 @@ export function AppearanceContent() {
   const setFontSize = useStore(s => s.setFontSize);
   const nativeFontSize = useStore(s => s.nativeFontSize);
   const setNativeFontSize = useStore(s => s.setNativeFontSize);
+  const [cursor, pickCursor] = useState<CursorId>(readCursor);
+  const [sound, pickSound] = useState(readClickSound);
 
   // The box is a draft until it is committed, so a half-typed family name does
   // not repaint every terminal on each keystroke — each repaint refits the grid
@@ -164,6 +167,34 @@ export function AppearanceContent() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-semibold mb-1">Pointer</h3>
+        <div className="flex gap-3 mb-3">
+          {CURSORS.map(c => (
+            <button
+              key={c.id}
+              onClick={() => { setCursor(c.id); pickCursor(c.id); }}
+              className="rounded-md border px-3 py-2 text-left"
+              style={{
+                borderColor: cursor === c.id ? 'var(--primary)' : 'var(--border)',
+                background: cursor === c.id ? 'var(--accent)' : 'var(--card)',
+                color: 'var(--foreground)',
+              }}
+            >
+              <div className="text-xs">{c.label}</div>
+              <div className="text-[10px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>{c.note}</div>
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-3 py-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium">Click sound</div>
+            <div className="text-[10px]" style={{ color: 'var(--muted-foreground)' }}>A soft tap when you press a button.</div>
+          </div>
+          <input type="checkbox" checked={sound} onChange={e => { setClickSound(e.target.checked); pickSound(e.target.checked); }} />
+        </label>
       </section>
 
       {/* **Two sizes, because they are two kinds of reading.** A terminal is

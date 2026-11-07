@@ -131,6 +131,12 @@ export function installFetchInterceptor(): void {
  *  `/api/...` hits the WebView's own origin, with no password. The password
  *  rides in `?k=` (the server accepts it for exactly this). */
 export function rawFileUrl(path: string): string {
-  const k = _serverKey ? `&k=${encodeURIComponent(_serverKey)}` : '';
-  return apiUrl(`/api/fs/raw?path=${encodeURIComponent(path)}${k}`);
+  return keyedUrl(`/api/fs/raw?path=${encodeURIComponent(path)}`);
+}
+
+/** An API URL an element can load by itself (`<img src>`): absolute, and
+ *  carrying the password, since no fetch interceptor sees it. */
+export function keyedUrl(pathWithQuery: string): string {
+  const k = _serverKey ? `${pathWithQuery.includes('?') ? '&' : '?'}k=${encodeURIComponent(_serverKey)}` : '';
+  return apiUrl(pathWithQuery + k);
 }

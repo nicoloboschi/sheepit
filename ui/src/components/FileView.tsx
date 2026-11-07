@@ -7,6 +7,7 @@
 //   file has tracked changes.
 // - Git diff    → mounts with `defaultMode="diff"` and pre-parsed `hunks` (so
 //   it doesn't re-fetch); flipping to content fetches the raw file.
+import DockButton from './DockButton';
 import { rawFileUrl } from '../serverUrl';
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
@@ -24,7 +25,7 @@ import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-async-lig
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   ChevronDown, ChevronRight, FileCode, FilePlus, FileMinus,
-  Eye, Pencil, Diff, Save, Copy, Check, ClipboardCopy, ExternalLink, Trash2,
+  Eye, Pencil, Diff, Save, Copy, Check, ClipboardCopy, ExternalLink, Trash2, Files,
   Maximize2, Minimize2, Loader2, AlertCircle,
 } from 'lucide-react';
 import * as sharedWs from '../sharedWs';
@@ -136,10 +137,12 @@ export const isPdf   = (name: string): boolean => ext(name) === 'pdf';
  *  A codec the browser cannot decode fails in the player's own words, which is
  *  more use than a format list kept by hand here. */
 export const isVideo = (name: string): boolean => ['mp4','webm','ogv','mov','m4v'].includes(ext(name));
+/** Same idea for sound: the browser's own <audio> player. */
+export const isAudio = (name: string): boolean => ['mp3','wav','m4a','aac','ogg','oga','opus','flac'].includes(ext(name));
 export const isMd    = (name: string): boolean => ['md','markdown','mdx'].includes(ext(name));
 /** Delimited data — View draws it as a sortable table, Edit opens the text. */
 export const isCsv   = (name: string): boolean => ['csv','tsv'].includes(ext(name));
-export const isText  = (name: string): boolean => !isImage(name) && !isPdf(name) && !isVideo(name);
+export const isText  = (name: string): boolean => !isImage(name) && !isPdf(name) && !isVideo(name) && !isAudio(name);
 
 // ── Unified file view ─────────────────────────────────────────────────────────
 
@@ -192,6 +195,7 @@ export default function FileView({
   const imgFile = isImage(name);
   const pdfFile = isPdf(name);
   const vidFile = isVideo(name);
+  const audFile = isAudio(name);
   /**
    * An SVG is both: a picture, and the text that draws it.
    *
@@ -255,6 +259,7 @@ export default function FileView({
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedContent, setCopiedContent] = useState(false);
+  const [copiedFile, setCopiedFile] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // Diff fetched on demand when no hunks were supplied (files view).
   const [fetchedHunks, setFetchedHunks] = useState<DiffHunk[] | null>(null);
@@ -317,7 +322,7 @@ export default function FileView({
   // <img>/<iframe> — an SVG is the exception, being a picture whose source you
   // can also read).
   useEffect(() => {
-    if (!path || mode === 'diff' || pdfFile || vidFile || (imgFile && !svgFile)) return;
+    if (!path || mode === 'diff' || pdfFile || vidFile || audFile || (imgFile && !svgFile)) return;
     setError(null); setSaveMsg(null); setLoading(true);
     fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
       .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.text(); })
@@ -329,7 +334,7 @@ export default function FileView({
   // when it's rewritten (e.g. by Claude Code). We never clobber unsaved edits —
   // if the user has local changes we surface a "changed on disk" hint instead.
   useEffect(() => {
-    if (!path || pdfFile || vidFile || (imgFile && !svgFile)) return;
+    if (!path || pdfFile || vidFile || audFile || (imgFile && !svgFile)) return;
     // Rides the shared WebSocket rather than an SSE stream per open file: a
     // browser allows only ~6 HTTP/1.1 connections per host and an SSE stream
     // never completes, so a handful of open files starved every other request
@@ -432,6 +437,16 @@ export default function FileView({
     } catch (e: any) { setSaveMsg(`Error: ${e.message}`); setTimeout(() => setSaveMsg(null), 3000); }
   };
 
+  const copyFile = async () => {
+    if (!path) return;
+    try {
+      const res = await fetch(`/api/fs/copy?path=${encodeURIComponent(path)}`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to copy');
+      setCopiedFile(true); setTimeout(() => setCopiedFile(false), 1500);
+    } catch (e: any) { setSaveMsg(`Error: ${e.message}`); setTimeout(() => setSaveMsg(null), 3000); }
+  };
+
   const deleteFile = async () => {
     if (!path) return;
     if (!window.confirm(`Delete ${name}?`)) return;
@@ -527,7 +542,22 @@ export default function FileView({
         {(additions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#9CBC7F', fontFamily: 'monospace', flexShrink: 0 }}>+{additions}</span>}
         {(deletions ?? 0) > 0 && <span style={{ fontSize: 11, color: '#E0907B', fontFamily: 'monospace', flexShrink: 0 }}>-{deletions}</span>}
 
-        {path && (
+        {/* Outside a diff, the actions are labelled dock buttons: a file you
+            opened to work with should say what each button does. A diff
+            lists many files, each with this header, so it stays compact. */}
+        {path && !hunks && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+            <DockButton icon={copiedFile ? <Check size={14} /> : <Files size={14} />} label={copiedFile ? 'Copied' : 'Copy'} title="Copy the file, to paste it in Finder, Slack, Mail…" on={copiedFile} onClick={copyFile} />
+            <DockButton icon={copied ? <Check size={14} /> : <Copy size={14} />} label={copied ? 'Copied' : 'Copy path'} on={copied} onClick={() => copy(path, setCopied)} />
+            {textFile && (
+              <DockButton icon={copiedContent ? <Check size={14} /> : <ClipboardCopy size={14} />} label={copiedContent ? 'Copied' : 'Copy text'} title="Copy the file's content" on={copiedContent} onClick={() => copy(content, setCopiedContent)} />
+            )}
+            <DockButton icon={<ExternalLink size={14} />} label="Open" title="Open in its own app" onClick={openNative} />
+            <DockButton icon={zen ? <Minimize2 size={14} /> : <Maximize2 size={14} />} label={zen ? 'Exit full' : 'Full screen'} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} on={zen} onClick={() => setZen(z => !z)} />
+            {onDelete && <DockButton icon={<Trash2 size={14} />} label="Delete" title="Delete this file" danger onClick={deleteFile} />}
+          </div>
+        )}
+        {path && hunks && (
           <>
             <button onClick={() => copy(path, setCopied)} title="Copy path" style={iconBtn(copied ? '#9CBC7F' : 'var(--muted-foreground)')}>
               {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -542,9 +572,11 @@ export default function FileView({
           </>
         )}
 
-        <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#9cbc7f' : 'var(--muted-foreground)')}>
-          {zen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-        </button>
+        {(!path || hunks) && (
+          <button onClick={() => setZen(z => !z)} title={zen ? 'Exit fullscreen (Esc)' : 'Fullscreen this file'} style={iconBtn(zen ? '#9cbc7f' : 'var(--muted-foreground)')}>
+            {zen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          </button>
+        )}
 
         {/* Fixed-width save-status slot — icon only, always reserved so it never
             shifts the surrounding header icons as it appears/clears. */}
@@ -598,6 +630,11 @@ export default function FileView({
                 preload="metadata"
                 style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: '1px solid var(--border)', background: '#000', display: 'block' }}
               />
+            </div>
+          )}
+          {audFile && path && mode !== 'diff' && (
+            <div style={{ padding: 16 }}>
+              <audio src={rawFileUrl(path)} controls preload="metadata" style={{ width: '100%', maxWidth: 520, display: 'block' }} />
             </div>
           )}
           {pdfFile && path && mode !== 'diff' && (

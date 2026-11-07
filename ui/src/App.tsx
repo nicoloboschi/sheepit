@@ -12,8 +12,10 @@ import {
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { setDropHint, useDropHintStore } from './dropHint';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import useStore, { activeTerminalSend, activePaneCycleView } from './store';
 import { requestNotificationPermission } from './utils';
@@ -23,9 +25,9 @@ import Sidebar from './components/Sidebar';
 import { isNarrowScreen, NARROW_QUERY } from './platform';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
 import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
-// Deferred: the Knowledge dialog carries MDXEditor, which nothing else uses
-// and most sessions never open.
-const KnowledgeDialog = lazy(() => import('./components/KnowledgeDialog'));
+// Deferred: the System panel carries the file viewer and its editors, which
+// most sessions never open.
+const SystemDialog = lazy(() => import('./components/SystemDialog'));
 import MobileKeybar from './components/MobileKeybar';
 import AndroidInstallBanner from './components/AndroidInstallBanner';
 import ConfirmDialog from './components/ConfirmDialog';
@@ -42,7 +44,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, ImagePlus, BookOpen, Search, Check,
+  Home, Zap, TerminalSquare, ImagePlus, FolderOpen, Search, Check,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
@@ -171,6 +173,8 @@ export default function App() {
   }, [buildHash]);
 
   const connectSession = useCallback((sessionId: string) => {
+    // Picking a pen, from anywhere (sidebar, ⌘K, the pasture), means Agents.
+    useStore.getState().setSystemOpen(false);
     useStore.getState().setCurrentSessionId(sessionId);
     preferences.setItem('sheepit-last-session', sessionId);
     syncHash();
@@ -178,11 +182,33 @@ export default function App() {
     setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 100);
   }, [syncHash]);
 
-  // Knowledge (notes) is an overlay dialog over the active workspace, not a
-  // context switch — toggled from the status bar.
-  const knowledgeOpen = useStore(s => s.knowledgeOpen);
-  const setKnowledgeOpen = useStore(s => s.setKnowledgeOpen);
-  // Search is an overlay over whatever you are looking at, like Knowledge —
+  // The two top tabs: Agents (the pens) and System. System is mounted on
+  // first use and then kept, so its folder and open files survive a switch;
+  // the panes stay mounted under it the same way.
+  const systemOpen = useStore(s => s.systemOpen);
+  const [systemMounted, setSystemMounted] = useState(false);
+  useEffect(() => { if (systemOpen) setSystemMounted(true); }, [systemOpen]);
+  // Back on Agents: the shown pane was display:none, so refit and refocus it.
+  const firstViewRef = useRef(true);
+  useEffect(() => {
+    if (firstViewRef.current) { firstViewRef.current = false; return; }
+    if (!systemOpen) setTimeout(() => window.dispatchEvent(new CustomEvent('sheepit:terminal-tab-active')), 50);
+  }, [systemOpen]);
+  /** A file a link asked for, raising the System panel if it is down. `seq`
+   *  counts requests: clicking the same path again means "take me back". */
+  const [systemFile, setSystemFile] = useState<{ path: string; line: number | null; seq: number } | null>(null);
+  // A path clicked in any pane (terminal, chat, agent tab) arrives here.
+  useEffect(() => {
+    const onOpenFile = (e: Event) => {
+      const d = (e as CustomEvent).detail as { path?: string; line?: number | null } | undefined;
+      if (!d?.path) return;
+      setSystemFile(prev => ({ path: d.path!, line: d.line ?? null, seq: (prev?.seq ?? 0) + 1 }));
+      useStore.getState().setSystemOpen(true);
+    };
+    window.addEventListener('sheepit:open-file', onOpenFile);
+    return () => window.removeEventListener('sheepit:open-file', onOpenFile);
+  }, []);
+  // Search is an overlay over whatever you are looking at, like System —
   // so it lives in the store and any surface can raise it.
   const searchOpen = useStore(s => s.searchOpen);
   const setSearchOpen = useStore(s => s.setSearchOpen);
@@ -401,6 +427,12 @@ export default function App() {
         }
         return;
       }
+      if (e.key === 'j') {
+        // Agents ⇄ System, the two top tabs.
+        e.preventDefault();
+        useStore.getState().setSystemOpen(!useStore.getState().systemOpen);
+        return;
+      }
       if (e.key === 'k') {
         // Find the sheep working on something — see FlockSearch.
         e.preventDefault();
@@ -514,6 +546,20 @@ export default function App() {
       return specific.length > 0 ? specific : collisions;
     };
 
+    // A pen drag only lands on pens (a pen is mostly its sheep cards, which
+    // would otherwise win the pointer test); a sheep drag never lands on a
+    // pen's sortable row, only on its cards, its drop row, or a gap.
+    const activeKind = (args.active.data.current as { kind?: string } | undefined)?.kind;
+    if (activeKind === 'workspace' || activeKind === 'pane') {
+      args = {
+        ...args,
+        droppableContainers: args.droppableContainers.filter(c => {
+          const k = (c.data?.current as { kind?: string } | undefined)?.kind;
+          return activeKind === 'workspace' ? k === 'workspace' : k !== 'workspace';
+        }),
+      };
+    }
+
     const pointerHits = pointerWithin(args);
     if (pointerHits.length > 0) return filterRowsIfSpecific(pointerHits);
     const rectHits = rectIntersection(args);
@@ -538,12 +584,34 @@ export default function App() {
     }
   };
 
-  const handleDragCancel = () => setActiveDrag(null);
+  const handleDragCancel = () => { setActiveDrag(null); setDropHint(null); };
+
+  /** Which side of the hovered pen (above/below) or sheep (left/right) the
+   *  pointer is on: that is where the line is drawn and where it lands. */
+  const handleDragMove = (e: DragMoveEvent) => {
+    const { active, over } = e;
+    const aKind = (active.data.current as { kind?: string } | undefined)?.kind;
+    const oKind = (over?.data.current as { kind?: string } | undefined)?.kind;
+    if (!over || over.id === active.id || aKind !== oKind || (aKind !== 'workspace' && aKind !== 'pane')) {
+      setDropHint(null);
+      return;
+    }
+    const start = e.activatorEvent as PointerEvent;
+    const r = over.rect;
+    const before = aKind === 'workspace'
+      ? start.clientY + e.delta.y < r.top + r.height / 2
+      : start.clientX + e.delta.x < r.left + r.width / 2;
+    setDropHint(String(over.id), before ? 'before' : 'after');
+  };
 
   const handleDragEnd = (e: DragEndEvent) => {
     setActiveDrag(null);
+    const hint = useDropHintStore.getState();
+    setDropHint(null);
     const { active, over } = e;
     if (!over) return;
+    // +1 when the line was after the hovered item.
+    const after = hint.id === String(over.id) && hint.side === 'after' ? 1 : 0;
 
     const aData = active.data.current as
       | { kind: 'workspace' }
@@ -565,11 +633,10 @@ export default function App() {
       if (oData.kind !== 'workspace') return;
       if (active.id === over.id) return;
       const order = store.workspaceOrder;
-      const fromIdx = order.indexOf(String(active.id));
       const overIdx = order.indexOf(String(over.id));
-      if (fromIdx < 0 || overIdx < 0) return;
-      const insertAt = fromIdx < overIdx ? overIdx + 1 : overIdx;
-      store.reorderWorkspaces(String(active.id), insertAt);
+      if (overIdx < 0) return;
+      // "Before row N" in the original order; the store adjusts for removal.
+      store.reorderWorkspaces(String(active.id), overIdx + after);
       return;
     }
 
@@ -585,16 +652,15 @@ export default function App() {
         // happen to share the same data shape since useSortable is used
         // for both directions).
         const targetWsId = oData.workspaceId;
-        const targetIdx = oData.paneIdx;
+        // The slot the line marked, counted before the source is removed.
+        const insertAt = oData.paneIdx + after;
         if (targetWsId === sourceWorkspaceId) {
-          if (targetIdx !== sourceIdx) {
-            // arrayMove semantics — matches the sortable animation that
-            // showed cards sliding out of the way as the user dragged.
-            store.reorderPaneInWorkspace(targetWsId, sourceIdx, targetIdx);
-          }
+          // arrayMove takes the final index, after the source is taken out.
+          const to = insertAt > sourceIdx ? insertAt - 1 : insertAt;
+          if (to !== sourceIdx) store.reorderPaneInWorkspace(targetWsId, sourceIdx, to);
         } else {
           const ok = store.movePaneBetweenWorkspaces({
-            sourceId: sourceWorkspaceId, sourceIdx, targetId: targetWsId,
+            sourceId: sourceWorkspaceId, sourceIdx, targetId: targetWsId, targetIdx: insertAt,
           });
           if (ok) connectSession(targetWsId);
         }
@@ -653,6 +719,7 @@ export default function App() {
       sensors={sensors}
       collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
@@ -700,12 +767,21 @@ export default function App() {
           <AndroidInstallBanner />
           <MobileTopBar onConnect={connectSession} send={send} />
 
+          <div style={{ display: systemOpen ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
           <Profiler id="pane" onRender={recordCommit}>
             <PaneTerminal
               sessionId={currentSessionId}
               send={send}
             />
           </Profiler>
+          </div>
+          {systemMounted && (
+            <div style={{ display: systemOpen ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <Suspense fallback={null}>
+                <SystemDialog openFile={systemFile} />
+              </Suspense>
+            </div>
+          )}
           {/* Drawn only while a terminal claims it (see `claimKeybar`): in
               the conversation view Esc would *interrupt the agent*, and the
               composer has the keys it needs. */}
@@ -721,11 +797,6 @@ export default function App() {
               useStore.getState().setActivePane(workspaceId, paneIndex);
             }}
           />
-        )}
-        {knowledgeOpen && (
-          <Suspense fallback={null}>
-            <KnowledgeDialog onClose={() => setKnowledgeOpen(false)} />
-          </Suspense>
         )}
       </div>
 
@@ -988,8 +1059,8 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               <DropdownMenuItem onClick={() => useStore.getState().setSearchOpen(true)}>
                 <Search size={14} /> Search the flock
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => useStore.getState().setKnowledgeOpen(true)}>
-                <BookOpen size={14} /> Knowledge
+              <DropdownMenuItem onClick={() => useStore.getState().setSystemOpen(!useStore.getState().systemOpen)}>
+                <FolderOpen size={14} /> {useStore.getState().systemOpen ? 'Agents' : 'System'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>

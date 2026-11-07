@@ -1,7 +1,5 @@
 import { useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { TerminalSquare } from 'lucide-react';
-import FloatingPanel from './FloatingPanel';
 import MobileKeybar from './MobileKeybar';
 import TerminalTiles from './TerminalTiles';
 import useStore from '../store';
@@ -14,7 +12,7 @@ import * as sharedWs from '../sharedWs';
 const MAX_HEADLESS = 4;
 
 /**
- * The global scratch terminals, in a floating panel.
+ * The global scratch terminals — a page of the System panel.
  *
  * A headless session is a shell with no pen: never in the flock, never
  * something you select, because the point of it is to be running while you
@@ -26,7 +24,7 @@ const MAX_HEADLESS = 4;
  * a shell opened beside one pane is that pane's, and listing it in the global
  * panel as well would offer two places to close the same thing.
  */
-export default function TerminalsDialog({ onClose }: { onClose: () => void }) {
+export default function ScratchTerminals() {
   // Derived from the session list rather than held in the store: the server
   // owns which shells exist, so a second list here could only disagree.
   const ids = useStore(useShallow(
@@ -38,15 +36,7 @@ export default function TerminalsDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   return (
-    <FloatingPanel
-      title="Terminals"
-      icon={<TerminalSquare size={13} style={{ color: 'var(--primary)' }} />}
-      onClose={onClose}
-      width={900}
-      height={560}
-      minWidth={520}
-      minHeight={320}
-    >
+    <>
       <TerminalTiles
         ids={ids}
         max={MAX_HEADLESS}
@@ -56,6 +46,6 @@ export default function TerminalsDialog({ onClose }: { onClose: () => void }) {
       />
       {/* The app's own key bar is under this panel on a phone. */}
       <MobileKeybar />
-    </FloatingPanel>
+    </>
   );
 }

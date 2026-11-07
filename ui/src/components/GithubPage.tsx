@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Github, Star, Plus } from 'lucide-react';
-import FloatingPanel from './FloatingPanel';
+import { Star, Plus } from 'lucide-react';
 import GithubPane, { type GhRef } from './GithubPane';
 import useStore from '../store';
 import { preferences } from '../preferences';
@@ -20,10 +19,6 @@ function readKept(): string[] {
 
 const SLUG = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
-interface GithubDialogProps {
-  onClose: () => void;
-}
-
 /**
  * GitHub as a global, over the whole app: the same pull-request and issue
  * viewer a pane has, with one level above it — which repository.
@@ -38,7 +33,7 @@ interface GithubDialogProps {
  * free after the first look: `GithubPane`'s caches are keyed on `owner/repo`,
  * not on the pane that asked.
  */
-export default function GithubDialog({ onClose }: GithubDialogProps) {
+export default function GithubPage() {
   // Any live session: the gh routes are session-scoped because `gh` has to run
   // somewhere, but the repository is named explicitly from here.
   const sessionId = useStore(s => {
@@ -132,22 +127,10 @@ export default function GithubDialog({ onClose }: GithubDialogProps) {
   };
 
   return (
-    <FloatingPanel
-      title="GitHub"
-      icon={<Github size={13} style={{ color: 'var(--primary)' }} />}
-      onClose={onClose}
-      width={1040}
-      height={680}
-      minWidth={720}
-      minHeight={420}
-    >
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <div className="gh-page" style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
         <div
-          style={{
-            width: 170, flexShrink: 0, padding: 8, overflowY: 'auto',
-            borderRight: '1px solid var(--border)', background: 'var(--chrome)',
-            display: 'flex', flexDirection: 'column', gap: 2,
-          }}
+          className="sys-panel"
+          style={{ width: 180, flexShrink: 0, padding: 8, overflowY: 'auto', gap: 4 }}
         >
           {repos.map(row)}
           {repos.length === 0 && (
@@ -188,7 +171,7 @@ export default function GithubDialog({ onClose }: GithubDialogProps) {
             </button>
           )}
         </div>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <GithubPane
             sessionId={sessionId}
             repo={active}
@@ -199,6 +182,5 @@ export default function GithubDialog({ onClose }: GithubDialogProps) {
           />
         </div>
       </div>
-    </FloatingPanel>
   );
 }

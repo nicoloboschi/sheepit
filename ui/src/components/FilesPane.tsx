@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { usePoll } from '../hooks/usePoll';
 import { usePaneOnScreen } from '../store';
+import DockButton from './DockButton';
 import {
   Folder, FolderOpen, ChevronLeft, FileCode, FileText, Image,
   FileJson, Film, Music, Archive, File, RefreshCw,
   Search, X, Filter, Upload, FilePlus, FolderPlus, Globe, PanelRightClose, Eye, EyeOff,
-  ChevronUp, ChevronDown,
+  ChevronUp, ChevronDown, Columns2, ArrowLeftToLine,
 } from 'lucide-react';
 // Deferred: the editor stack (CodeMirror + language packs + highlighter) is
 // the single biggest thing in the bundle, and it is not needed until you
@@ -143,7 +144,7 @@ interface EntryProps {
   focused?: boolean;
   /** Mouse click on a file — pins it as an open tab. Keyboard navigation
    *  (j/k/arrows) uses onSelect instead to avoid polluting the tab row. */
-  onOpen: (path: string) => void;
+  onOpen: (path: string, e?: React.MouseEvent) => void;
   onNavigate: (path: string) => void;
   gitStatus: Record<string, string> | null;
 }
@@ -165,7 +166,7 @@ function EntryRow({ entry, index, selected, focused, onOpen, onNavigate, gitStat
   return (
     <div
       data-entry-idx={index}
-      onClick={() => entry.isDir ? onNavigate(entry.path) : onOpen(entry.path)}
+      onClick={e => entry.isDir ? onNavigate(entry.path) : onOpen(entry.path, e)}
       className="file-row"
       title={entry.path}
       style={{
@@ -224,12 +225,18 @@ interface TabsBarProps {
   activePath: string | null;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
+  /** Per-tab button: open it in the other half (or bring it back). */
+  onMove?: (path: string) => void;
+  moveLabel?: string;
+  moveIcon?: React.ReactNode;
+  /** Anything to pin at the bar's right end (the split's close button). */
+  end?: React.ReactNode;
 }
 
 /** Horizontal strip of pinned file tabs rendered above the FileViewer. Each
  *  tab is keyed by its full path (there can be `index.ts` from two dirs),
  *  displays the basename, and shows a close X on hover / when active. */
-function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
+function TabsBar({ tabs, activePath, onSelect, onClose, onMove, moveLabel, moveIcon, end }: TabsBarProps) {
   const activeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
@@ -267,6 +274,17 @@ function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
           >
             <Icon size={12} color={getIconColor(name, false, null)} style={{ flexShrink: 0 }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+            {onMove && (
+              <button
+                onClick={e => { e.stopPropagation(); onMove(path); }}
+                title={moveLabel}
+                aria-label={moveLabel}
+                className="files-tab-move"
+                style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 2, borderRadius: 3, flexShrink: 0 }}
+              >
+                {moveIcon}
+              </button>
+            )}
             <button
               onClick={e => { e.stopPropagation(); onClose(path); }}
               title="Close tab"
@@ -284,6 +302,7 @@ function TabsBar({ tabs, activePath, onSelect, onClose }: TabsBarProps) {
           </div>
         );
       })}
+      {end && <><div style={{ flex: 1 }} />{end}</>}
     </div>
   );
 }
@@ -758,8 +777,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   useEffect(() => { setHlQuery(highlightQuery ?? null); }, [highlightQuery]);
   useEffect(() => { setHlLine(highlightLine ?? null); }, [highlightLine]);
 
-  const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}): Promise<boolean> => {
-    if (!sessionId) return false;
+  /** Resolves to the folder actually shown (`~` expanded), or null. */
+  const browse = useCallback(async (targetPath: string | null, { autoReadme = false }: { autoReadme?: boolean } = {}): Promise<string | null> => {
+    if (!sessionId) return null;
     const seq = ++browseSeqRef.current;
     setLoading(true);
     try {
@@ -769,7 +789,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       const res  = await fetch(url);
       const data = await res.json();
       // A newer navigation superseded this one — drop the stale result.
-      if (seq !== browseSeqRef.current) return false;
+      if (seq !== browseSeqRef.current) return null;
       if (data.error) throw new Error(data.error);
       setDir(data.dir);
       setCwd(prev => prev ?? data.cwd);
@@ -780,10 +800,10 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         const toOpen = readme ?? firstFile ?? null;
         if (toOpen) setSelectedFile(toOpen.path);
       }
-      return true;
+      return data.dir as string;
     } catch (e) {
       if (seq === browseSeqRef.current) console.error(e);
-      return false;
+      return null;
     } finally {
       if (seq === browseSeqRef.current) setLoading(false);
     }
@@ -853,11 +873,9 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   useEffect(() => { if (dir) onDirChange?.(dir); }, [dir]); // eslint-disable-line
 
-  // Finder: a file from another folder stops being shown once you walk away.
-  // An open request browses the file's folder first, so it is never this.
-  useEffect(() => {
-    if (finder && dir && selectedFile && selectedFile.slice(0, selectedFile.lastIndexOf('/')) !== dir) setSelectedFile(null);
-  }, [dir]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The open file stays open while you browse other folders — walking away
+  // to find a second file is exactly when you still want the first. "Close
+  // file" in the toolbar gives the folder the full width.
 
   // Load pinned tabs and recent files whenever the session changes (per-session
   // storage keys).
@@ -914,10 +932,14 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   // Expose openFile(path) to parent via ref
   useEffect(() => {
     if (!openFileRef) return;
-    openFileRef.current = async (filePath: string, opts?: { pin?: boolean }) => {
+    openFileRef.current = async (requested: string, opts?: { pin?: boolean }) => {
       // Browse to the file's parent directory, then select it
-      const parentDir = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : null;
-      await browse(parentDir);
+      const parentDir = requested.includes('/') ? requested.split('/').slice(0, -1).join('/') : null;
+      const shown = await browse(parentDir);
+      // Name the file under the folder as the server resolved it: a `~/…`
+      // path kept as typed never matches the expanded folder, and the Finder
+      // rule above then drops the selection as "from another folder".
+      const filePath = shown && parentDir ? `${shown}/${requested.split('/').pop()}` : requested;
       setSelectedFile(filePath);
       setMobileView('preview');
       rememberFile(filePath);
@@ -958,10 +980,35 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
     }
   }, [browse, rememberFile]);
 
-  const openFileTab = useCallback((path: string) => {
+  /** The right half: a second viewer with its own tabs, for two files side
+   *  by side. Desktop only; null when the view is not split. */
+  const [beside, setBeside] = useState<{ tabs: string[]; active: string } | null>(null);
+  const openBeside = useCallback((path: string) => {
+    setBeside(b => ({ tabs: b ? (b.tabs.includes(path) ? b.tabs : [...b.tabs, path]) : [path], active: path }));
+  }, []);
+  const closeBesideTab = useCallback((path: string) => {
+    setBeside(b => {
+      if (!b) return b;
+      const idx = b.tabs.indexOf(path);
+      const tabs = b.tabs.filter(t => t !== path);
+      if (!tabs.length) return null;
+      return { tabs, active: b.active === path ? (tabs[idx] ?? tabs[idx - 1])! : b.active };
+    });
+  }, []);
+  /** Closing the split folds its tabs back into the left. */
+  const closeSplit = useCallback(() => {
+    setBeside(b => {
+      if (b) setOpenTabs(tabs => [...tabs, ...b.tabs.filter(t => !tabs.includes(t))]);
+      return null;
+    });
+  }, []);
+
+  const openFileTab = useCallback((path: string, e?: React.MouseEvent) => {
+    // ⌥-click: open it beside the file you are looking at.
+    if (e?.altKey && selectedFile && selectedFile !== path) { openBeside(path); return; }
     setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]);
     selectFile(path);
-  }, [selectFile]);
+  }, [selectFile, selectedFile, openBeside]);
 
   // Click-handler for SearchPanel results: opens the file as a pinned tab,
   // sets the highlight so the viewer scrolls to and tints the match line,
@@ -1220,60 +1267,37 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
         )}
       </div>
       {!showBack && (
-        <>
-          <button
-            onClick={() => { setSearchMode(m => !m); setShowFileFilter(false); }}
-            title={searchMode ? 'Exit search' : 'Search in this folder'}
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: searchMode ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
-          >
-            <Search size={12} />
-          </button>
-          <button
+        <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+          <DockButton
+            icon={<Search size={14} />} label="Search" title={searchMode ? 'Exit search' : 'Search inside the files in this folder'}
+            on={searchMode} onClick={() => { setSearchMode(m => !m); setShowFileFilter(false); }}
+          />
+          <DockButton
+            icon={<Filter size={14} />} label="Filter" title="Filter this list by name" on={showFileFilter}
             onClick={() => { setShowFileFilter(f => { if (!f) setTimeout(() => fileFilterRef.current?.focus(), 0); return !f; }); setFileFilter(''); }}
-            title="Filter visible entries"
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showFileFilter ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
-          >
-            <Filter size={12} />
-          </button>
-          <button onClick={() => startCreate('file')} title="New file" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}>
-            <FilePlus size={15} />
-          </button>
-          <button onClick={() => startCreate('folder')} title="New folder" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}>
-            <FolderPlus size={15} />
-          </button>
+          />
+          <DockButton icon={<FilePlus size={14} />} label="New file" onClick={() => startCreate('file')} />
+          <DockButton icon={<FolderPlus size={14} />} label="New folder" onClick={() => startCreate('folder')} />
           {/* An .html file has a rendered form, and reading its source is
               rarely why you opened it. Only shown when there is one selected:
               a button that does nothing to the current file is noise. */}
           {onPreviewFile && selectedFile && /\.(x?html?|mp4|webm|ogv|mov|m4v)$/i.test(selectedFile) && (
-            <button
-              onClick={() => onPreviewFile(selectedFile)}
-              title="Open this file in the browser"
-              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
-            >
-              <Globe size={13} />
-            </button>
+            <DockButton icon={<Globe size={14} />} label="Browser" title="Open this file in the browser" onClick={() => onPreviewFile(selectedFile)} />
           )}
-          <button
+          <DockButton
+            icon={showHidden ? <Eye size={14} /> : <EyeOff size={14} />} label="Hidden"
+            title={showHidden ? 'Hide dotfiles (⌘⇧.)' : 'Show dotfiles (⌘⇧.)'} on={showHidden}
             onClick={() => setShowHidden(h => !h)}
-            title={showHidden ? 'Hide dotfiles (⌘⇧.)' : 'Show dotfiles (⌘⇧.)'}
-            style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: showHidden ? '#9cbc7f' : 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
-          >
-            {showHidden ? <Eye size={13} /> : <EyeOff size={13} />}
-          </button>
+          />
           {selectedFile && (
-            <button
+            <DockButton
               className="hidden md:flex"
+              icon={<PanelRightClose size={14} />} label="Close file" title="Close the file, show the folder full width"
               onClick={() => setSelectedFile(null)}
-              title="Hide the file, show the folder full width"
-              style={{ alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', flexShrink: 0, padding: 3 }}
-            >
-              <PanelRightClose size={13} />
-            </button>
+            />
           )}
-          <button onClick={() => browse(dir)} disabled={loading} title="Refresh" style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--muted-foreground)' : 'var(--muted-foreground)', flexShrink: 0 }}>
-            <RefreshCw size={11} />
-          </button>
-        </>
+          <DockButton icon={<RefreshCw size={13} />} label="Refresh" disabled={loading} onClick={() => browse(dir)} />
+        </div>
       )}
     </div>
   );
@@ -1371,6 +1395,14 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   const tabsBar = openTabs.length > 0 && (
     <TabsBar tabs={openTabs} activePath={selectedFile} onSelect={selectFile} onClose={closeTab} />
   );
+  // Desktop: the same bar, plus "open beside" on each tab.
+  const deskTabsBar = openTabs.length > 0 && (
+    <TabsBar
+      tabs={openTabs} activePath={selectedFile} onSelect={selectFile} onClose={closeTab}
+      onMove={(path: string) => { openBeside(path); if (openTabs.length > 1) closeTab(path); }}
+      moveLabel="Open beside" moveIcon={<Columns2 size={11} />}
+    />
+  );
   const preview = (
     <>
       {toolbar(true)}
@@ -1381,7 +1413,7 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--background)', position: 'relative' }}
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, background: 'var(--background)', position: 'relative' }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1419,16 +1451,16 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
       </div>
 
       {/* Desktop: split layout */}
-      <div className="hidden md:flex flex-col flex-1 min-h-0">
+      <div className="hidden md:flex flex-col flex-1 min-h-0 min-w-0">
         {toolbar(false)}
-        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0, minWidth: 0 }}>
           <div
             ref={fileListRef}
             tabIndex={0}
             onKeyDown={searchMode ? undefined : handleFileListKeyDown}
             className="file-list"
             // No file open: the folder takes the whole width, Finder's list view.
-            style={{ ...(selectedFile ? { width: listWidth, flexShrink: 1, minWidth: 140 } : { flex: 1, minWidth: 0 }), minHeight: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
+            style={{ ...(selectedFile ? { width: beside ? Math.min(listWidth, 240) : listWidth, flexShrink: 1, minWidth: 140 } : { flex: 1, minWidth: 0 }), minHeight: 0, overflowY: searchMode ? 'hidden' : 'auto', overflowX: 'hidden', position: 'relative', outline: 'none', display: 'flex', flexDirection: 'column' }}
           >
             {searchMode ? (
               <SearchPanel
@@ -1466,10 +1498,34 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
           />
           {/* The file's header (name, times, actions, view/edit) needs about
               this much to stay on one row; the list gives way first. */}
-          <div style={{ flex: 1, minWidth: finder ? 460 : 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-            {tabsBar}
+          <div style={{ flex: 1, minWidth: finder && !beside ? 460 : 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+            {deskTabsBar}
             <FileViewer path={selectedFile} cwd={cwd} sessionId={sessionId} gitStatus={gitStatus?.[selectedFile] ?? null} highlightQuery={hlQuery} highlightLine={hlLine} onDelete={handleDelete} />
           </div>
+          {beside && <>
+            <div style={{ flexShrink: 0, width: 4, background: 'var(--border)' }} />
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+              <TabsBar
+                tabs={beside.tabs}
+                activePath={beside.active}
+                onSelect={(path: string) => setBeside(b => b && { ...b, active: path })}
+                onClose={closeBesideTab}
+                onMove={(path: string) => { closeBesideTab(path); setOpenTabs(tabs => tabs.includes(path) ? tabs : [...tabs, path]); selectFile(path); }}
+                moveLabel="Move to the left" moveIcon={<ArrowLeftToLine size={11} />}
+                end={
+                  <button
+                    onClick={closeSplit}
+                    title="Close the split (its tabs move to the left)"
+                    aria-label="Close the split"
+                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', background: 'none', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: 11 }}
+                  >
+                    <X size={12} /> Unsplit
+                  </button>
+                }
+              />
+              <FileViewer path={beside.active} cwd={cwd} sessionId={sessionId} gitStatus={gitStatus?.[beside.active] ?? null} />
+            </div>
+          </>}
           </>}
         </div>
       </div>

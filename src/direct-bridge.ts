@@ -2164,6 +2164,14 @@ export class DirectBridge {
 
   // ── Misc ─────────────────────────────────────────────────────────────────
 
+  /** Every pane's shell pid → its session id, for telling which sheep a
+   *  process on the machine belongs to. */
+  sessionPids(): Map<number, string> {
+    const out = new Map<number, string>();
+    for (const [id, sess] of this.sessions) if (sess.pid > 0) out.set(sess.pid, id);
+    return out;
+  }
+
   async getSessionPid(sessionId: string): Promise<number | null> {
     return this.sessions.get(sessionId)?.pid ?? null;
   }

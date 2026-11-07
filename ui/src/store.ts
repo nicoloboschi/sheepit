@@ -184,15 +184,16 @@ export interface StoreState {
   workspaceZooms: Record<string, number>;
   wsStatus: WsStatus;
   sheetOpen: boolean;
-  /** Knowledge (notes) dialog — opens as an overlay over the active workspace
-   *  rather than replacing it. */
-  knowledgeOpen: boolean;
+  /** Which top tab fills the main area: false = Agents (the pens), true =
+   *  System (files, terminals, GitHub, reps, activity). Panes stay mounted
+   *  under System and count as off screen while it shows. */
+  systemOpen: boolean;
   /** Sidebar workspace list filter (Slack-style). */
   confirm: ConfirmState | null;
 
   setWsStatus: (status: WsStatus) => void;
   setSheetOpen: (open: boolean) => void;
-  setKnowledgeOpen: (open: boolean) => void;
+  setSystemOpen: (open: boolean) => void;
   /** The flock-wide search palette (⌘K). In the store rather than in App so
    *  the toolbar, the mobile sheet and the shortcut all raise the same one. */
   searchOpen: boolean;
@@ -234,6 +235,8 @@ export interface StoreState {
    *  empty, it's deleted and the selection jumps to the target. */
   movePaneBetweenWorkspaces: (args: {
     sourceId: string; sourceIdx: number; targetId: string;
+    /** Where in the target it lands; the end when absent. */
+    targetIdx?: number;
   }) => boolean;
   /** Swap two panes within the same workspace. The session at `idxA` and the
    *  one at `idxB` exchange positions in the `cells` array. `activeCell`
@@ -983,7 +986,7 @@ const useStore = create<StoreState>((set, get) => ({
   workspaceZooms: loadWorkspaceZooms(),
   wsStatus: 'connecting',
   sheetOpen: false,
-  knowledgeOpen: false,
+  systemOpen: false,
   searchOpen: false,
   confirm: null,
 
@@ -995,8 +998,8 @@ const useStore = create<StoreState>((set, get) => ({
     set({ sheetOpen: open });
   },
 
-  setKnowledgeOpen(open: boolean) {
-    set({ knowledgeOpen: open });
+  setSystemOpen(open: boolean) {
+    set({ systemOpen: open });
   },
 
   setSearchOpen(open: boolean) {
@@ -1236,7 +1239,7 @@ const useStore = create<StoreState>((set, get) => ({
   updateActivity(sessionId: string, busy?: boolean) {
     const { currentSessionId, workspaces } = get();
 
-    const isVisible = isOnScreen(currentSessionId, workspaces, sessionId);
+    const isVisible = isOnScreen(get().systemOpen ? null : currentSessionId, workspaces, sessionId);
 
     if (busy === true) {
       // New work means a previous "waiting for you" request has been acted
@@ -1315,7 +1318,7 @@ const useStore = create<StoreState>((set, get) => ({
 
   sessionAttention(sessionId: string, message: string) {
     const { currentSessionId, workspaces, sessionMap } = get();
-    const isVisible = isOnScreen(currentSessionId, workspaces, sessionId);
+    const isVisible = isOnScreen(get().systemOpen ? null : currentSessionId, workspaces, sessionId);
 
     // The app has spoken, so this burst is over: clearing busy here also stops
     // the slower activity heuristic from firing a second "finished" for the
@@ -1336,7 +1339,7 @@ const useStore = create<StoreState>((set, get) => ({
   markUnseen(sessionId: string) {
     const { currentSessionId, workspaces } = get();
     // Don't mark unseen what is already on screen.
-    if (isOnScreen(currentSessionId, workspaces, sessionId)) return;
+    if (isOnScreen(get().systemOpen ? null : currentSessionId, workspaces, sessionId)) return;
     set(s => ({ sessionHasUnseen: { ...s.sessionHasUnseen, [sessionId]: true } }));
   },
 
@@ -1442,7 +1445,7 @@ const useStore = create<StoreState>((set, get) => ({
     });
   },
 
-  movePaneBetweenWorkspaces({ sourceId, sourceIdx, targetId }) {
+  movePaneBetweenWorkspaces({ sourceId, sourceIdx, targetId, targetIdx }) {
     if (sourceId === targetId) return false;
     const s = get();
 
@@ -1482,11 +1485,12 @@ const useStore = create<StoreState>((set, get) => ({
     }
 
     // Build the new target — always a growth.
-    const newTargetCells = [...target.cells, movedSid];
+    const at = targetIdx === undefined ? target.cells.length : Math.max(0, Math.min(targetIdx, target.cells.length));
+    const newTargetCells = [...target.cells.slice(0, at), movedSid, ...target.cells.slice(at)];
     nextWorkspaces[targetId] = {
       ...target,
       cells: newTargetCells,
-      activeCell: newTargetCells.length - 1,
+      activeCell: at,
     };
 
     saveWorkspaces(nextWorkspaces, nextOrder);
@@ -1998,7 +2002,7 @@ export async function addSheepToPen(
  * pause invisible.
  */
 export function usePaneOnScreen(sessionId: string | null | undefined): boolean {
-  return useStore(s => !!sessionId && isOnScreen(s.currentSessionId, s.workspaces, sessionId));
+  return useStore(s => !!sessionId && isOnScreen(s.systemOpen ? null : s.currentSessionId, s.workspaces, sessionId));
 }
 
 export default useStore;

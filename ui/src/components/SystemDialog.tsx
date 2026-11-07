@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X, History } from 'lucide-react';
-import FloatingPanel from './FloatingPanel';
+import { FolderOpen, Home, Monitor, FileText, Download, HardDrive, TerminalSquare, Star, X, History, NotebookPen, Activity, Github, Repeat } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import FilesPane from './FilesPane';
+import ActivityMonitor from './ActivityMonitor';
+import ScratchTerminals from './ScratchTerminals';
+import GithubPage from './GithubPage';
+import RepsPage from './RepsPage';
+import DiskPage from './DiskPage';
+
+type Page = 'files' | 'terminals' | 'github' | 'reps' | 'activity' | 'disk';
+/** The page you were on, for the next time the panel opens in this tab. */
+let lastPage: Page = 'files';
 import useStore from '../store';
 import { preferences } from '../preferences';
 
@@ -18,16 +27,17 @@ function readFavourites(): string[] {
   } catch { return []; }
 }
 
-interface FilesDialogProps {
-  onClose: () => void;
+interface SystemDialogProps {
   /** A file to open, from a path clicked in a terminal. `seq` counts requests
    *  rather than naming files: clicking the same path again after browsing away
    *  means "take me back to it", and a value that has not changed says nothing. */
   openFile?: { path: string; line: number | null; seq: number } | null;
 }
 
-/** The file browser as a dialog over the whole app — the Finder you do not
- *  have to leave sheepit for.
+/** The System panel: the file browser over the whole app — the Finder you do
+ *  not have to leave sheepit for — plus your notes (a place in its left
+ *  column: they are plain .md files), the scratch terminals, GitHub, reps and
+ *  a small Activity Monitor. Every global lives here, one page at a time.
  *
  *  It is the pane's own Files view (`FilesPane`), not a second browser: one
  *  tree, one editor, the same breadcrumb, go-up, search, upload and new-file
@@ -35,7 +45,7 @@ interface FilesDialogProps {
  *  home directory rather than inside one pane's repo, because a file manager
  *  that starts wherever the terminal happens to be standing is a pane, not a
  *  Finder. */
-export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
+export default function SystemDialog({ openFile }: SystemDialogProps) {
   // Any live session will do: the fs API is session-scoped only to resolve a
   // starting directory, and we hand it an absolute path instead.
   const sessionId = useStore(s => {
@@ -48,6 +58,18 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
   const [dir, setDir] = useState<string | null>(null);
   const [favourites, setFavourites] = useState<string[]>(readFavourites);
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
+  /** Which page fills the right side. Files stays mounted under the others,
+   *  so coming back finds the folder and the open file where you left them;
+   *  the rest mount only while shown (Activity and reps poll). */
+  const [page, setPageState] = useState<Page>(lastPage);
+  const setPage = (p: Page) => { lastPage = p; setPageState(p); };
+  const scratchCount = useStore(useShallow(s => s.sessions.filter(x => x.isHeadless && !x.sideOf).length));
+  /** Where the notes live (`~/.config/sheepit/notes`). Asked of the server,
+   *  which also makes the folder and a first sheet if there are none. */
+  const [notesDir, setNotesDir] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/notes/sheets').then(r => r.json()).then((d: { dir?: string }) => setNotesDir(d.dir ?? null)).catch(() => {});
+  }, []);
 
   const saveFavourites = (next: string[]) => {
     setFavourites(next);
@@ -66,7 +88,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
    *  still navigates. */
   const browseRef = useRef<((path: string) => void) | null>(null);
 
-  const goTo = (target: string) => { setPath(target); browseRef.current?.(target); };
+  const goTo = (target: string) => { setPage('files'); setPath(target); browseRef.current?.(target); };
 
   /** The line to scroll to and tint, from a `path.ts:42` link. Kept here and
    *  dropped as soon as another file is opened, or line 42 of that one would be
@@ -78,9 +100,20 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
   // has the higher sequence number inside FilesPane and wins.
   useEffect(() => {
     if (!openFile) return;
+    setPage('files');
     setHlLine(openFile.line);
     void openFileRef.current?.(openFile.path);
   }, [openFile?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Open this folder" from the Activity page's details.
+  useEffect(() => {
+    const onFolder = (e: Event) => {
+      const p = (e as CustomEvent).detail?.path as string | undefined;
+      if (p) goTo(p);
+    };
+    window.addEventListener('sheepit:open-folder', onFolder);
+    return () => window.removeEventListener('sheepit:open-folder', onFolder);
+  });
 
   const places: { label: string; path: string; icon: React.ReactNode }[] = [
     { label: 'Home',      path: '~',            icon: <Home size={13} /> },
@@ -91,39 +124,57 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
     // Where the pane you were in is standing — the one place a terminal
     // multiplexer knows that Finder does not.
     ...(panePath ? [{ label: 'This pane', path: panePath, icon: <TerminalSquare size={13} /> }] : []),
+    // What Knowledge used to be: one .md file per sheet, edited like any file.
+    ...(notesDir ? [{ label: 'Notes', path: notesDir, icon: <NotebookPen size={13} /> }] : []),
   ];
+  const pages: { id: Page; label: string; icon: React.ReactNode; count?: number }[] = [
+    { id: 'files',     label: 'Files',     icon: <FolderOpen size={20} /> },
+    { id: 'terminals', label: 'Terminals', icon: <TerminalSquare size={20} />, count: scratchCount },
+    { id: 'github',    label: 'GitHub',    icon: <Github size={20} /> },
+    { id: 'reps',      label: 'Reps',      icon: <Repeat size={20} /> },
+    { id: 'activity',  label: 'Activity',  icon: <Activity size={20} /> },
+    { id: 'disk',      label: 'Disk',      icon: <HardDrive size={20} /> },
+  ];
+  const placeStyle = (on: boolean): React.CSSProperties => ({
+    display: 'flex', alignItems: 'center', gap: 7,
+    padding: '5px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
+    fontSize: 12, textAlign: 'left', width: '100%',
+    background: on ? 'var(--accent)' : 'none',
+    color: on ? 'var(--foreground)' : 'var(--muted-foreground)',
+  });
 
   return (
-    <FloatingPanel
-      title="Files"
-      icon={<FolderOpen size={13} style={{ color: 'var(--primary)' }} />}
-      onClose={onClose}
-      // Places + a list with its columns + a file whose header fits one row.
-      width={1180}
-      height={720}
-      minWidth={860}
-      minHeight={420}
-    >
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    <div className="system-view" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--background)' }}>
+      {/* The pages as a dock: an icon and its name, one click each. */}
+      <div className="system-dock" role="tablist">
+        {pages.map(p => (
+          <button
+            key={p.id}
+            role="tab"
+            aria-selected={page === p.id}
+            className={`system-dock-item${page === p.id ? ' is-on' : ''}`}
+            onClick={() => setPage(p.id)}
+          >
+            <span className="system-dock-icon">
+              {p.icon}
+              {p.count ? <span className="system-dock-badge">{p.count}</span> : null}
+            </span>
+            <span className="system-dock-label">{p.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="system-body">
+        {page === 'files' && (
         <div
-          style={{
-            width: 160, flexShrink: 0, padding: 8, overflowY: 'auto',
-            borderRight: '1px solid var(--border)', background: 'var(--chrome)',
-            display: 'flex', flexDirection: 'column', gap: 2,
-          }}
+          className="sys-panel"
+          style={{ width: 170, flexShrink: 0, padding: 8, overflowY: 'auto', gap: 2 }}
         >
           {places.map(p => (
             <button
               key={p.path}
               onClick={() => goTo(p.path)}
               title={p.path}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 7,
-                padding: '5px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
-                fontSize: 12, textAlign: 'left', width: '100%',
-                background: path === p.path ? 'var(--accent)' : 'none',
-                color: path === p.path ? 'var(--foreground)' : 'var(--muted-foreground)',
-              }}
+              style={placeStyle(page === 'files' && path === p.path)}
             >
               {p.icon}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.label}</span>
@@ -198,7 +249,7 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
                 return (
                   <button
                     key={file}
-                    onClick={() => { setHlLine(null); void openFileRef.current?.(file, { pin: false }); }}
+                    onClick={() => { setPage('files'); setHlLine(null); void openFileRef.current?.(file, { pin: false }); }}
                     title={file}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 7, width: '100%', minWidth: 0,
@@ -214,6 +265,13 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
             </>
           )}
         </div>
+        )}
+        {page === 'activity' && <div className="sys-panel is-grow"><ActivityMonitor /></div>}
+        {page === 'disk' && <div className="sys-panel is-grow"><DiskPage /></div>}
+        {page === 'github' && <GithubPage />}
+        {page === 'reps' && <div className="sys-panel is-grow"><RepsPage /></div>}
+        {page === 'terminals' && <div className="sys-panel is-grow"><ScratchTerminals /></div>}
+        <div className="sys-panel is-grow" style={{ display: page === 'files' ? 'flex' : 'none', flexDirection: 'row' }}>
         <FilesPane
           sessionId={sessionId}
           openFileRef={openFileRef}
@@ -225,7 +283,8 @@ export default function FilesDialog({ onClose, openFile }: FilesDialogProps) {
           highlightLine={hlLine}
           onFileSelect={(p: string) => { if (p !== openFile?.path) setHlLine(null); }}
         />
+        </div>
       </div>
-    </FloatingPanel>
+    </div>
   );
 }

@@ -8,6 +8,7 @@ import { initializePreferences } from './preferences';
 import { applyTheme, readTheme } from './theme';
 import { initNative } from './native';
 import { startPerf } from './perf';
+import { startClickSounds, applyCursor } from './clickSound';
 
 // The connection URL is the only browser-local bootstrap setting. Once it is
 // known, every durable Sheepit preference comes from the backend profile.
@@ -15,6 +16,7 @@ initServerUrl();
 installFetchInterceptor();
 // The one perf measurement in the UI. Always on; see perf.ts.
 startPerf();
+startClickSounds();
 
 // Swallow xterm.js's benign async renderer race:
 // "Cannot read properties of undefined (reading 'dimensions')"
@@ -95,7 +97,7 @@ function Root() {
             clearServerUrl();
             throw new Error(`connected, but could not load settings: ${e instanceof Error ? e.message : String(e)}`);
           }
-          applyTheme(readTheme());
+          applyTheme(readTheme()); applyCursor();
           setNeedsServer(false);
         }}
       />
@@ -151,7 +153,7 @@ async function bootstrap(): Promise<void> {
     // was the commonest way to end up looking at a black rectangle.
     await retryUntilPreferences();
   }
-  applyTheme(readTheme());
+  applyTheme(readTheme()); applyCursor();
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <Root />

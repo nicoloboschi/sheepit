@@ -173,6 +173,10 @@
      buttons, the fence, the sheep, every status colour. It just no longer
      tints the furniture. */
   --chrome:                 #15171a;
+  /* The System view's top bar: a step lighter than chrome, so you can
+     tell at a glance you are in System and not with the agents. */
+  --system-bar:             #2c3127;
+  --panel-line:             rgba(205, 211, 198, 0.12);
   --chrome-line:            rgba(255, 255, 255, 0.07);
 
   /* Pane chrome — the header above a terminal and the status bar below it are
@@ -231,6 +235,8 @@
   --diff-del-bg:            #fbeae5;
   --diff-del-fg:            #4a170c;
   --chrome:                 #eef0f3;
+  --system-bar:             #e3e8dc;
+  --panel-line:             rgba(34, 41, 31, 0.14);
   --chrome-line:            rgba(34, 41, 31, 0.10);
   --pane-chrome:            #eef0f3;
   --pane-chrome-active:     linear-gradient(115deg, rgba(120, 131, 148, 0.20), rgba(160, 170, 184, 0.10) 62%, var(--card));
@@ -1907,40 +1913,6 @@
   box-shadow: 0 0 0 1px rgba(156, 188, 127, 0.4), 0 0 12px rgba(156, 188, 127, 0.25);
   border-radius: 4px;
   transition: box-shadow 0.12s;
-}
-
-/* Per-card drop highlight — shown when hovering a pane card with another
- * pane in flight (intra-workspace swap or cross-workspace insert). */
-.pane-card-drop-target {
-  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 10px rgba(156, 188, 127, 0.35);
-  background: rgba(156, 188, 127, 0.12);
-}
-
-/* Empty "drop here" placeholder slot rendered when a foreign pane is being
- * dragged over a workspace with room for one more pane. Looks distinct from
- * a real PaneCard so the user understands it's a target, not content. */
-.pane-card-placeholder {
-  background: rgba(156, 188, 127, 0.10);
-  border: 1.5px dashed rgba(156, 188, 127, 0.55);
-  box-shadow: inset 0 0 12px rgba(156, 188, 127, 0.10);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  animation: pane-card-placeholder-pulse 1.6s ease-in-out infinite;
-  cursor: copy;
-}
-.pane-card-placeholder-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--primary);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.85;
-}
-@keyframes pane-card-placeholder-pulse {
-  0%, 100% { box-shadow: inset 0 0 12px rgba(156, 188, 127, 0.10); border-color: rgba(156, 188, 127, 0.55); }
-  50%      { box-shadow: inset 0 0 18px rgba(156, 188, 127, 0.22); border-color: rgba(156, 188, 127, 0.85); }
 }
 
 /* Active pane header — stronger visual presence so the focused pane is
@@ -3745,6 +3717,9 @@
   cursor: pointer;
 }
 .nat-img:hover { border-color: var(--primary); }
+.nat-video { cursor: default; max-height: 320px; }
+/* What the agent sent you: names under the pictures, quiet. */
+.nat-sent-files { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: calc(var(--nat-size) * 0.85); }
 
 .nat-system {
   font-size: calc(var(--nat-size) * 0.82);
@@ -4417,3 +4392,132 @@ a.apk-banner-more { text-decoration: underline; }
 .shp-value:hover .shp-copy { opacity: 0.7; }
 .shp-copied { flex-shrink: 0; color: var(--success); }
 .shp-absent { color: var(--muted-foreground); opacity: 0.6; cursor: default; }
+
+/* Cursor (copied from ciak, picked in Appearance): a rounded arrow, white on dark, dark on light.
+   Set on the root only and inherited, so anything with a cursor of its own
+   (buttons, resize handles, the terminal's text bar) keeps it, and so do
+   its children. */
+:where(:root[data-cursor="arrow"]) { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cfilter id='s' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeDropShadow dy='1' stdDeviation='1.6' flood-opacity='.3'/%3E%3C/filter%3E%3Cpath filter='url(%23s)' d='M6 5.2 21.6 10.6c.9.3.9 1.5 0 1.9l-6.1 2.4c-.3.1-.5.3-.6.6l-2.4 6.1c-.4.9-1.6.9-1.9 0L5.2 6c-.2-.5.3-1 .8-.8Z' fill='%23fff' stroke='%23111' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") 6 5, auto; }
+:where(:root[data-cursor="arrow"][data-theme="light"]) { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cfilter id='s' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeDropShadow dy='1' stdDeviation='1.6' flood-opacity='.3'/%3E%3C/filter%3E%3Cpath filter='url(%23s)' d='M6 5.2 21.6 10.6c.9.3.9 1.5 0 1.9l-6.1 2.4c-.3.1-.5.3-.6.6l-2.4 6.1c-.4.9-1.6.9-1.9 0L5.2 6c-.2-.5.3-1 .8-.8Z' fill='%23111' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") 6 5, auto; }
+html input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit]), html textarea, html [contenteditable] { cursor: text; }
+html :disabled { cursor: not-allowed; }
+
+/* Where a drag lands in the sidebar: a line, and nothing else moves (see
+   dropHint.ts). Above/below a pen, left/right of a sheep card. */
+.session-item.drop-line-before::before,
+.session-item.drop-line-after::before,
+.pane-card.drop-line-before::before,
+.pane-card.drop-line-after::before {
+  content: ''; position: absolute; z-index: 5; pointer-events: none;
+  background: var(--primary); border-radius: 2px;
+  box-shadow: 0 0 6px rgba(156, 188, 127, 0.6);
+}
+.session-item.drop-line-before::before { left: 6px; right: 6px; top: -2px; height: 3px; }
+.session-item.drop-line-after::before  { left: 6px; right: 6px; bottom: -2px; height: 3px; }
+.pane-card.drop-line-before::before { top: 2px; bottom: 2px; left: -4px; width: 3px; }
+.pane-card.drop-line-after::before  { top: 2px; bottom: 2px; right: -4px; width: 3px; }
+
+/* The System panel's pages, as a dock: an icon tile and its name. Selection is
+   a lift plus the dock's dot underneath, never a hue. */
+.system-dock {
+  display: flex; justify-content: center; gap: 6px; flex-shrink: 0;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  background: var(--system-bar);
+}
+.system-dock-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 64px; padding: 2px 4px 6px; position: relative;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted-foreground);
+}
+.system-dock-icon {
+  position: relative; display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: 10px;
+  background: var(--accent); border: 1px solid var(--border);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.system-dock-item:hover .system-dock-icon { transform: translateY(-2px); color: var(--foreground); }
+.system-dock-item.is-on { color: var(--foreground); }
+.system-dock-item.is-on .system-dock-icon {
+  background: var(--primary-tint), var(--accent);
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  color: var(--primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.system-dock-item.is-on::after {
+  content: ''; position: absolute; bottom: 0; left: 50%;
+  width: 4px; height: 4px; margin-left: -2px; border-radius: 50%;
+  background: var(--primary);
+}
+.system-dock-label { font-size: 11px; line-height: 1; }
+.system-dock-badge {
+  position: absolute; top: -5px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 600;
+  background: var(--primary); color: var(--primary-foreground);
+}
+@media (prefers-reduced-motion: reduce) { .system-dock-icon { transition: none; } }
+
+/* Toolbar-size dock buttons (DockButton): icon over its name. Same language as
+   the System dock — a lift on hover, the brand colour when a toggle is on. */
+.dock-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 44px; padding: 3px 4px 2px; flex-shrink: 0;
+  background: none; border: none; border-radius: 6px; cursor: pointer;
+  color: var(--muted-foreground);
+}
+.dock-btn-icon {
+  display: grid; place-items: center; width: 24px; height: 22px; border-radius: 6px;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.dock-btn-label { font-size: 9.5px; line-height: 1; white-space: nowrap; }
+.dock-btn:hover:not(:disabled) { color: var(--foreground); }
+.dock-btn:hover:not(:disabled) .dock-btn-icon { background: var(--accent); transform: translateY(-1px); }
+.dock-btn.is-on { color: var(--primary); }
+.dock-btn.is-on .dock-btn-icon { background: var(--primary-tint), var(--accent); }
+.dock-btn.is-danger:hover:not(:disabled) { color: var(--destructive); }
+.dock-btn:disabled { opacity: 0.4; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .dock-btn-icon { transition: none; } }
+
+/* Agents | System — the two top tabs, under the sidebar header. A lift for
+   the chosen one, like every other selection: no coloured fill. */
+.view-tabs {
+  display: flex; gap: 2px; margin: 0 12px 8px; padding: 2px;
+  border-radius: 7px; background: var(--chrome-line);
+}
+.view-tabs button {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 4px 8px; border: none; border-radius: 5px; cursor: pointer;
+  font-size: 12px; background: none; color: var(--muted-foreground);
+}
+.view-tabs button:hover { color: var(--foreground); }
+.view-tabs button.is-on {
+  background: var(--accent); color: var(--foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+.view-tabs button.is-on svg { color: var(--primary); }
+.view-tabs.is-compact { flex-direction: column; margin: 8px 4px 0; }
+.view-tabs.is-compact button { padding: 5px; }
+
+
+/* ── System view: panels with gutters ──────────────────────────────────────
+   Every column of a System page is its own panel: a card surface with a
+   visible edge and a gutter between, so lists that sit side by side read as
+   separate things. Scoped to .system-view: the same components inside a pane
+   keep their flush layout. */
+.system-body { display: flex; flex: 1; min-height: 0; min-width: 0; gap: 10px; padding: 10px; background: var(--background); }
+.sys-panel {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background: var(--card); border: 1px solid var(--panel-line); border-radius: 10px; overflow: hidden;
+}
+.sys-panel.is-grow { flex: 1; }
+.system-view .gh-page { gap: 10px; }
+.system-view .gh-pane { background: transparent !important; gap: 10px; }
+.system-view .gh-toolbar { border: 1px solid var(--panel-line) !important; border-radius: 10px; }
+.system-view .gh-body { gap: 10px; }
+.system-view .gh-list, .system-view .gh-detail {
+  background: var(--card) !important; border: 1px solid var(--panel-line) !important; border-radius: 10px;
+}
+.system-view .gh-list { overflow-x: hidden; }

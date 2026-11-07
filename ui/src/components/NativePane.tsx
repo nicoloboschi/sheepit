@@ -283,6 +283,44 @@ function Thumb({ src, alt, onOpen }: { src: string; alt?: string; onOpen?: () =>
   );
 }
 
+/** Tools whose whole point is putting a file in front of you. */
+const SENT_FILE_TOOLS = new Set(['SendUserFile', 'SendUserImage']);
+
+/**
+ * Files the agent sent you, shown as what they are: the caption, then each
+ * picture or video inline. As a one-line tool call they read as plumbing, and
+ * the thing you were sent was a click and a JSON dump away.
+ */
+const SentFilesBlock = memo(function SentFilesBlock({ m }: { m: Extract<NativeMessage, { kind: 'tool' }> }) {
+  const onFile = useContext(FileHandler);
+  const cwd = useContext(PaneCwd);
+  const i = (m.input ?? {}) as Record<string, unknown>;
+  const files = [
+    ...(Array.isArray(i.files) ? i.files : []),
+    ...['file_path', 'path', 'image_path'].map(k => i[k]),
+  ].filter((f): f is string => typeof f === 'string' && !!f);
+  const caption = typeof i.caption === 'string' ? i.caption : '';
+  return (
+    <div className={`nat-msg nat-assistant nat-sent${m.isError ? ' nat-tool-error' : ''}`} data-mid={m.id}>
+      {caption && <Markdown text={caption} />}
+      {files.map(f => {
+        const img = imageUrl(f, cwd);
+        if (img) return <Thumb key={f} src={img} alt={f} onOpen={onFile ? () => onFile(f) : undefined} />;
+        if (/\.(mp4|webm|mov|m4v|ogv)$/i.test(f)) {
+          const abs = f.startsWith('/') || f.startsWith('~') ? f : `${cwd}/${f}`;
+          return <video key={f} className="nat-img nat-video" src={rawFileUrl(abs)} controls preload="metadata" />;
+        }
+        return null;
+      })}
+      <div className="nat-sent-files">
+        {files.map(f => (
+          <a key={f} className="nat-path" href="#" onClick={e => { e.preventDefault(); onFile?.(f); }}>{f.split('/').pop()}</a>
+        ))}
+      </div>
+    </div>
+  );
+});
+
 const Markdown = memo(function Markdown({ text }: { text: string }) {
   const onLink = useContext(LinkHandler);
   const onFile = useContext(FileHandler);
@@ -782,7 +820,7 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
     case 'tool':
       return CHOICE_TOOLS.has(m.name)
         ? <ChoiceBlock m={m} onOpenTerminal={onOpenTerminal} />
-        : <ToolBlock m={m} />;
+        : SENT_FILE_TOOLS.has(m.name) ? <SentFilesBlock m={m} /> : <ToolBlock m={m} />;
     case 'compact':
       // The boundary the conversation restarted from, closed. The summary is
       // real content — it is what the agent is working from now — but it is

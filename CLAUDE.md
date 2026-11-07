@@ -49,7 +49,7 @@ as a sheep (the dog is a pane, never a sheep).
 - `currentSessionId` = active workspace id (a `ws-…` id).
 - `activeCell` = index of the shown pane.
 - `TerminalGrid` renders one pane.
-- Pane view state `split` = the Files tool.
+- Pane view state `split` was the per-pane Files tool; gone, migrated to `working` in `readPaneView`.
 
 ## Activity states
 
@@ -248,7 +248,6 @@ tools are tabs on a vertical rail (`ToolRail`, `TOOL_TABS`), restored via
 | `split-github` | PRs and issues (first on the rail) |
 | `working` | working tree |
 | `log` | commit log |
-| `split` | files |
 | `split-preview` | browser |
 | `split-terminals` | this pane's shells (last) |
 
@@ -270,7 +269,7 @@ Up to `MAX_SIDE_TERMINALS` = 4 shells per pane, in its directory.
 
 ### Global scratch terminals
 
-`TerminalsDialog` (a `FloatingPanel`) holds up to `MAX_HEADLESS` = 4 shells
+`ScratchTerminals` (the System panel's Terminals page) holds up to `MAX_HEADLESS` = 4 shells
 that belong to no pane, tiled by `TerminalTiles` (1 full, 2 side by side, 3 as
 one-over-two, 4 as 2×2). No draggable separators; don't bring back
 `react-resizable-panels`.
@@ -564,7 +563,38 @@ All via the signed-in `gh` on the server.
 - Client cache in `GithubPane.tsx` is per repo; every answer carries `repo`;
   `?repo=` wins.
 
-## Files
+## Agents | System — the two top tabs
+
+Two tabs at the top of the sidebar (`ViewTabs` in `Sidebar.tsx`), flipped by
+**⌘J** (in `APP_SHORTCUTS` too): **Agents** (the pens) and **System**, which
+fills the main area (`SystemDialog`, store `systemOpen` = System is shown).
+Not a floating panel: it used to be, and it kept vanishing on outside clicks.
+
+- Both stay mounted: panes under `display: none` while System shows; System
+  is mounted on first use, then kept. Back on Agents dispatches
+  `sheepit:terminal-tab-active` to refit.
+- While System shows, no pane is on screen: the store's `isOnScreen` calls pass
+  `null` for the workspace when `systemOpen`.
+- `connectSession` (sidebar, ⌘K, pasture) switches back to Agents. Every path
+  click (terminal, chat, agent tab, diff) goes through `sheepit:open-file`,
+  handled in `App.tsx`, and switches to System.
+- Pages (a dock): Files, Terminals, GitHub (`GithubPage`), Reps, Activity,
+  Disk. Files stays mounted under other pages; the rest mount while shown.
+  Panes have no Files tool. The workspace bar keeps search, new session, settings.
+- Looks: the dock bar is `--system-bar` (a step lighter than chrome, so System
+  is recognisable at a glance). Each column is a `.sys-panel` with a 10px
+  gutter (`.system-body`); GitHub's toolbar/list/detail get the same only
+  under `.system-view`, so the pane's GitHub tool stays flush.
+- Notes (ex-Knowledge) are a place in Files' left column: `.md` in `notesDir()`.
+- **Activity** (`ActivityMonitor`, `src/system.ts`): one `ps` + `vm_stat` per
+  2s poll, only while shown. Kill refuses pid ≤ 1 and the server itself.
+- **Disk** (`DiskPage`, `src/system.ts`): one `du -k -x` per scan under
+  `taskpolicy -b` (macOS background QoS) / `nice`+`ionice -c3`. Keeps folders
+  ≥ 1 MB only; a folder's files are read live. The finished scan is saved to
+  `disk-scan.json` and refreshed daily; the old one is shown until the new one
+  completes. Whole disk on macOS = `/System/Volumes/Data` (`du -x /` never
+  leaves the sealed system volume). Trash goes through Finder (undoable).
+  Treemap and kind colours follow disktree (github.com/tobi/disktree).
 
 - `FileView` is lazy. Use `prism-async-light` via the **deep ESM path**, never
   the `react-syntax-highlighter` barrel. CodeMirror lives in `CodeEditor.tsx`
@@ -660,7 +690,7 @@ Browser half is a native `WebContentsView` over the pane box
 
 ## reps (scheduled agent jobs)
 
-`RepsDialog` (top-bar button, a `FloatingPanel`) shows
+`RepsPage` (the System panel's Reps page) shows
 [reps](https://github.com/nicoloboschi/reps) jobs, their runs, each run's
 summary and output, plus Run now and Open worktree (a new pen in the job's
 worktree, or its folder when it has no repo).

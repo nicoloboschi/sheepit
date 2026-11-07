@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Repeat, Play, FolderInput, RefreshCw } from 'lucide-react';
+import { Play, FolderInput, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import FloatingPanel from './FloatingPanel';
 import * as sharedWs from '../sharedWs';
 import { relativeTime } from '../utils';
 
@@ -82,7 +81,7 @@ const btn: React.CSSProperties = {
  * what the scheduled agent changed. Editing a job is editing its JOB.md, and
  * that pen is the place to do it.
  */
-export default function RepsDialog({ onClose }: { onClose: () => void }) {
+export default function RepsPage() {
   const [jobs, setJobs] = useState<RepsJob[] | null>(null);
   const [installed, setInstalled] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -272,17 +271,5 @@ export default function RepsDialog({ onClose }: { onClose: () => void }) {
     </div>
   );
 
-  return (
-    <FloatingPanel
-      title="Reps"
-      icon={<Repeat size={13} style={{ color: 'var(--primary)' }} />}
-      onClose={onClose}
-      width={900}
-      height={560}
-      minWidth={620}
-      minHeight={320}
-    >
-      {body}
-    </FloatingPanel>
-  );
+  return body;
 }

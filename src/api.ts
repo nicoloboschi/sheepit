@@ -1344,6 +1344,25 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
   // Both go through `githubItem` — these are live API round-trips against a
   // rate limit, and every pane of a pen polls for itself.
 
+  /** A repository's labels, for the list's label filter. */
+  router.get('/git/:sessionId/gh/labels', async (req, res) => {
+    const cwd = getSessionCwd(req.params.sessionId);
+    const repoQ = typeof req.query.repo === 'string' ? req.query.repo : '';
+    const repo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoQ) ? repoQ : null;
+    if (!cwd) return res.json(null);
+    const slug = repo ?? (await repoSlug(cwd));
+    const labels = await ghCached(`labels ${slug ?? cwd}`, `${slug ?? cwd}#labels`, (v: unknown) => Array.isArray(v), async () => {
+      try {
+        const r = await ghExec(`gh label list${repo ? ` --repo '${repo}'` : ''} --limit 300 --json name,color,description`, { cwd, maxBuffer: 4 * 1024 * 1024 });
+        return JSON.parse(r.stdout || '[]');
+      } catch (e: any) {
+        logBuffer.log('WARNING', `gh label list failed in ${cwd}: ${firstLine(e?.stderr) || e?.message}`);
+        return null;
+      }
+    });
+    res.json(labels);
+  });
+
   router.get('/git/:sessionId/gh/list', async (req, res) => {
     try {
       const cwd = getSessionCwd(req.params.sessionId);
@@ -1371,6 +1390,11 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       // query with a bigger limit — it pages internally and hands back one
       // list. Refetching the rows already on screen is the price of not
       // maintaining a cursor for a list whose first page is what people read.
+      // Labels, ANDed like github.com's filter. They reach a shell: quoted, and
+      // anything with a quote or a control character is dropped, not escaped.
+      const labels = (typeof req.query.labels === 'string' ? req.query.labels.split(',') : [])
+        .map(l => l.trim()).filter(l => l && l.length <= 100 && !/['\x00-\x1f]/.test(l)).slice(0, 10);
+      const labelArg = labels.map(l => ` --label '${l}'`).join('');
       const limitQ = Number(req.query.limit ?? 30);
       const limit = Number.isSafeInteger(limitQ) ? Math.min(300, Math.max(30, limitQ)) : 30;
 
@@ -1403,7 +1427,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         return res.json(found);
       }
 
-      const key = `${scope}#list#${kind}#${state}#${limit}`;
+      const key = `${scope}#list#${kind}#${state}#${limit}#${labels.join(',')}`;
       const listWork = async () => {
         // **`null` means the call failed; `[]` means there is nothing.**
         //
@@ -1440,10 +1464,11 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         // empty answer, and must not read as a failure.
         // The totals start with the lists, not after them: they do not depend
         // on the rows, and waiting cost a whole extra round trip (~0.5s).
-        const totalsPromise = slug ? ghTotals(slug, state, cwd) : Promise.resolve({ prTotal: null, issueTotal: null });
+        // With labels the repository-wide totals would be wrong, so none.
+        const totalsPromise = slug && !labels.length ? ghTotals(slug, state, cwd) : Promise.resolve({ prTotal: null, issueTotal: null });
         const [prRaw, issueRaw] = await Promise.all([
           wantPrs
-            ? run(`gh pr list${repoArg} --state ${state} --limit ${limit} --json number,title,author,state,isDraft,updatedAt,url`)
+            ? run(`gh pr list${repoArg}${labelArg} --state ${state} --limit ${limit} --json number,title,author,state,isDraft,updatedAt,url,labels`)
             : Promise.resolve('[]'),
           wantIssues
             // `stateReason` is on the issue list and NOT on the pull request
@@ -1451,7 +1476,7 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
             // exit non-zero and null the whole PR half. It is what tells a
             // resolved issue from an abandoned one, which is a colour here and
             // not a detail: closed-as-completed is done, not broken.
-            ? run(`gh issue list${repoArg} --state ${state} --limit ${limit} --json number,title,author,state,stateReason,updatedAt,url`)
+            ? run(`gh issue list${repoArg}${labelArg} --state ${state} --limit ${limit} --json number,title,author,state,stateReason,updatedAt,url,labels`)
             : Promise.resolve('[]'),
         ]);
         const parse = (raw: string | null, k: 'pr' | 'issue') => {
@@ -1459,8 +1484,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
           try {
             const rows = JSON.parse(raw || '[]');
             if (!Array.isArray(rows)) return null;
-            return rows.map(({ author, ...r }: any) => ({
+            return rows.map(({ author, labels: ls, ...r }: any) => ({
               ...r, kind: k, author: author?.login ?? '',
+              labels: Array.isArray(ls) ? ls.map((l: any) => ({ name: l.name, color: l.color })) : [],
             }));
           } catch { return null; }
         };
@@ -1480,7 +1506,8 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
         if (slug) void warmItems(slug, cwd, result);
         return result;
       };
-      watchedLists.set(key, { seen: Date.now(), refresh: () => refreshInBackground(`list ${scope} ${kind}/${state}/${limit}`, key, listWork) });
+      // Only the plain lists are kept warm; a label filter is a passing look.
+      if (!labels.length) watchedLists.set(key, { seen: Date.now(), refresh: () => refreshInBackground(`list ${scope} ${kind}/${state}/${limit}`, key, listWork) });
       const value = await ghCached(`list ${scope} ${kind}/${state}/${limit}`, key, isGoodGh, listWork);
       // A failure is never cached. Holding one for 30s means the refresh button
       // returns the same failure it was pressed to clear, which reads as the
@@ -2104,7 +2131,14 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     const { sessionId } = req.params;
     const fallback = getSessionCwd(sessionId);
     try {
-      const cwd = await bridge.getForegroundCwd(sessionId);
+      // A file click waits on this. The foreground lookup forks pgrep + lsof,
+      // which scan every process: seconds on a loaded machine (5s seen with
+      // ~1200 processes). The shell's OSC 7 folder is the same answer nearly
+      // always, so don't wait long for the better one.
+      const cwd = await Promise.race([
+        bridge.getForegroundCwd(sessionId),
+        new Promise<null>(resolve => setTimeout(resolve, 300, null)),
+      ]);
       res.json({ cwd: cwd || fallback });
     } catch {
       res.json({ cwd: fallback });
@@ -2491,6 +2525,20 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
     child.on('spawn', () => { if (!settled) { settled = true; child.unref(); res.json({ ok: true }); } });
   });
 
+  // Put the file itself on the host's clipboard, as Finder's ⌘C does, so it
+  // pastes as a file into Finder, Slack, Mail… The path goes in argv, never
+  // into the script text. macOS only: other systems have no one way to do it.
+  router.post('/fs/copy', async (req, res) => {
+    const filePath = expandHome(req.query.path as string | undefined ?? '');
+    if (!filePath) return res.status(400).json({ error: 'Missing path' });
+    if (!existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
+    if (process.platform !== 'darwin') return res.status(501).json({ error: 'Only on macOS' });
+    try {
+      await execFileAsync('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', nodePath.resolve(filePath)], { timeout: 5000 });
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
   // NOTE: the old `GET /fs/watch` SSE endpoint lived here. It was replaced by
   // `watch_file` / `unwatch_file` messages on the shared WebSocket (see
   // server.ts): one never-ending SSE stream per open file exhausted the
@@ -2638,7 +2686,9 @@ export function createApiRouter(bridge: DirectBridge, logBuffer: LogBuffer, ai: 
       const ext = nodePath.extname(filePath).toLowerCase();
       const imageExts  = new Set(['.png','.jpg','.jpeg','.gif','.webp','.svg','.ico','.bmp']);
       const pdfExts    = new Set(['.pdf']);
-      const videoExts  = new Set(['.mp4','.webm','.ogv','.mov','.m4v']);
+      const videoExts  = new Set(['.mp4','.webm','.ogv','.mov','.m4v',
+        // Sound, same reasons: the browser's <audio> is the player.
+        '.mp3','.wav','.m4a','.aac','.ogg','.oga','.opus','.flac']);
       // Video goes out before the size cap, and is the one thing here exempt
       // from it: the cap protects the `readFileSync` below, which pulls a whole
       // file into memory, and a recording that is worth watching is megabytes

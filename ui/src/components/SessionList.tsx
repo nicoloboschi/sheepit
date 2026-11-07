@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { SquarePlus } from 'lucide-react';
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { SortableContext } from '@dnd-kit/sortable';
+import { noShift } from '../dropHint';
 import { useDroppable, useDndMonitor } from '@dnd-kit/core';
 import useStore, { pensInField, type Workspace } from '../store';
 import SessionItem from './SessionItem';
@@ -115,7 +113,7 @@ export default function SessionList({ onConnect, send, id }: SessionListProps) {
 
   return (
     <ScrollArea id={id} className="session-list flex-1" style={{ paddingTop: 4 }}>
-      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={sortableIds} strategy={noShift}>
         {visible.map(ws => (
           <SessionItem
             key={ws.id}
