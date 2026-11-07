@@ -129,7 +129,7 @@ export default function GithubPage() {
   return (
       <div className="gh-page" style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
         <div
-          className="sys-panel"
+          className="sys-panel sys-side"
           style={{ width: 180, flexShrink: 0, padding: 8, overflowY: 'auto', gap: 4 }}
         >
           {repos.map(row)}

@@ -43,7 +43,10 @@ export interface PerfSnapshot {
    *  that was behind something the whole time reports 0 here, which is the
    *  difference between "nothing was drawn" and "the app was stalled". */
   visibleSecs: number;
-  shell: 'electron' | 'browser';
+  shell: 'electron' | 'browser' | 'android';
+  /** Startup milestones, ms since the page started loading (first time each
+   *  was reached). How long until you can read your pane, phase by phase. */
+  boot: Record<string, number>;
   fps: number;
   /** Frames over SLOW_FRAME_MS, and the worst one. */
   slowFrames: number;
@@ -201,6 +204,16 @@ function bump(map: Map<string, Stat>, name: string, ms: number): void {
  * Call the returned function exactly once — a span left open blames every
  * following frame on itself, which is loud enough to notice.
  */
+/** Startup milestones: `perf.milestone('ws-open')` keeps the first time it
+ *  is reached, as ms since navigation start, and logs it (`[boot]` in the
+ *  console / adb logcat) so a slow start can be read off the device. */
+const boot: Record<string, number> = {};
+export function milestone(name: string): void {
+  if (name in boot) return;
+  boot[name] = Math.round(performance.now());
+  console.info(`[boot] ${name} ${boot[name]}ms`);
+}
+
 export function span(name: string): () => void {
   const t0 = performance.now();
   const outer = openSpan;
@@ -345,7 +358,8 @@ function snapshot(): PerfSnapshot {
     page: PAGE_ID,
     secs: +secs.toFixed(1),
     visibleSecs: +visibleSecs.toFixed(1),
-    shell: isElectron() ? 'electron' : 'browser',
+    shell: isElectron() ? 'electron' : (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.() ? 'android' : 'browser',
+    boot: { ...boot },
     // A rate over the time frames could actually have been produced. Dividing
     // by wall-clock instead reported a window that spent nine of ten seconds
     // behind another app as running at 7fps.
@@ -553,7 +567,7 @@ export function hotspots(limit = 12): { name: string; n: number; totalMs: number
     .sort((a, b) => b.totalMs - a.totalMs).slice(0, limit);
 }
 
-export const perf = { span, count, commit, live, hotspots, startPerf,
+export const perf = { span, count, commit, live, hotspots, startPerf, milestone,
                       takeRenders, attributeRenders };
 
 if (typeof window !== 'undefined') {

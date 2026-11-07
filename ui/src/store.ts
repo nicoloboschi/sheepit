@@ -1007,6 +1007,7 @@ const useStore = create<StoreState>((set, get) => ({
   },
 
   renderSessions(sessions: Session[]) {
+    perf.milestone('sessions');
     // Timed: this runs every two seconds against every pane, and it is the one
     // place that reconciles the whole sidebar, assigns fields, dedupes pens and
     // writes preferences. If the app stutters on a tick rather than on input,

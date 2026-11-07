@@ -226,8 +226,13 @@ A pen holds any number of sheep and shows one. No grid, layout, separators or
 zen.
 
 - **Nothing above the pane.** The sidebar is the switcher; ⌘↑/↓ walks sheep.
-- **Every sheep in the shown pen stays mounted**, hidden ones under
-  `display: none`. At most a dozen pens are mounted.
+- **A sheep mounts the first time it is shown, then stays mounted**, hidden
+  under `display: none` (`seen` in `TerminalGrid`). Mounting the whole pen up
+  front replayed every sheep's ring (~250 KB each) before the shown one: 5s to
+  first text on Android with a 12-sheep pen. At most a dozen pens are mounted.
+- On (re)connect `sharedWs` subscribes the shown pane first. Coming back on
+  screen reconnects at once if the socket is down (skipping the backoff), and
+  starts a fresh socket after a minute away (a phone's socket dies silently).
 - `isOnScreen` in the store is the one test for "on screen";
   `updateActivity`, `sessionAttention`, `markUnseen` go through it.
 - Becoming the shown pane is a resize (refit + tell the PTY), keyed on
@@ -447,7 +452,11 @@ curl -s 'localhost:4445/api/perf?spans=1&shell=electron&minutes=10' | python3 -m
 curl -X DELETE localhost:4445/api/perf     # before measuring a fix
 ```
 
-- Filters: `?minutes=`, `?shell=electron|browser`, `?page=`. **Always narrow
+- Startup: `perf.milestone(name)` (script, prefs, ws-open, sessions,
+  pane-subscribe, pane-bytes, pane-text, chat-text), ms since load, sent as
+  `boot` in every snapshot and logged as `[boot]`. Android reports
+  `shell: 'android'`.
+- Filters: `?minutes=`, `?shell=electron|browser|android`, `?page=`. **Always narrow
   to one page.** Check `holding` (nodes, pens, sheep) before comparing.
 - Dev numbers are inflated (dev React + StrictMode double render). Quote
   shapes, not dev milliseconds. `commit:*` works in production builds too.
@@ -707,6 +716,21 @@ worktree, or its folder when it has no repo).
 - Run now spawns `reps run` detached; reps' own lock refuses a second run.
 
 ## Android app (`ui/android`, Capacitor)
+
+- **Self-update**: `UpdaterPlugin.java` (local plugin, registered in
+  `MainActivity`) downloads `/download/sheepit.apk?k=…` and opens Android's
+  installer. `AndroidInstallBanner` starts it by itself once per new version
+  (on launch, and on coming back on screen at most every 10 min). Android
+  always shows its Install sheet; the first time it asks to allow installs.
+- `release.sh` builds the APK **locally** (the signing key is only here) after
+  pushing the tag, and attaches it to the GitHub Release. The local server
+  serves it at once, which is what phones update from.
+- Mic in the native chat: `voice/speech.ts` — the phone's recognizer in the
+  app (`@capacitor-community/speech-recognition`; the WebView has no Web
+  Speech), Web Speech in a phone browser, local Whisper on desktop.
+- Phone UI: header has the Agents/System toggle and Settings (in the gear
+  menu). System's side columns become sideways strips; GitHub's open item
+  takes the screen; Settings' section list becomes tabs.
 
 - Update banner: `GET /download/version` → `{available, version}`; compare
   full version incl. commit (`1.15.0+<sha>`). Android only, only when

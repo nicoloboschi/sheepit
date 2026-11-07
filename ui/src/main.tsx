@@ -7,7 +7,7 @@ import ConnectScreen from './components/ConnectScreen';
 import { initializePreferences } from './preferences';
 import { applyTheme, readTheme } from './theme';
 import { initNative } from './native';
-import { startPerf } from './perf';
+import { startPerf, perf } from './perf';
 import { startClickSounds, applyCursor } from './clickSound';
 
 // The connection URL is the only browser-local bootstrap setting. Once it is
@@ -136,6 +136,7 @@ async function retryUntilPreferences(): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
+  perf.milestone('script');
   // Status bar / keyboard / notification permission in the Android app.
   // No-ops in a browser. Not awaited: nothing below depends on it, and the
   // notification permission prompt shouldn't hold up first paint.
@@ -153,6 +154,7 @@ async function bootstrap(): Promise<void> {
     // was the commonest way to end up looking at a black rectangle.
     await retryUntilPreferences();
   }
+  perf.milestone('prefs');
   applyTheme(readTheme()); applyCursor();
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

@@ -30,7 +30,7 @@ const execFileAsync = promisify(execFile);
 // What ui/src/perf.ts posts. An hour at one snapshot per 10s, in memory.
 interface PerfStat { n: number; totalMs: number; maxMs: number }
 interface PerfSnapshot {
-  at: number; page?: string; secs: number; visibleSecs?: number; shell: string; fps: number;
+  at: number; page?: string; secs: number; visibleSecs?: number; shell: string; fps: number; boot?: Record<string, number>;
   slowFrames: number; worstFrameMs: number; worstFrameBlame: string;
   longTasks: number; longTaskMs: number; worstLongTaskMs: number;
   spans: Record<string, PerfStat>; counts: Record<string, number>;
@@ -81,7 +81,7 @@ export function foldPerf(snaps: PerfSnapshot[], shell: string, page = '') {
     const last = mine[mine.length - 1]!;
     return { page: id, shell: last.shell, windows: mine.length, domNodes: last.domNodes,
              terminals: last.terminals, browserPanes: last.browserPanes,
-             pens: last.pens, sheep: last.sheep, cells: last.cells };
+             pens: last.pens, sheep: last.sheep, cells: last.cells, boot: last.boot };
   });
   return {
     windows: use.length,

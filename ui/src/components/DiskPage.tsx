@@ -224,7 +224,7 @@ export default function DiskPage() {
             </div>
           )}
 
-          <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <div className="disk-split" style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             {/* The treemap: every tile sized by what it costs on disk. */}
             <div ref={boxRef} style={{ flex: 3, minWidth: 0, position: 'relative', margin: 8 }}>
               {tiles.map((t, i) => {
@@ -257,7 +257,7 @@ export default function DiskPage() {
             </div>
 
             {/* The same entries as a list, biggest first. */}
-            <div style={{ flex: 2, minWidth: 220, maxWidth: 420, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div className="disk-list" style={{ flex: 2, minWidth: 220, maxWidth: 420, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               {sel && (
                 <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
                   <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sel.path}>{sel.name}</div>

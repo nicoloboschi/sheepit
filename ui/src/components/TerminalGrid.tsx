@@ -45,6 +45,12 @@ function TerminalGridInner({ sessionId: workspaceId }: TerminalGridProps) {
   const cells: string[] = ws?.cells ?? [];
   const activeCell: number = ws?.activeCell ?? 0;
   const shown = cells[activeCell] ?? cells[0];
+  /** Sheep mounted so far: each on its first showing, then kept. Mounting the
+   *  whole pen up front made a 12-sheep pen replay 12 rings (~250 KB each)
+   *  before the one on screen, in the order the pen lists them — measured on
+   *  Android as 5s until the shown pane had any text. */
+  const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set(shown ? [shown] : []));
+  if (shown && !seen.has(shown)) setSeen(new Set([...seen, shown]));
 
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
   useEffect(() => {
@@ -89,14 +95,15 @@ function TerminalGridInner({ sessionId: workspaceId }: TerminalGridProps) {
       }}
     >
       {!isMobile && <PenFence seed={fenceSeed} active className="workspace-fence" rails={false} />}
-      {/* Every sheep in this pen stays mounted; all but one are hidden.
+      {/* A sheep is mounted the first time it is shown, then stays mounted,
+          hidden while another is shown.
           Unmounting the others would tear down their xterm on every tab
           switch and rebuild it from the daemon's ring — a visible stall, and
           the scroll position gone. This is the same trade `PaneTerminal`
           makes between pens, and the cost is bounded the same way: only the
           pen you are standing in mounts its sheep, and PaneTerminal keeps at
           most a dozen pens alive. */}
-      {cells.map((sid, i) => (
+      {cells.map((sid, i) => seen.has(sid) && (
         <div
           key={sid}
           style={{

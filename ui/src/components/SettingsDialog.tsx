@@ -40,9 +40,9 @@ export default function SettingsDialog({ onClose, initialTab }: SettingsDialogPr
         </DialogTitle>
       </DialogHeader>
 
-      <div className="flex flex-1 min-h-0">
+      <div className="settings-body flex flex-1 min-h-0">
         {/* Vertical tab bar */}
-        <nav className="flex flex-col shrink-0 border-r py-2" style={{ borderColor: 'var(--border)', width: 180 }}>
+        <nav className="settings-nav flex flex-col shrink-0 border-r py-2" style={{ borderColor: 'var(--border)', width: 180 }}>
           {TABS.map(t => {
             const Icon = t.icon;
             const active = tab === t.id;

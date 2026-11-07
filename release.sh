@@ -54,6 +54,28 @@ echo "  new version: $new_version"
 echo "→ Pushing commit and tag…"
 git push origin main --follow-tags
 
+# --- Android app ----------------------------------------------------------
+# Built here, not in CI: the signing key (~/.sheepit/android-release.jks) lives
+# on this machine and nowhere else, and every APK must carry the same key or
+# Android refuses to install it over the old one. The local server serves this
+# build at /download, which is what the app's self-update reads — so phones
+# pick the release up as soon as this finishes. Also attached to the GitHub
+# Release. A machine with no Android SDK skips this with a warning.
+apk="ui/android/app/build/outputs/apk/release/app-release.apk"
+echo "→ Building the Android app…"
+if npm run android -- --build; then
+  echo "→ Attaching the APK to the GitHub Release…"
+  # Create the release if CI has not yet (it updates an existing one).
+  gh release view "$new_version" >/dev/null 2>&1 \
+    || gh release create "$new_version" --verify-tag --generate-notes --title "$new_version" >/dev/null
+  named="$(mktemp -d)/sheepit-${new_version#v}.apk"
+  cp "$apk" "$named"
+  gh release upload "$new_version" "$named" --clobber \
+    || echo "  ! upload failed — the APK is still served locally at /download"
+else
+  echo "  ! Android build failed or no SDK — skipped. npm and the desktop app are unaffected."
+fi
+
 cat <<EOF
 
 ✓ Pushed $new_version.

@@ -26,7 +26,7 @@
  */
 import { rawFileUrl } from '../serverUrl';
 import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
-import { Square, ArrowUp, Paperclip, AlertTriangle, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
+import { Square, ArrowUp, Paperclip, Mic, AlertTriangle, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as sharedWs from '../sharedWs';
@@ -35,6 +35,7 @@ import { matchFilePaths } from '../utils';
 import SheepIcon from './SheepIcon';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { perf } from '../perf';
+import { startSpeech, speechEngine, type SpeechHandle } from '../voice/speech';
 
 /* ── How this device reads a pane ─────────────────────────────────────────
  * One setting for the whole app: having chosen the conversation view, every
@@ -930,6 +931,49 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
    * PATCH per keystroke. `isPreferenceKey` excludes the prefix for exactly
    * that reason.
    */
+  /** Dictation into the composer. Words land in the box as you speak (on a
+   *  phone; desktop's Whisper fills it on stop). Nothing is sent: Enter is
+   *  yours, like the pane bar's mic. */
+  const [mic, setMic] = useState<'idle' | 'listening' | 'transcribing'>('idle');
+  const [micError, setMicError] = useState<string | null>(null);
+  const micRef = useRef<SpeechHandle | null>(null);
+  const micBase = useRef('');
+  const joinDraft = (base: string, said: string) => (said ? (base && !/\s$/.test(base) ? `${base} ${said}` : base + said) : base);
+  const stopMic = useCallback(async () => {
+    const h = micRef.current;
+    if (!h) return;
+    micRef.current = null;
+    try {
+      const text = await h.stop();
+      setDraft(joinDraft(micBase.current, text));
+    } catch (e) {
+      setMicError(e instanceof Error ? e.message : 'Dictation failed');
+    } finally {
+      setMic('idle');
+      inputRef.current?.focus();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const startMic = async () => {
+    setMicError(null);
+    micBase.current = draft;
+    setMic('listening');
+    try {
+      micRef.current = await startSpeech({
+        onPartial: t => setDraft(joinDraft(micBase.current, t)),
+        // A phone stops by itself after a pause: take what it heard.
+        onEnd: () => { void stopMic(); },
+        onTranscribing: () => setMic('transcribing'),
+      });
+    } catch (e) {
+      micRef.current = null;
+      setMic('idle');
+      const name = e instanceof Error ? e.name : '';
+      setMicError(name === 'NotAllowedError' ? 'Microphone permission denied' : e instanceof Error ? e.message : 'Could not open the microphone');
+    }
+  };
+  useEffect(() => () => micRef.current?.cancel(), []);
+  useEffect(() => { if (!micError) return; const t = setTimeout(() => setMicError(null), 5000); return () => clearTimeout(t); }, [micError]);
+
   const draftKey = `sheepit:draft:${sessionId}`;
   const [draft, setDraft] = useState(() => {
     try { return localStorage.getItem(draftKey) ?? ''; } catch { return ''; }
@@ -965,7 +1009,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
       const end = perf.span('native:event');
       setState(prev => {
         switch (ev.type) {
-          case 'init': return ev.state;
+          case 'init': perf.milestone('chat-text'); return ev.state;
           case 'message': {
             if (!prev) return prev;
             const i = prev.messages.findIndex(m => m.id === ev.message.id);
@@ -1972,6 +2016,17 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
               inputRef.current?.focus();
             }}
           />
+          <button
+            className={`nat-attach-btn nat-mic${mic !== 'idle' ? ' is-on' : ''}`}
+            title={mic === 'listening' ? 'Stop dictating' : mic === 'transcribing' ? 'Transcribing…'
+              : speechEngine() === 'whisper' ? 'Dictate (local Whisper)' : 'Dictate'}
+            aria-label="Dictate"
+            disabled={mic === 'transcribing' || blocked}
+            onClick={() => (mic === 'listening' ? void stopMic() : void startMic())}
+          >
+            {mic === 'transcribing' ? <span className="nat-tool-spin" /> : <Mic size={15} />}
+          </button>
+          {micError && <span className="nat-mic-error" role="alert">{micError}</span>}
           {busy ? (
             /**
              * **Stop says Stop.** It was the send button's 34px square wearing a

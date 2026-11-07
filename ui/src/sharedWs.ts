@@ -49,6 +49,32 @@ export function init(): void {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   destroyed = false;
   connect();
+  if (!visibilityHooked) { visibilityHooked = true; document.addEventListener('visibilitychange', onVisibility); }
+}
+
+/**
+ * Coming back to the app (a phone switching back, a tab un-hidden) must not
+ * wait out the reconnect backoff: in the background every attempt fails, so
+ * the delay has doubled toward 30s by the time you look again. And a socket
+ * that still says OPEN after a long absence is often dead (a phone that
+ * changed network, a suspended radio) and would never close by itself.
+ */
+let visibilityHooked = false;
+let hiddenAt = 0;
+const STALE_AFTER_MS = 60_000;
+function onVisibility(): void {
+  if (destroyed) return;
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  const away = hiddenAt ? Date.now() - hiddenAt : 0;
+  hiddenAt = 0;
+  const open = ws?.readyState === WebSocket.OPEN;
+  const connecting = ws?.readyState === WebSocket.CONNECTING;
+  if (open && away < STALE_AFTER_MS) return;
+  if (connecting && away < STALE_AFTER_MS) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectDelay = 1000;
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  connect();
 }
 
 /** Tear down the shared connection. Call on App unmount. */
@@ -153,14 +179,21 @@ function connect(): void {
 
   socket.onopen = () => {
     if (destroyed) return;
+    perf.milestone('ws-open');
     reconnectDelay = 1000;
     useStore.getState().setWsStatus('connected');
 
     // Request session list
     send({ type: 'list_sessions' });
 
-    // Re-subscribe all active sessions (reconnect resilience)
-    for (const sessionId of activeSubscriptions) {
+    // Re-subscribe all active sessions (reconnect resilience). The pane on
+    // screen first: each subscription answers with that pane's whole ring, and
+    // the one you are looking at must not queue behind the hidden ones.
+    const { currentSessionId, workspaces } = useStore.getState();
+    const cur = currentSessionId ? workspaces[currentSessionId] : undefined;
+    const shownPane = cur?.cells[cur.activeCell];
+    const order = [...activeSubscriptions].sort((a, b) => Number(b === shownPane) - Number(a === shownPane));
+    for (const sessionId of order) {
       send({ type: 'subscribe', session_id: sessionId });
     }
 

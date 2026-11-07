@@ -28,6 +28,7 @@ import PaneTerminal, { NOTES_SESSION_ID } from './components/PaneTerminal';
 // Deferred: the System panel carries the file viewer and its editors, which
 // most sessions never open.
 const SystemDialog = lazy(() => import('./components/SystemDialog'));
+const SettingsDialog = lazy(() => import('./components/SettingsDialog'));
 import MobileKeybar from './components/MobileKeybar';
 import AndroidInstallBanner from './components/AndroidInstallBanner';
 import ConfirmDialog from './components/ConfirmDialog';
@@ -44,7 +45,7 @@ import {
 } from './components/ui/dropdown-menu';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
-  Home, Zap, TerminalSquare, ImagePlus, FolderOpen, Search, Check,
+  Home, Zap, TerminalSquare, ImagePlus, Search, Check, Bot, LayoutGrid,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
@@ -831,6 +832,8 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const selectedFieldId  = useStore(s => s.selectedFieldId);
   const workspaceIdx     = currentSessionId ? workspaceOrder.indexOf(currentSessionId) : -1;
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
+  const systemOpen       = useStore(s => s.systemOpen);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     swipeTouchRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
@@ -964,6 +967,18 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
           />
 
+          {/* Agents ⇄ System, the desktop's two top tabs, as one button: the
+              phone's header has room for an icon, not a tab bar. */}
+          <Button
+            variant="ghost" size="icon"
+            className={`h-8 w-8 shrink-0 ${systemOpen ? 'text-primary' : 'text-muted-foreground'} hover:text-foreground`}
+            title={systemOpen ? 'Back to the agents' : 'System — files, terminals, GitHub, reps, activity, disk'}
+            aria-label={systemOpen ? 'Agents' : 'System'}
+            onClick={() => useStore.getState().setSystemOpen(!systemOpen)}
+          >
+            {systemOpen ? <Bot size={16} /> : <LayoutGrid size={15} />}
+          </Button>
+
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
@@ -1059,9 +1074,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               <DropdownMenuItem onClick={() => useStore.getState().setSearchOpen(true)}>
                 <Search size={14} /> Search the flock
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => useStore.getState().setSystemOpen(!useStore.getState().systemOpen)}>
-                <FolderOpen size={14} /> {useStore.getState().systemOpen ? 'Agents' : 'System'}
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>
                 <SquarePlus size={14} /> New session
@@ -1079,6 +1091,10 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
                 <ScrollText size={14} /> Server Logs
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                <Settings size={14} /> Settings
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1090,6 +1106,7 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             Pens sheet. */}
         <FlockStrip slim onConnect={onConnect} />
       </header>
+      {settingsOpen && <Suspense fallback={null}><SettingsDialog onClose={() => setSettingsOpen(false)} /></Suspense>}
 
       {uploadStatus && (
         <div className="md:hidden px-3 py-1.5 text-xs text-center border-b"

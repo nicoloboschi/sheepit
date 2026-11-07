@@ -10,6 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.6.8",
     "@capacitor/haptics": "^7.0.5",

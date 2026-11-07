@@ -20,3 +20,4 @@ ui/vite.config.*.timestamp-*
 # Python bytecode cache — scripts/perf.py leaves this behind.
 __pycache__/
 *.pyc
+pasted-*.png

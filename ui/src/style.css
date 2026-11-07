@@ -4180,6 +4180,16 @@
 }
 .nat-attach-btn:hover { color: var(--foreground); }
 .nat-attach-btn:disabled { opacity: 0.4; cursor: default; }
+/* The mic: terracotta while it listens (it is recording you), slow pulse. Not bleating red: that means "wants your input" only. */
+.nat-mic.is-on { color: var(--destructive); }
+.nat-mic.is-on svg { animation: nat-mic-pulse 1.2s ease-in-out infinite; }
+@keyframes nat-mic-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .nat-mic.is-on svg { animation: none; } }
+.nat-mic-error { font-size: 11px; color: var(--destructive); white-space: nowrap; align-self: center; }
+@media (max-width: 767px) {
+  /* A thumb, not a cursor: the composer's buttons get a real target. */
+  .nat-attach-btn { width: 36px; height: 36px; }
+}
 .nat-prompt-mark {
   flex-shrink: 0;
   color: var(--muted-foreground);
@@ -4521,3 +4531,38 @@ html :disabled { cursor: not-allowed; }
   background: var(--card) !important; border: 1px solid var(--panel-line) !important; border-radius: 10px;
 }
 .system-view .gh-list { overflow-x: hidden; }
+
+/* ── System view on a phone ────────────────────────────────────────────────
+   Side columns (places, repositories) become a strip you scroll sideways
+   above the content; an opened GitHub item takes the screen (its × goes back
+   to the list); Disk stacks its treemap over its list. */
+@media (max-width: 767px) {
+  .system-dock { justify-content: flex-start; overflow-x: auto; gap: 2px; padding: 6px 6px 4px; scrollbar-width: none; }
+  .system-dock-item { min-width: 54px; }
+  .system-dock-icon { width: 34px; height: 34px; border-radius: 9px; }
+  .system-body { flex-direction: column; gap: 6px; padding: 6px; }
+  .system-view .gh-page { flex-direction: column; gap: 6px; }
+  .sys-side {
+    width: auto !important; flex-direction: row !important; align-items: center;
+    overflow-x: auto !important; overflow-y: hidden !important; flex-shrink: 0; padding: 4px 6px !important;
+    scrollbar-width: none;
+  }
+  .sys-side > * { flex-shrink: 0; width: auto !important; }
+  .sys-side input { width: 140px !important; margin-top: 0 !important; }
+  .system-view .gh-body:has(.gh-detail) .gh-list { display: none; }
+  .system-view .gh-list, .system-view .gh-detail { border-radius: 8px; }
+  .disk-split { flex-direction: column; }
+  .disk-list { max-width: none !important; min-width: 0 !important; border-left: none !important; border-top: 1px solid var(--border); flex: 1 !important; }
+}
+
+/* Settings on a phone: the section list becomes a row of tabs on top, so the
+   page under it gets the full width. */
+@media (max-width: 767px) {
+  .settings-body { flex-direction: column; }
+  .settings-nav {
+    flex-direction: row !important; width: auto !important; overflow-x: auto;
+    border-right: none !important; border-bottom: 1px solid var(--border); padding: 4px !important;
+    scrollbar-width: none;
+  }
+  .settings-nav > button { flex-shrink: 0; white-space: nowrap; padding: 6px 10px !important; border-radius: 6px; }
+}

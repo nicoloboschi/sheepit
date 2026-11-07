@@ -30,8 +30,29 @@
 import { useEffect, useState } from 'react';
 import { X, Smartphone, ArrowDownToLine } from 'lucide-react';
 import { isNativeApp } from '../platform';
+import { keyedUrl } from '../serverUrl';
 
 const DISMISSED_KEY = 'sheepit:android-banner-dismissed';
+/** The version we last started installing by ourselves. Automatic once per
+ *  version: if you back out of Android's install sheet, the banner stays for
+ *  a manual tap, and the app does not nag on every launch. */
+const AUTO_KEY = 'sheepit:android-auto-update';
+
+/** Download the served APK and open Android's installer (UpdaterPlugin.java).
+ *  Android always shows its own Install sheet; the first time it also asks to
+ *  allow sheepit to install apps. */
+async function installUpdate(): Promise<string | null> {
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    const Updater = registerPlugin<{ install(o: { url: string }): Promise<{ started?: boolean; needsPermission?: boolean }> }>('Updater');
+    const r = await Updater.install({ url: keyedUrl('/download/sheepit.apk') });
+    return r.needsPermission ? 'Allow sheepit to install apps, then tap Update again' : null;
+  } catch (e) {
+    // An older app without the plugin: the plain download link still works
+    // in the phone's browser.
+    return e instanceof Error ? e.message : 'Update failed';
+  }
+}
 
 /** The APK's own versionName, or null outside the app. */
 async function installedVersion(): Promise<string | null> {
@@ -48,12 +69,21 @@ async function installedVersion(): Promise<string | null> {
 
 export default function AndroidInstallBanner(): React.ReactElement | null {
   const [state, setState] = useState<{ kind: 'install' | 'update'; version: string } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const update = async () => {
+    setBusy(true); setNote('Downloading the update…');
+    const err = await installUpdate();
+    setBusy(false); setNote(err);
+  };
 
   useEffect(() => {
     if (!isNativeApp() && !/Android/i.test(navigator.userAgent)) return;
     let gone = false;
+    let lastCheck = 0;
 
-    void (async () => {
+    const check = () => void (async () => {
+      lastCheck = Date.now();
       let served: { available?: boolean; version?: string | null };
       try {
         const r = await fetch('/download/version');
@@ -75,23 +105,41 @@ export default function AndroidInstallBanner(): React.ReactElement | null {
         if (localStorage.getItem(DISMISSED_KEY) === served.version) return;
       } catch { /* private window — show it */ }
       setState({ kind, version: served.version });
+      // In the app, an update installs itself: download, then Android's sheet.
+      if (kind === 'update') {
+        let tried = false;
+        try { tried = localStorage.getItem(AUTO_KEY) === served.version; localStorage.setItem(AUTO_KEY, served.version); } catch { /* */ }
+        if (!tried) void (async () => { setNote('Downloading the update…'); setNote(await installUpdate()); })();
+      }
     })();
+    check();
+    // The app is rarely relaunched (it resumes), so look again when it comes
+    // back on screen — at most every ten minutes.
+    const onVisible = () => { if (document.visibilityState === 'visible' && Date.now() - lastCheck > 600_000) check(); };
+    document.addEventListener('visibilitychange', onVisible);
 
-    return () => { gone = true; };
+    return () => { gone = true; document.removeEventListener('visibilitychange', onVisible); };
   }, []);
 
   if (!state) return null;
-  const update = state.kind === 'update';
+  const isUpdate = state.kind === 'update';
 
   return (
     <div className="apk-banner">
-      {update ? <ArrowDownToLine size={15} /> : <Smartphone size={15} />}
+      {isUpdate ? <ArrowDownToLine size={15} /> : <Smartphone size={15} />}
       <div className="apk-banner-text">
-        <a className="apk-banner-get" href="/download/sheepit.apk" download>
-          {update ? 'Update the sheepit app' : 'Install the sheepit app'}
-        </a>
+        {isUpdate && isNativeApp() ? (
+          <button className="apk-banner-get" disabled={busy} onClick={() => void update()}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
+            Update the sheepit app
+          </button>
+        ) : (
+          <a className="apk-banner-get" href="/download/sheepit.apk" download>
+            {isUpdate ? 'Update the sheepit app' : 'Install the sheepit app'}
+          </a>
+        )}
         <span className="apk-banner-more">
-          {update
+          {note ? note : isUpdate
             // Said plainly, because "will I lose my settings" is the question
             // that stops people updating, and the answer is no.
             ? `${state.version} · installs over the top, keeps your server and password`

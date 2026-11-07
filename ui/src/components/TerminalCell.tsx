@@ -1111,6 +1111,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     // is running, and the first place to look when typing feels behind.
     const endWrite = perf.span('xterm:write');
     perf.count('xterm:bytes', batch.length);
+    if (isActive) perf.milestone('pane-text');
     try {
       t.write(theme === 'light' ? makeLightTruecolorReadable(batch) : batch, () => {
         if (isRestoringRef.current) {
@@ -1161,6 +1162,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
     };
 
     const unregSend = registerTerminalSend(sessionId, (msg) => sendRef.current(msg));
+    if (isActive && !tile) perf.milestone('pane-subscribe');
 
     // Handle session-specific messages (output, connected)
     // Send terminal dimensions with subscribe so server resizes before snapshot
@@ -1180,6 +1182,7 @@ function TerminalCellInner({ sessionId, gridId, paneIndex, isActive, tile = fals
         cprGuardUntilRef.current = Date.now() + 1500;
         // No resize needed here — cols/rows were sent with subscribe
       } else if (msg.type === 'output') {
+        if (isActive && !tile) perf.milestone('pane-bytes');
         const term = termRef.current;
         if (!term) return;
         if (pendingResetRef.current) {

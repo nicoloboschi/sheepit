@@ -166,7 +166,7 @@ export default function SystemDialog({ openFile }: SystemDialogProps) {
       <div className="system-body">
         {page === 'files' && (
         <div
-          className="sys-panel"
+          className="sys-panel sys-side"
           style={{ width: 170, flexShrink: 0, padding: 8, overflowY: 'auto', gap: 2 }}
         >
           {places.map(p => (
