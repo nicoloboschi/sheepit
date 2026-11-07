@@ -37,6 +37,8 @@ const DISMISSED_KEY = 'sheepit:android-banner-dismissed';
  *  version: if you back out of Android's install sheet, the banner stays for
  *  a manual tap, and the app does not nag on every launch. */
 const AUTO_KEY = 'sheepit:android-auto-update';
+/** Sent to Android's "install unknown apps" switch: carry on when back. */
+let awaitingPermission = false;
 
 /** Download the served APK and open Android's installer (UpdaterPlugin.java).
  *  Android always shows its own Install sheet; the first time it also asks to
@@ -46,7 +48,8 @@ async function installUpdate(): Promise<string | null> {
     const { registerPlugin } = await import('@capacitor/core');
     const Updater = registerPlugin<{ install(o: { url: string }): Promise<{ started?: boolean; needsPermission?: boolean }> }>('Updater');
     const r = await Updater.install({ url: keyedUrl('/download/sheepit.apk') });
-    return r.needsPermission ? 'Allow sheepit to install apps, then tap Update again' : null;
+    if (r.needsPermission) { awaitingPermission = true; return 'Allow sheepit to install apps — the update continues when you come back'; }
+    return null;
   } catch (e) {
     // An older app without the plugin: the plain download link still works
     // in the phone's browser.
@@ -115,7 +118,15 @@ export default function AndroidInstallBanner(): React.ReactElement | null {
     check();
     // The app is rarely relaunched (it resumes), so look again when it comes
     // back on screen — at most every ten minutes.
-    const onVisible = () => { if (document.visibilityState === 'visible' && Date.now() - lastCheck > 600_000) check(); };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (awaitingPermission) {
+        awaitingPermission = false;
+        void (async () => { setNote('Downloading the update…'); setNote(await installUpdate()); })();
+        return;
+      }
+      if (Date.now() - lastCheck > 600_000) check();
+    };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => { gone = true; document.removeEventListener('visibilitychange', onVisible); };
