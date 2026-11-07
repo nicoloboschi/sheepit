@@ -42,10 +42,14 @@ import { Button } from './components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from './components/ui/dropdown-menu';
+import VoiceInputButton from './components/VoiceInputButton';
+import { readPaneMode, subscribePaneMode } from './components/NativePane';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
   Home, Zap, TerminalSquare, ImagePlus, Search, Check, Bot, LayoutGrid,
+  MoreVertical, GitBranch, MessageSquare, PanelRight, GitPullRequest, CircleDot, Pencil, X, SquareTerminal,
 } from 'lucide-react';
 import DirectoryPicker from './components/DirectoryPicker';
 import SheepIcon from './components/SheepIcon';
@@ -834,6 +838,11 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
   const swipeTouchRef    = useRef<{ x: number; y: number } | null>(null);
   const systemOpen       = useStore(s => s.systemOpen);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paneMode, setPaneModeState] = useState(readPaneMode);
+  useEffect(() => subscribePaneMode(setPaneModeState), []);
+  /** The pane bar's actions, for the shown pane (TerminalCell listens). */
+  const paneAction = (action: 'native' | 'tools' | 'rename' | 'close') =>
+    window.dispatchEvent(new CustomEvent('sheepit:pane-action', { detail: { action } }));
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     swipeTouchRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
@@ -949,15 +958,6 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             <ChevronDown size={13} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
           </button>
 
-          <Button
-            variant="ghost" size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            title="Upload file"
-            disabled={!!uploadStatus}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImagePlus size={14} />
-          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -966,132 +966,128 @@ function MobileTopBar({ onConnect, send }: MobileTopBarProps) {
             onChange={handleFileUpload}
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
           />
+          {/* Dictation into the terminal (the pane bar's mic, which a phone
+              does not show). The chat view has its own, beside Send. */}
+          {activeSessionId && !systemOpen && paneMode === 'terminal' && (
+            <span className="mobile-mic"><VoiceInputButton sessionId={activeSessionId} /></span>
+          )}
 
-          {/* Agents ⇄ System, the desktop's two top tabs, as one button: the
-              phone's header has room for an icon, not a tab bar. */}
-          <Button
-            variant="ghost" size="icon"
-            className={`h-8 w-8 shrink-0 ${systemOpen ? 'text-primary' : 'text-muted-foreground'} hover:text-foreground`}
-            title={systemOpen ? 'Back to the agents' : 'System — files, terminals, GitHub, reps, activity, disk'}
-            aria-label={systemOpen ? 'Agents' : 'System'}
-            onClick={() => useStore.getState().setSystemOpen(!systemOpen)}
-          >
-            {systemOpen ? <Bot size={16} /> : <LayoutGrid size={15} />}
-          </Button>
-
+          {/* One menu for everything else. On a phone the screen is for the
+              conversation: the pane bar is hidden (see .pane-header in
+              style.css) and its actions live here with the app's own. */}
           <DropdownMenu onOpenChange={(open) => { if (open) setCommands(loadCommands()); }}>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
-                <Zap size={15} />
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground" aria-label="Menu">
+                <MoreVertical size={18} />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" className="w-52">
-              {commands.length === 0
-                ? <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">No saved commands</span></DropdownMenuItem>
-                : commands.map(c => (
-                  <DropdownMenuItem key={c.id} onClick={() => {
-                    activeTerminalSend.current({ type: 'input', data: c.command + '\r' });
-                  }}>
-                    <TerminalSquare size={13} /><span className="truncate text-xs">{c.name}</span>
-                  </DropdownMenuItem>
-                ))
-              }
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setShowCommands(true)}>
-                <Settings size={13} /> Manage commands&hellip;
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
-                <SquarePlus size={15} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" className="w-72 !overflow-hidden p-0">
-              <div className="px-1 pt-1">
-                <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>
-                  <Home size={14} /><span className="text-xs">Home</span>
-                </DropdownMenuItem>
-              </div>
-              {(() => {
-                const dirs = [...new Set(sessions.map(s => s.path).filter(Boolean))] as string[];
-                return dirs.length > 0 && <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal uppercase tracking-wider px-3 py-0.5">Recent</DropdownMenuLabel>
-                  <div className="overflow-y-auto px-1" style={{ maxHeight: 100 }}>
-                    {dirs.map(path => (
-                      <DropdownMenuItem key={path} onClick={() => send({ type: 'create_session', path })}>
-                        <span className="truncate font-mono text-xs">{tildefy(path, username)}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
-                </>;
-              })()}
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal uppercase tracking-wider px-3 py-0.5">Browse</DropdownMenuLabel>
-              <DirectoryPicker
-                initialPath="~"
-                onSelect={(path) => send({ type: 'create_session', path })}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
-                <Settings size={15} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" className="w-48">
+            <DropdownMenuContent align="end" side="bottom" className="w-64">
               <DropdownMenuLabel className="flex justify-between items-center text-xs">
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><SheepIcon size={13} color="var(--primary)" /> <span className="brand-gradient-text">sheepit</span></span>
                 <span className="font-mono text-primary">v{version ?? '\u2026'}</span>
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {/* Fields live here as well as in the Pens sheet. The sheet's own
-                  selector is a dropdown inside a dismissible overlay, and on
-                  touch the tap that opens it can land on the backdrop and take
-                  the sheet with it — so on a phone there has to be a way to
-                  change field that does not sit inside something that closes.
-                  Only when there is more than one: a menu offering a choice of
-                  one is a row that does nothing. */}
-              {fieldOrder.filter(id => fields[id]).length > 1 && (
+              {session && !systemOpen && (
                 <>
-                  {fieldOrder.filter(id => fields[id]).map(id => (
-                    <DropdownMenuItem
-                      key={id}
-                      onClick={() => useStore.getState().setSelectedField(id)}
-                    >
-                      <Check size={14} style={{ opacity: id === selectedFieldId ? 1 : 0 }} />
-                      {fields[id]!.name}
+                  <DropdownMenuSeparator />
+                  {/* This sheep: what the pane bar says and does. */}
+                  <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground" style={{ lineHeight: 1.4 }}>
+                    <div className="truncate" style={{ color: 'var(--foreground)', fontWeight: 600 }}>{session.name}</div>
+                    {session.path && <div className="truncate font-mono">{tildefy(session.path, username)}</div>}
+                    {session.gitBranch && <div className="truncate"><GitBranch size={10} style={{ display: 'inline', verticalAlign: '-1px' }} /> {session.gitBranch}{session.gitDirty ? ' · changes' : ''}</div>}
+                    {session.ctxTokens !== undefined && <div>Context {session.ctxTokens >= 1000 ? `${Math.round(session.ctxTokens / 1000)}k` : session.ctxTokens}{session.ctxLimit ? ` of ${Math.round(session.ctxLimit / 1000)}k` : ''}</div>}
+                  </DropdownMenuLabel>
+                  {session.isClaudeCode && (
+                    <DropdownMenuItem onClick={() => paneAction('native')}>
+                      {paneMode === 'native' ? <><SquareTerminal size={14} /> Show the terminal</> : <><MessageSquare size={14} /> Show as chat</>}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => paneAction('tools')}>
+                    <PanelRight size={14} /> Tools — git, browser, GitHub
+                  </DropdownMenuItem>
+                  {(session.prRefs ?? []).slice(0, 3).map(r => (
+                    // Same as the pane bar's chip: opens in this pane's GitHub view.
+                    <DropdownMenuItem key={`${r.kind}${r.num}`} onClick={() => window.dispatchEvent(new CustomEvent('sheepit:open-gh-ref', {
+                      detail: { sessionId: activeSessionId, kind: r.kind, num: r.num, repo: r.repo },
+                    }))}>
+                      {r.kind === 'pr' ? <GitPullRequest size={14} /> : <CircleDot size={14} />} {r.kind === 'pr' ? 'PR' : 'Issue'} #{r.num}
                     </DropdownMenuItem>
                   ))}
-                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => paneAction('rename')}>
+                    <Pencil size={14} /> Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => paneAction('close')} style={{ color: 'var(--destructive)' }}>
+                    <X size={14} /> Close this sheep
+                  </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => useStore.getState().setSystemOpen(!systemOpen)}>
+                {systemOpen ? <><Bot size={14} /> Back to the agents</> : <><LayoutGrid size={14} /> System — files, GitHub, activity…</>}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => useStore.getState().setSearchOpen(true)}>
                 <Search size={14} /> Search the flock
               </DropdownMenuItem>
+              <DropdownMenuItem disabled={!!uploadStatus} onClick={() => fileInputRef.current?.click()}>
+                <ImagePlus size={14} /> Upload a file
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger><Zap size={14} /> Saved commands</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-56">
+                  {commands.length === 0
+                    ? <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">No saved commands</span></DropdownMenuItem>
+                    : commands.map(c => (
+                      <DropdownMenuItem key={c.id} onClick={() => activeTerminalSend.current({ type: 'input', data: c.command + '\r' })}>
+                        <TerminalSquare size={13} /><span className="truncate text-xs">{c.name}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setShowCommands(true)}><Settings size={13} /> Manage commands&hellip;</DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger><SquarePlus size={14} /> New session</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-72 !overflow-hidden p-0">
+                  <div className="px-1 pt-1">
+                    <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>
+                      <Home size={14} /><span className="text-xs">Home</span>
+                    </DropdownMenuItem>
+                  </div>
+                  {(() => {
+                    const dirs = [...new Set(sessions.map(s => s.path).filter(Boolean))] as string[];
+                    return dirs.length > 0 && <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal uppercase tracking-wider px-3 py-0.5">Recent</DropdownMenuLabel>
+                      <div className="overflow-y-auto px-1" style={{ maxHeight: 100 }}>
+                        {dirs.map(path => (
+                          <DropdownMenuItem key={path} onClick={() => send({ type: 'create_session', path })}>
+                            <span className="truncate font-mono text-xs">{tildefy(path, username)}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </div>
+                    </>;
+                  })()}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal uppercase tracking-wider px-3 py-0.5">Browse</DropdownMenuLabel>
+                  <DirectoryPicker initialPath="~" onSelect={(path) => send({ type: 'create_session', path })} />
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              {fieldOrder.filter(id => fields[id]).length > 1 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger><Check size={14} /> Field</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {fieldOrder.filter(id => fields[id]).map(id => (
+                      <DropdownMenuItem key={id} onClick={() => useStore.getState().setSelectedField(id)}>
+                        <Check size={14} style={{ opacity: id === selectedFieldId ? 1 : 0 }} />
+                        {fields[id]!.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => send({ type: 'create_session', path: null })}>
-                <SquarePlus size={14} /> New session
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={sessions.some(s => s.isHeadless)}
-                onClick={() => send({ type: 'create_session', path: null, headless: true })}
-              >
-                <TerminalSquare size={14} />
-                {sessions.some(s => s.isHeadless) ? 'Headless session running' : 'New headless session'}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowCommands(true)}>
-                <Zap size={14} /> Saved commands
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowLogs(true)}>
-                <ScrollText size={14} /> Server Logs
+                <ScrollText size={14} /> Server logs
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
                 <Settings size={14} /> Settings
               </DropdownMenuItem>

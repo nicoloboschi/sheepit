@@ -4566,3 +4566,33 @@ html :disabled { cursor: not-allowed; }
   }
   .settings-nav > button { flex-shrink: 0; white-space: nowrap; padding: 6px 10px !important; border-radius: 6px; }
 }
+
+/* ── The phone: the screen is the conversation ─────────────────────────────
+   The header (pen name, pasture, one ⋮ menu) is the only chrome. The pane
+   bar is hidden and its actions live in that menu (App.tsx, MobileTopBar);
+   scratch-terminal tiles keep theirs, since they have no header of their own.
+   The pane runs edge to edge, and the chat reads like a chat app: prose in
+   the UI font, the user's message as a bubble, no TUI marks. Code and tool
+   lines stay monospace. Desktop is unchanged (it mirrors the TUI on purpose). */
+@media (max-width: 767px) {
+  .workspace-pen { padding: 0; }
+  .pane-header:not(.pane-header-tile) { display: none !important; }
+  .mobile-mic { display: flex; }
+  .nat-pane { font-family: var(--font-sans); line-height: 1.55; }
+  .nat-pane .nat-text.md-preview { color: var(--foreground); }
+  .nat-pane code, .nat-pane pre, .nat-tool, .nat-cmd, .nat-pre { font-family: var(--nat-code-family); }
+  .nat-tool, .nat-when { font-size: 0.86em; }
+  .nat-assistant { padding-left: 0; }
+  .nat-assistant::before { display: none; }
+  .nat-user { justify-content: flex-end; }
+  .nat-user .nat-bubble {
+    flex: 0 1 auto; max-width: 85%;
+    padding: 8px 14px; border-radius: 18px;
+    box-shadow: none;
+    background: color-mix(in srgb, var(--foreground) 9%, var(--card));
+  }
+  .nat-user .nat-bubble::before { display: none; }
+  .nat-prompt-mark { display: none; }
+  .nat-bar { display: none; }
+  .nat-to-bottom { left: 50%; right: auto; transform: translateX(-50%); bottom: 88px; width: 36px; height: 36px; }
+}

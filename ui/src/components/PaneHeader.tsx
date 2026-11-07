@@ -93,6 +93,31 @@ export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, 
     onClose();
   }
 
+  // The phone's header menu drives the shown pane's bar, which a phone hides
+  // (see the mobile ⋮ menu in App.tsx). A tile has no tools toggle, and is
+  // never the target: only the shown pane of a pen answers.
+  const actionRef = useRef<(a: string) => void>(() => {});
+  actionRef.current = (a: string) => {
+    if (a === 'native') onToggleNative?.();
+    else if (a === 'tools') onToggleTools?.();
+    else if (a === 'rename') {
+      const next = window.prompt('Rename this sheep', session?.name ?? '');
+      if (next != null) { setDraftName(next); void (async () => {
+        const trimmed = next.trim();
+        if (!trimmed || trimmed === session?.name) return;
+        await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/rename`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: trimmed }),
+        });
+      })(); }
+    } else if (a === 'close') void handleClose({ stopPropagation() {} } as React.MouseEvent);
+  };
+  useEffect(() => {
+    if (!isActive || !onToggleTools) return;
+    const on = (e: Event) => actionRef.current((e as CustomEvent).detail?.action);
+    window.addEventListener('sheepit:pane-action', on);
+    return () => window.removeEventListener('sheepit:pane-action', on);
+  }, [isActive, !onToggleTools]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!session) {
     // Loading placeholder — matches real header height so layout doesn't jump.
     return <div style={{ height: 30, flexShrink: 0, borderBottom: '1px solid var(--border)', background: 'var(--card)' }} />;
@@ -100,7 +125,7 @@ export default function PaneHeader({ sessionId, workspaceId, isActive, onClose, 
 
   return (
     <div
-      className={`pane-header${isActive ? ' pane-header-active' : ''}`}
+      className={`pane-header${isActive ? ' pane-header-active' : ''}${onToggleTools ? '' : ' pane-header-tile'}`}
       style={{
         display: 'flex', flexDirection: 'column',
         flexShrink: 0, minWidth: 0,

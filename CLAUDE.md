@@ -545,6 +545,12 @@ the transcript tailed (`src/claude-native.ts`). No stream-json fork.
   white 700, `-` list marks. Composer = `❯` line between hairlines, status
   line under it; Send button only on phones.
 - `--nat-base` comes from Appearance (`nativeFontSize`); +1.5px below 768px.
+- **On a phone it reads like a chat app instead** (end of style.css): prose in
+  the UI font, the user's message a bubble, no ●/❯ marks, no status line;
+  code and tool lines stay mono. The pane bar is hidden on phones (tiles
+  excepted); its actions are in the header ⋮ menu, which dispatches
+  `sheepit:pane-action` (native, tools, rename, close) to the shown pane's
+  `PaneHeader`, and `sheepit:open-gh-ref` for PRs.
 - Agent output is Markdown (react-markdown + remark-gfm, `.md-preview`);
   `white-space: normal` on it; `.nat-text` max 120ch; `li > p { margin: 0 }`.
   User messages are plain text.
