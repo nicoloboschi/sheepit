@@ -8,6 +8,7 @@ import { noShift, useDropSide } from '../dropHint';
 import { useDroppable } from '@dnd-kit/core';
 import useStore, { addSheepToPen, type Session, type Workspace } from '../store';
 import { useDndEnabled } from '../dndEnabled';
+import * as sharedWs from '../sharedWs';
 
 
 /** Compact relative time for the cramped left column — "5m", "2h", "3d", "now". */
@@ -144,6 +145,23 @@ function ctxTitle(used: number, limit?: number): string {
  *  **An inline handler at the call site turns this off silently** — the same
  *  trap `TerminalCell`'s memo hit, where `onActivate={() => setActiveCell(i)}`
  *  meant the memo could never hold. */
+/** A right-click menu: the same dropdown, anchored at the pointer by a
+ *  zero-size trigger placed where the click landed. */
+type MenuAt = { x: number; y: number } | null;
+function CursorMenu({ at, onClose, children }: { at: MenuAt; onClose: () => void; children: React.ReactNode }): React.ReactElement | null {
+  if (!at) return null;
+  return (
+    <DropdownMenu open onOpenChange={(o) => { if (!o) onClose(); }} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <span aria-hidden style={{ position: 'fixed', left: at.x, top: at.y, width: 0, height: 0 }} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={2} onClick={(e) => e.stopPropagation()}>
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function PaneCardInner({
   sessionId, gridId, cellIdx, active, unseen, tight, onActivate, gridArea,
 }: {
@@ -210,12 +228,27 @@ function PaneCardInner({
     data: { kind: 'pane', sessionId, workspaceId: gridId, paneIdx: cellIdx },
   });
   const dropSide = useDropSide(sessionId);
+  const [menuAt, setMenuAt] = useState<MenuAt>(null);
+  const closeSheep = async () => {
+    const st = useStore.getState();
+    const last = (st.workspaces[gridId]?.cells.length ?? 0) <= 1;
+    if (!await st.showConfirm(last ? `Close "${name}"? It is the last sheep in this pen.` : `Close "${name}"?`)) return;
+    const idx = useStore.getState().workspaces[gridId]?.cells.indexOf(sessionId) ?? -1;
+    sharedWs.send({ type: 'close_session', session_id: sessionId });
+    if (idx >= 0) useStore.getState().removePaneFromWorkspace(gridId, idx);
+  };
 
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      onContextMenu={sessionId ? (e) => {
+        // The pen around the card has its own menu; this one is the sheep's.
+        e.preventDefault();
+        e.stopPropagation();
+        setMenuAt({ x: e.clientX, y: e.clientY });
+      } : undefined}
       onClick={(e) => {
         // Focus this specific pane inside its workspace. Stop propagation so
         // the enclosing session-item row's handler doesn't also run — our
@@ -308,6 +341,20 @@ function PaneCardInner({
         <PaneAge sessionId={sessionId} />
         <SheepStatus state={sheepState} />
       </div>
+      <CursorMenu at={menuAt} onClose={() => setMenuAt(null)}>
+        <DropdownMenuItem onClick={() => onActivate(cellIdx)} style={{ fontSize: 12, cursor: 'pointer' }}>
+          <SquareTerminal size={13} />
+          Show
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => void closeSheep()}
+          className="text-destructive focus:text-destructive"
+          style={{ fontSize: 12, cursor: 'pointer' }}
+        >
+          <Trash2 size={13} />
+          Close this sheep
+        </DropdownMenuItem>
+      </CursorMenu>
     </div>
   );
 }
@@ -591,6 +638,7 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
     void addSheepToPen(workspace.id, send);
   }, [workspace.id, send]);
 
+  const [menuAt, setMenuAt] = useState<MenuAt>(null);
   const fields = useStore(s => s.fields);
   const fieldOrder = useStore(s => s.fieldOrder);
 
@@ -611,9 +659,53 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
     elRef.current = node;
   };
 
+  const penItems = (
+    <>
+          <DropdownMenuItem
+            onClick={startRename}
+            style={{ fontSize: 12, cursor: 'pointer' }}
+          >
+            <Pencil size={13} />
+            Rename
+          </DropdownMenuItem>
+          {/* Moving a pen between fields lives here because the sidebar shows
+              one field at a time — there is no other field on screen to drag
+              it onto. */}
+          {fieldOrder.length > 1 && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger style={{ fontSize: 12, cursor: 'pointer' }}>
+                <FolderTree size={13} />
+                Move to field
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {fieldOrder.filter(fid => fields[fid]).map(fid => (
+                  <DropdownMenuItem
+                    key={fid}
+                    disabled={fid === workspace.fieldId}
+                    onClick={() => useStore.getState().moveWorkspaceToField(workspace.id, fid)}
+                    style={{ fontSize: 12, cursor: 'pointer' }}
+                  >
+                    {fields[fid]!.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
+          <DropdownMenuItem
+            onClick={handleDelete}
+            className="text-destructive focus:text-destructive"
+            style={{ fontSize: 12, cursor: 'pointer' }}
+          >
+            <Trash2 size={13} />
+            Close this pen
+          </DropdownMenuItem>
+    </>
+  );
+
   return (
     <div
       ref={setRefs}
+      onContextMenu={(e) => { e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }); }}
       style={sortableStyle}
       className={[
         'session-item',
@@ -708,46 +800,10 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start">
-          <DropdownMenuItem
-            onClick={startRename}
-            style={{ fontSize: 12, cursor: 'pointer' }}
-          >
-            <Pencil size={13} />
-            Rename
-          </DropdownMenuItem>
-          {/* Moving a pen between fields lives here because the sidebar shows
-              one field at a time — there is no other field on screen to drag
-              it onto. */}
-          {fieldOrder.length > 1 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger style={{ fontSize: 12, cursor: 'pointer' }}>
-                <FolderTree size={13} />
-                Move to field
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {fieldOrder.filter(fid => fields[fid]).map(fid => (
-                  <DropdownMenuItem
-                    key={fid}
-                    disabled={fid === workspace.fieldId}
-                    onClick={() => useStore.getState().moveWorkspaceToField(workspace.id, fid)}
-                    style={{ fontSize: 12, cursor: 'pointer' }}
-                  >
-                    {fields[fid]!.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
-          <DropdownMenuItem
-            onClick={handleDelete}
-            className="text-destructive focus:text-destructive"
-            style={{ fontSize: 12, cursor: 'pointer' }}
-          >
-            <Trash2 size={13} />
-            Delete
-          </DropdownMenuItem>
+          {penItems}
         </DropdownMenuContent>
       </DropdownMenu>
+      <CursorMenu at={menuAt} onClose={() => setMenuAt(null)}>{penItems}</CursorMenu>
     </div>
   );
 }
