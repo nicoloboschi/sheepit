@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { perf } from '../perf';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Plus, Pi, Feather } from 'lucide-react';
+import { SquareTerminal, MoreVertical, Trash2, GripHorizontal, Pencil, ChevronDown, ChevronRight, FolderTree, Plus, Pi, Feather, BellOff } from 'lucide-react';
 import { SortableContext, useSortable } from '@dnd-kit/sortable';
 import { noShift, useDropSide } from '../dropHint';
 import { useDroppable } from '@dnd-kit/core';
@@ -146,11 +147,13 @@ function ctxTitle(used: number, limit?: number): string {
  *  trap `TerminalCell`'s memo hit, where `onActivate={() => setActiveCell(i)}`
  *  meant the memo could never hold. */
 /** A right-click menu: the same dropdown, anchored at the pointer by a
- *  zero-size trigger placed where the click landed. */
+ *  zero-size trigger placed where the click landed. Portalled to <body>:
+ *  the cards sit under dnd-kit transforms, and a transformed ancestor turns
+ *  `position: fixed` into "relative to me", which put the menu far away. */
 type MenuAt = { x: number; y: number } | null;
 function CursorMenu({ at, onClose, children }: { at: MenuAt; onClose: () => void; children: React.ReactNode }): React.ReactElement | null {
   if (!at) return null;
-  return (
+  return createPortal(
     <DropdownMenu open onOpenChange={(o) => { if (!o) onClose(); }} modal={false}>
       <DropdownMenuTrigger asChild>
         <span aria-hidden style={{ position: 'fixed', left: at.x, top: at.y, width: 0, height: 0 }} />
@@ -158,7 +161,8 @@ function CursorMenu({ at, onClose, children }: { at: MenuAt; onClose: () => void
       <DropdownMenuContent align="start" sideOffset={2} onClick={(e) => e.stopPropagation()}>
         {children}
       </DropdownMenuContent>
-    </DropdownMenu>
+    </DropdownMenu>,
+    document.body,
   );
 }
 
@@ -345,6 +349,14 @@ function PaneCardInner({
         <DropdownMenuItem onClick={() => onActivate(cellIdx)} style={{ fontSize: 12, cursor: 'pointer' }}>
           <SquareTerminal size={13} />
           Show
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={sheepState !== 'bleating' && sheepState !== 'unread'}
+          onClick={() => useStore.getState().clearUnseen(sessionId)}
+          style={{ fontSize: 12, cursor: 'pointer' }}
+        >
+          <BellOff size={13} />
+          Snooze
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => void closeSheep()}
@@ -661,6 +673,13 @@ function SessionItemInner({ workspace, isActive, onConnect, send }: SessionItemP
 
   const penItems = (
     <>
+          <DropdownMenuItem
+            onClick={(e) => { e.stopPropagation(); for (const sid of workspace.cells) if (sid) useStore.getState().clearUnseen(sid); }}
+            style={{ fontSize: 12, cursor: 'pointer' }}
+          >
+            <BellOff size={13} />
+            Snooze
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={startRename}
             style={{ fontSize: 12, cursor: 'pointer' }}

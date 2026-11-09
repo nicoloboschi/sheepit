@@ -72,6 +72,9 @@ unread beats idle; counts never double-count.
 - **Typing marks a pane read; selecting does not.** `clearUnseen` is called
   from `sendInput` for real keystrokes only (not focus/mouse reports, CPR,
   arrows).
+- **Snooze** (right-click a sheep card or a pen) = `clearUnseen`, the same as
+  typing. Right-click menus are `CursorMenu` (`SessionItem.tsx`), portalled
+  to `<body>`: cards sit under dnd-kit transforms, which move a fixed anchor.
 - Unread means an agent finished a turn or the app rang the bell. A plain
   shell printing output does not light up.
 
