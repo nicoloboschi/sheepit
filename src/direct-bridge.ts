@@ -148,6 +148,12 @@ const nice = (cmd: string) => `nice -n 10 ${cmd}`;
  *  'unknown' clears the record and hands the session back to the heuristics. */
 export type AgentState = 'busy' | 'idle' | 'waiting' | 'unknown';
 
+/** Input that could answer a TUI prompt: a typed key, or a bare Escape. Escape
+ *  sequences (focus, mouse, cursor reports, arrows) are the terminal talking. */
+export function answersPrompt(data: string): boolean {
+  return data === '\x1b' || !data.startsWith('\x1b');
+}
+
 /** The last exchange in a session, as reported by the agent itself.
  *
  *  What the user asked and what the agent answered is a far better basis for
@@ -1822,7 +1828,12 @@ export class DirectBridge {
     // without this a pane stays blocked-looking until the turn ends. One Map
     // lookup per keystroke, on a path where that is the budget — the branch
     // is taken approximately never.
-    if (this.agentState.get(sessionId)?.state === 'waiting') {
+    //
+    // Only a real key answers: not the escape sequences a terminal sends by
+    // itself (focus in/out when you switch windows, mouse and cursor reports).
+    // A focus report used to end the wait while the prompt was still up, and
+    // the native view handed the pane back to a chat that showed nothing.
+    if (this.agentState.get(sessionId)?.state === 'waiting' && answersPrompt(data)) {
       this.setAgentState(sessionId, 'busy', 'typed');
     }
     this.daemon.sendFire({ type: 'write', id: sessionId, data });

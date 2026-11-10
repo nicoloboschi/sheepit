@@ -21,3 +21,4 @@ ui/vite.config.*.timestamp-*
 __pycache__/
 *.pyc
 pasted-*.png
+shot-*.png

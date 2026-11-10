@@ -518,6 +518,9 @@ the transcript tailed (`src/claude-native.ts`). No stream-json fork.
   Claude Code fires `PermissionRequest` for it too, so `agentWaiting` counts as
   a terminal dialog only after `DIALOG_SETTLE_MS` with no question pending.
   `ExitPlanMode` stays read-only and hands off to the terminal.
+  Only a real key ends a `waiting` (`answersPrompt`): focus in/out reports
+  (switching windows) used to clear it with the prompt still up, and the
+  view handed the pane back to a chat that showed nothing.
 - **Handoff**: what only the TUI can draw lends *this pane* to the terminal
   (`onHandoff`, cursor in the terminal); the device mode is untouched and the
   view stays mounted hidden. Returns when it's over: choice gets a result,

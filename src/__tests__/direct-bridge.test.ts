@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { isSafeSessionId } from '../session-store.js'
-import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn, keepsWaiting } from '../direct-bridge.js'
+import { mouseModeTail, RingBuffer, detectAgentApp, parseOscNotifications, parseOscProgress, parseKittyNotificationQuery, kittyNotificationAck, drainOsc99Frames, drainOscNotificationFrames, parseOsc7, shEscape, appendAgentTurn, keepsWaiting, answersPrompt } from '../direct-bridge.js'
 
 const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h'
 const SHELL_PROMPT = '\x1b[?2004h'
@@ -418,5 +418,13 @@ describe('a pane blocked on a permission prompt', () => {
     expect(keepsWaiting('busy', 'busy', false, 'claude')).toBe(false)
     expect(keepsWaiting('idle', 'busy', false, 'claude')).toBe(false)
     expect(keepsWaiting(undefined, 'busy', false, 'claude')).toBe(false)
+  })
+})
+
+describe('answersPrompt', () => {
+  it('counts keys, not what the terminal sends by itself', () => {
+    for (const k of ['1', 'y', '\r', '\t', '\x1b']) expect(answersPrompt(k)).toBe(true)
+    // focus in/out, a mouse report, a cursor position report, an arrow
+    for (const k of ['\x1b[I', '\x1b[O', '\x1b[<0;10;5M', '\x1b[12;1R', '\x1b[A']) expect(answersPrompt(k)).toBe(false)
   })
 })
