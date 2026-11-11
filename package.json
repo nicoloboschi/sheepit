@@ -39,6 +39,7 @@
     "ui/dist",
     "scripts/postinstall.sh",
     "plugin",
+    "native",
     ".claude-plugin"
   ],
   "scripts": {
@@ -60,6 +61,7 @@
     "commander": "^12.0.0",
     "express": "^4.19.0",
     "node-pty": "^1.0.0",
+    "transcribe-cpp": "^0.4.1",
     "ws": "^8.17.0"
   },
   "devDependencies": {
@@ -84,6 +86,7 @@
       "dist/**/*",
       "ui/dist/**/*",
       "electron/**/*",
+      "native/**/*",
       "package.json"
     ],
     "asarUnpack": [

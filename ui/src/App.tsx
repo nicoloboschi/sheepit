@@ -21,6 +21,7 @@ import useStore, { activeTerminalSend, activePaneCycleView, SYSTEM_PAGES, type S
 import { requestNotificationPermission } from './utils';
 import { ensureStackLoaded } from './googleFonts';
 import * as sharedWs from './sharedWs';
+import { startGamepad } from './gamepad';
 import Sidebar from './components/Sidebar';
 import { isNarrowScreen, NARROW_QUERY } from './platform';
 import { FlockBand, FlockFooter, FlockStrip } from './components/FlockChrome';
@@ -44,7 +45,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from './components/ui/dropdown-menu';
-import VoiceInputButton from './components/VoiceInputButton';
+import VoiceInputButton, { VOICE_TOGGLE_EVENT } from './components/VoiceInputButton';
 import { readPaneMode, subscribePaneMode } from './components/NativePane';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
@@ -432,19 +433,28 @@ export default function App() {
     return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update); };
   }, []);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (and the game controller, which shares sheep walking)
   useEffect(() => {
+    const goSheep = (dir: 'up' | 'down') => {
+      const next = useStore.getState().navigateSession(dir);
+      if (next) {
+        connectSession(next.workspaceId);
+        if (next.paneIndex != null) {
+          useStore.getState().setActivePane(next.workspaceId, next.paneIndex);
+        }
+      }
+    };
     const down = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
-        const next = useStore.getState().navigateSession(e.key === 'ArrowUp' ? 'up' : 'down');
-        if (next) {
-          connectSession(next.workspaceId);
-          if (next.paneIndex != null) {
-            useStore.getState().setActivePane(next.workspaceId, next.paneIndex);
-          }
-        }
+        goSheep(e.key === 'ArrowUp' ? 'up' : 'down');
+        return;
+      }
+      if (e.key === ' ' && e.shiftKey) {
+        // Dictate into the shown pane; again to stop and type it.
+        e.preventDefault();
+        window.dispatchEvent(new Event(VOICE_TOGGLE_EVENT, { cancelable: true }));
         return;
       }
       if (e.key === 'j') {
@@ -494,7 +504,8 @@ export default function App() {
       }
     };
     window.addEventListener('keydown', down);
-    return () => window.removeEventListener('keydown', down);
+    const stopGamepad = startGamepad(goSheep);
+    return () => { window.removeEventListener('keydown', down); stopGamepad(); };
   }, [connectSession]); // eslint-disable-line
 
   // ── Global DnD wiring ──────────────────────────────────────────────────

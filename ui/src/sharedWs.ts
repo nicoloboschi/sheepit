@@ -256,6 +256,11 @@ function connect(): void {
       applyRemotePreferences(msg.values, msg.origin as string | undefined);
       return;
     }
+    // A controller button read by the server (src/gamepad.ts); ui/src/gamepad.ts acts on it.
+    if (type === 'gamepad') {
+      window.dispatchEvent(new CustomEvent('sheepit:gamepad', { detail: msg.button }));
+      return;
+    }
 
     // Route session-specific output to session listeners
     if (sessionId && (type === 'output' || type === 'connected')) {

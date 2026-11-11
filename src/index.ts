@@ -6,6 +6,7 @@ import { dirname, join } from 'path';
 import { DirectBridge } from './direct-bridge.js';
 import { AIService } from './ai.js';
 import { createApp, logBuffer, logger } from './server.js';
+import { startGamepad } from './gamepad.js';
 import { pruneStalePreferences, dropSessionPreferences } from './api.js';
 import { config } from './config.js';
 import { ensureAgentPluginInstalled } from './plugin-install.js';
@@ -56,6 +57,8 @@ program
     ai.start();
 
     const server = await createApp(bridge, ai);
+
+    startGamepad(button => bridge.pubsub.publish('__sessions__', { type: 'gamepad', button }), msg => logger.info(msg));
 
     server.listen(port, host, () => {
       const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;

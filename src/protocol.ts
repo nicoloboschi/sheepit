@@ -96,4 +96,5 @@ export type BridgeMessage =
    *  browser goes on editing the profile it read when it started. Carries the
    *  patch, not the profile, and the `origin` of the tab that wrote it — which
    *  is how that tab ignores its own echo. */
-  | { type: 'preferences'; values: Record<string, string>; origin?: string };
+  | { type: 'preferences'; values: Record<string, string>; origin?: string }
+  | { type: 'gamepad'; button: string };

@@ -741,7 +741,15 @@ worktree, or its folder when it has no repo).
   serves it at once, which is what phones update from.
 - Mic in the native chat: `voice/speech.ts` — the phone's recognizer in the
   app (`@capacitor-community/speech-recognition`; the WebView has no Web
-  Speech), Web Speech in a phone browser, local Whisper on desktop.
+  Speech), Web Speech in a phone browser, Parakeet on the server on desktop
+  (`src/voice.ts`, transcribe.cpp — Handy's model and engine; reuses Handy's
+  downloaded copy, else fetches it into the config dir).
+- Game controller (`src/gamepad.ts` + `native/gamepad.swift`): macOS reads
+  the pad (Chromium can't see a Switch Pro), server publishes `gamepad`
+  presses, `ui/src/gamepad.ts` maps them. L/R and D-pad up/down switch
+  sheep; A toggles the mic (same as ⌘⇧Space, `VOICE_TOGGLE_EVENT`); B clears and
+  X sends the chat composer (terminal fallback: Ctrl-U / Enter); only the
+  focused window acts, and only the mic button on screen answers.
 - Phone UI: header has the Agents/System toggle and Settings (in the gear
   menu). System's side columns become sideways strips; GitHub's open item
   takes the screen; Settings' section list becomes tabs.

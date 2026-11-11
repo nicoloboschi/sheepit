@@ -7,6 +7,7 @@ import { join, dirname, extname, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'fs';
 import { gzipSync } from 'zlib';
+import { createVoiceRouter } from './voice.js';
 import { DirectBridge } from './direct-bridge.js';
 import { createApiRouter, expandHomePath as expandHome } from './api.js';
 import { createRepsRouter } from './reps.js';
@@ -161,6 +162,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
   // REST API
   app.use('/api/reps', createRepsRouter());
   app.use('/api', createSystemRouter(() => bridge.sessionPids()));
+  app.use('/api', createVoiceRouter(msg => logger.info(msg)));
   app.use('/api', createApiRouter(bridge, logBuffer, ai));
 
   // The Android app, from the server you are about to point it at. Mounted
@@ -244,7 +246,7 @@ export async function createApp(bridge: DirectBridge, ai: AIService) {
     // Subscribe to session list updates (once per client)
     state.unsubSessions = bridge.pubsub.subscribe('__sessions__', (msg) => {
       if (msg.type === 'sessions' || msg.type === 'activity'
-          || msg.type === 'attention' || msg.type === 'preferences') {
+          || msg.type === 'attention' || msg.type === 'preferences' || msg.type === 'gamepad') {
         send(msg);
       }
     });

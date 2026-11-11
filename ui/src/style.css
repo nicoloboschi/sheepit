@@ -2642,42 +2642,30 @@
   font-size: 12px;
   color: var(--foreground);
 }
-.voice-popup-dot {
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--destructive);
-  animation: voice-listening-pulse 1.1s ease-in-out infinite;
+/* A mic while it records (pane bar and chat composer): three brand-green
+   bars on a soft tint, their height following the mic's loudness
+   (--voice-level, 0–1, set per frame on the button). Quiet = three dots. */
+.voice-btn-on, .nat-mic.is-on {
+  color: var(--primary) !important;
+  background: color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent) !important;
 }
-.voice-popup-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.voice-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
 }
-.voice-popup-text-empty { color: var(--muted-foreground); }
-.voice-popup-hint {
-  flex-shrink: 0;
-  color: var(--muted-foreground);
-  font-size: 10px;
-}
-@keyframes voice-listening-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.75); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .voice-popup-dot { animation: none; }
-}
-
-/* Transcribing: the mic is closed and the model is working, which is a wait,
-   not a recording — so the dot goes to the brand colour and stops pulsing red
-   at someone whose microphone is already off. */
-.voice-popup-dot-working {
+.voice-bars i {
+  width: 3px;
+  border-radius: 2px;
   background: var(--primary);
-  animation-duration: 1.8s;
+  height: calc(3px + var(--voice-level, 0) * 11px * var(--k));
+  transition: height 80ms ease-out;
 }
+.voice-bars i:nth-child(1) { --k: 0.65; }
+.voice-bars i:nth-child(2) { --k: 1; }
+.voice-bars i:nth-child(3) { --k: 0.8; }
 
 /* ── The live browser ──────────────────────────────────────────────────────
    A real page, rendered on the machine and arriving here as frames. The
@@ -3441,6 +3429,17 @@
    box around most of the page is a box around nothing. */
 .nat-msg { display: flex; }
 .nat-user { justify-content: stretch; }
+/* Sent mid-turn, waiting in Claude Code's queue: dimmed and labelled until
+   the agent takes it and the real row replaces it. */
+.nat-queued .nat-bubble { opacity: 0.6; }
+.nat-queued::after {
+  content: 'queued';
+  align-self: center;
+  margin-left: 8px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-size: calc(var(--nat-size) * 0.8);
+}
 .nat-user .nat-bubble {
   position: relative;
   flex: 1;
@@ -4168,27 +4167,32 @@
 }
 /* Attach: the system file picker (Finder), the same path a paste or a drop
    takes. Quiet until hovered — Enter is the composer's main action. */
+/* Composer buttons share one 28px square, centred on the first text line
+   (margin-top), so the row stays put as the draft grows. */
+.nat-attach-btn, .nat-send {
+  --nat-btn: 28px;
+  margin-top: calc((var(--nat-size) * 1.5 - var(--nat-btn)) / 2);
+}
 .nat-attach-btn {
   flex-shrink: 0;
   display: grid; place-items: center;
-  width: 22px; height: calc(var(--nat-size) * 1.45);
+  width: var(--nat-btn); height: var(--nat-btn);
   padding: 0;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: none;
   color: var(--muted-foreground);
   cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
 }
-.nat-attach-btn:hover { color: var(--foreground); }
+.nat-attach-btn:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+.nat-attach-btn:focus-visible { outline: none; border-color: var(--ring); }
 .nat-attach-btn:disabled { opacity: 0.4; cursor: default; }
-/* The mic: terracotta while it listens (it is recording you), slow pulse. Not bleating red: that means "wants your input" only. */
-.nat-mic.is-on { color: var(--destructive); }
-.nat-mic.is-on svg { animation: nat-mic-pulse 1.2s ease-in-out infinite; }
-@keyframes nat-mic-pulse { 50% { opacity: 0.45; } }
-@media (prefers-reduced-motion: reduce) { .nat-mic.is-on svg { animation: none; } }
+
 .nat-mic-error { font-size: 11px; color: var(--destructive); white-space: nowrap; align-self: center; }
 @media (max-width: 767px) {
   /* A thumb, not a cursor: the composer's buttons get a real target. */
-  .nat-attach-btn { width: 36px; height: 36px; }
+  .nat-attach-btn, .nat-send { --nat-btn: 36px; }
 }
 .nat-prompt-mark {
   flex-shrink: 0;
@@ -4222,7 +4226,7 @@
   display: none;
   flex-shrink: 0;
   place-items: center;
-  width: 32px; height: 32px;
+  width: var(--nat-btn); height: var(--nat-btn);
   border-radius: 50%;
   border: none;
   background: var(--primary-gradient);
@@ -4236,17 +4240,25 @@
 .nat-stop-btn {
   display: grid;
   grid-auto-flow: column;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
   width: auto;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: var(--destructive);
-  color: var(--background);
-  font-size: calc(var(--nat-size) * 0.8);
+  padding: 0 12px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--destructive) 45%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+  color: var(--destructive);
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: background 120ms, border-color 120ms;
 }
-.nat-stop-btn:hover { filter: brightness(1.12); }
+.nat-stop-btn:hover {
+  background: color-mix(in srgb, var(--destructive) 24%, transparent);
+  border-color: var(--destructive);
+}
+.nat-stop-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 @media (max-width: 767px) {
   .nat-send { display: grid; }
   .nat-compose { margin: 0 8px; }

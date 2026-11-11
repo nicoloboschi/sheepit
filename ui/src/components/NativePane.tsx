@@ -36,6 +36,7 @@ import SheepIcon from './SheepIcon';
 import { useSharedTick } from '../hooks/useSharedTick';
 import { perf } from '../perf';
 import { startSpeech, speechEngine, type SpeechHandle } from '../voice/speech';
+import { VOICE_TOGGLE_EVENT, COMPOSER_CLEAR_EVENT, COMPOSER_SEND_EVENT, VoiceBars } from './VoiceInputButton';
 
 /* ── How this device reads a pane ─────────────────────────────────────────
  * One setting for the whole app: having chosen the conversation view, every
@@ -788,7 +789,11 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
 }) {
   switch (m.kind) {
     case 'user':
-      return <div className="nat-msg nat-user" data-mid={m.id} data-user-text={m.text}><UserBubble text={m.text} /></div>;
+      return (
+        <div className={`nat-msg nat-user${m.id.startsWith('queued-') ? ' nat-queued' : ''}`} data-mid={m.id} data-user-text={m.text}>
+          <UserBubble text={m.text} />
+        </div>
+      );
     case 'command':
       // The command, not its expansion — a skill's body is thousands of words
       // the agent received and you did not write.
@@ -932,9 +937,12 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
    * that reason.
    */
   /** Dictation into the composer. Words land in the box as you speak (on a
-   *  phone; desktop's Whisper fills it on stop). Nothing is sent: Enter is
+   *  phone; desktop's server model fills it on stop). Nothing is sent: Enter is
    *  yours, like the pane bar's mic. */
-  const [mic, setMic] = useState<'idle' | 'listening' | 'transcribing'>('idle');
+  // `opening`: mic asked for, not recording yet — the button doesn't light up
+  // until it really is.
+  const [mic, setMic] = useState<'idle' | 'opening' | 'listening' | 'transcribing'>('idle');
+  const micBtnRef = useRef<HTMLButtonElement>(null);
   const [micError, setMicError] = useState<string | null>(null);
   const micRef = useRef<SpeechHandle | null>(null);
   const micBase = useRef('');
@@ -956,14 +964,17 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
   const startMic = async () => {
     setMicError(null);
     micBase.current = draft;
-    setMic('listening');
+    setMic('opening');
     try {
       micRef.current = await startSpeech({
+        // Straight to the DOM: a state write per frame would re-render the chat.
+        onLevel: level => { micBtnRef.current?.style.setProperty('--voice-level', level.toFixed(2)); },
         onPartial: t => setDraft(joinDraft(micBase.current, t)),
         // A phone stops by itself after a pause: take what it heard.
         onEnd: () => { void stopMic(); },
         onTranscribing: () => setMic('transcribing'),
       });
+      setMic(m => (m === 'opening' ? 'listening' : m));
     } catch (e) {
       micRef.current = null;
       setMic('idle');
@@ -972,6 +983,37 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     }
   };
   useEffect(() => () => micRef.current?.cancel(), []);
+  // ⌘⇧Space / controller A: when this composer is on screen its mic answers,
+  // not the pane bar's (which would type past the composer): preventDefault
+  // here, and the pane bar checks it once the dispatch is over.
+  // The controller's B / X (gamepad.ts) clear and send the composer the same
+  // way: claimed here when it is on screen, else gamepad.ts falls back to
+  // the terminal.
+  const composerKeyRef = useRef<(type: string) => boolean>(() => false);
+  composerKeyRef.current = (type) => {
+    if (!micBtnRef.current?.offsetParent) return false;
+    if (type === VOICE_TOGGLE_EVENT) {
+      if (blocked) return false;
+      if (mic === 'idle') void startMic();
+      else if (mic === 'listening') void stopMic();
+    } else if (type === COMPOSER_CLEAR_EVENT) {
+      micRef.current?.cancel();
+      micRef.current = null;
+      setMic('idle');
+      setDraft('');
+      setAttached([]);
+    } else if (type === COMPOSER_SEND_EVENT) {
+      if (mic !== 'idle') return true; // the words aren't in the box yet
+      submit();
+    }
+    return true;
+  };
+  useEffect(() => {
+    const on = (e: Event) => { if (composerKeyRef.current(e.type)) e.preventDefault(); };
+    const types = [VOICE_TOGGLE_EVENT, COMPOSER_CLEAR_EVENT, COMPOSER_SEND_EVENT];
+    for (const t of types) window.addEventListener(t, on);
+    return () => { for (const t of types) window.removeEventListener(t, on); };
+  }, []);
   useEffect(() => { if (!micError) return; const t = setTimeout(() => setMicError(null), 5000); return () => clearTimeout(t); }, [micError]);
 
   const draftKey = `sheepit:draft:${sessionId}`;
@@ -1154,6 +1196,14 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
    * is what the TUI was handed.
    */
   const [pending, setPending] = useState<NativeMessage[]>([]);
+  // A message sent mid-turn waits in Claude Code's queue until the turn ends —
+  // minutes, not three seconds. While the turn runs no echo expires; it is
+  // drawn as queued (id `queued-…`), and its deadline restarts when the turn
+  // ends, which is when the agent takes it.
+  const turnBusy = useStore(s => !!s.sessionBusy[sessionId]);
+  useEffect(() => {
+    if (!turnBusy) setPending(p => (p.length ? p.map(m => ({ ...m, at: Date.now() })) : p));
+  }, [turnBusy]);
 
   /**
    * Images pasted or dropped onto the conversation.
@@ -1337,10 +1387,10 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
       onHandoff(true);
     }
     setAttached([]);
-    setPending(p => [...p, { id: `pending-${Date.now()}`, kind: 'user', text, at: Date.now() }]);
+    setPending(p => [...p, { id: `${turnBusy ? 'queued' : 'pending'}-${Date.now()}`, kind: 'user', text, at: Date.now() }]);
     setDraft('');
     atBottom.current = true;
-  }, [draft, attached, sessionId, blocked, onHandoff, state?.messages.length]);
+  }, [draft, attached, sessionId, blocked, onHandoff, state?.messages.length, turnBusy]);
 
   /**
    * Drop an echo once the real row for it is in the conversation — **or once
@@ -1375,19 +1425,19 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     const now = Date.now();
     setPending(p => {
       const next = p.filter(m =>
-        !real.has(firstLine((m as { text: string }).text)) && now - m.at < ECHO_TTL_MS);
+        !real.has(firstLine((m as { text: string }).text)) && (turnBusy || now - m.at < ECHO_TTL_MS));
       return next.length === p.length ? p : next;
     });
-  }, [state?.messages, pending.length]);
+  }, [state?.messages, pending.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // An echo that outlived its deadline while nothing else re-rendered — the
   // effect above only runs when a message arrives or one is sent, and a lone
   // stuck echo is precisely the case where neither happens.
   useEffect(() => {
-    if (!pending.length) return;
+    if (!pending.length || turnBusy) return;
     const t = setTimeout(() => setPending(p => p.filter(m => Date.now() - m.at < ECHO_TTL_MS)), ECHO_TTL_MS);
     return () => clearTimeout(t);
-  }, [pending]);
+  }, [pending, turnBusy]);
 
   /**
    * **The question you are currently reading the answer to.**
@@ -2002,7 +2052,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             disabled={blocked}
             onClick={() => fileRef.current?.click()}
           >
-            <Paperclip size={14} />
+            <Paperclip size={15} />
           </button>
           <input
             ref={fileRef}
@@ -2017,14 +2067,15 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             }}
           />
           <button
-            className={`nat-attach-btn nat-mic${mic !== 'idle' ? ' is-on' : ''}`}
+            ref={micBtnRef}
+            className={`nat-attach-btn nat-mic${mic === 'listening' ? ' is-on' : ''}`}
             title={mic === 'listening' ? 'Stop dictating' : mic === 'transcribing' ? 'Transcribing…'
-              : speechEngine() === 'whisper' ? 'Dictate (local Whisper)' : 'Dictate'}
+              : speechEngine() === 'whisper' ? 'Dictate (local Parakeet)' : 'Dictate'}
             aria-label="Dictate"
-            disabled={mic === 'transcribing' || blocked}
+            disabled={mic === 'transcribing' || mic === 'opening' || blocked}
             onClick={() => (mic === 'listening' ? void stopMic() : void startMic())}
           >
-            {mic === 'transcribing' ? <span className="nat-tool-spin" /> : <Mic size={15} />}
+            {mic === 'transcribing' ? <span className="nat-tool-spin" /> : mic === 'listening' ? <VoiceBars /> : <Mic size={15} />}
           </button>
           {micError && <span className="nat-mic-error" role="alert">{micError}</span>}
           {busy ? (
@@ -2046,7 +2097,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
               title="Stop the turn"
               onClick={() => sharedWs.send({ type: 'native_interrupt', session_id: sessionId })}
             >
-              <Square size={11} fill="currentColor" /> Stop
+              <Square size={10} fill="currentColor" /> Stop
             </button>
           ) : (
             <button className="nat-send" title="Send (Enter)" aria-label="Send" onClick={submit} disabled={!draft.trim() && !attached.length}>

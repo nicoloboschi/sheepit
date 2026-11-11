@@ -5,7 +5,7 @@
 //   no model download, nothing on our CPU. The WebView has no Web Speech API.
 // - a phone browser with Web Speech (Chrome on Android): the same recognizer,
 //   reached from the page.
-// - everywhere else (desktop): the Whisper model in a worker (dictation.ts),
+// - everywhere else (desktop): Parakeet on the sheepit server (dictation.ts),
 //   the pane bar's mic. Desktop Chrome's Web Speech sends audio to Google; the
 //   local model is what the pane bar already uses, so the two mics agree.
 
@@ -24,9 +24,11 @@ export interface SpeechOptions {
   onPartial?: (text: string) => void;
   /** The engine stopped by itself (silence on a phone). `stop()` still works. */
   onEnd?: () => void;
-  /** Whisper only: the engine is transcribing / downloading its model. */
+  /** Server engine only: the recording is being transcribed. */
   onTranscribing?: () => void;
   onProgress?: (fraction: number) => void;
+  /** Server engine only: mic loudness 0–1, per frame while recording. */
+  onLevel?: (level: number) => void;
 }
 
 type WebSpeech = {
@@ -52,7 +54,7 @@ export async function startSpeech(opts: SpeechOptions = {}): Promise<SpeechHandl
   const engine = speechEngine();
   if (engine === 'phone') return startNative(opts);
   if (engine === 'browser') return startWeb(opts);
-  const h = await startDictation({ onTranscribing: opts.onTranscribing, onProgress: opts.onProgress });
+  const h = await startDictation({ onTranscribing: opts.onTranscribing, onProgress: opts.onProgress, onLevel: opts.onLevel });
   return { stop: () => h.stop(), cancel: () => h.cancel() };
 }
 
