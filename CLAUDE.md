@@ -144,10 +144,12 @@ Rules of thumb:
 
 ### The URL
 
-`#<workspaceId>[/p:<sessionId>][/f:<fieldId>][/b:<page>]`
+`#<workspaceId>[/p:<sessionId>][/f:<fieldId>][/s:<systemPage>][/b:<page>]`
 
 - Field is per tab, in the URL, not in preferences. On restore apply the field
   *after* the workspace (the URL wins over the pull-to-field).
+- `/s:` is present while System shows and names its page (`systemPage` in the
+  store), so Back/Forward walk Agents ⇄ System and System's pages.
 - `/p:` names the shown pane. `/b:` is the active pane's browser page,
   percent-encoded, always last.
 

@@ -932,7 +932,11 @@ export default function FilesPane({ sessionId, openFileRef, onFileSelect, highli
   // Expose openFile(path) to parent via ref
   useEffect(() => {
     if (!openFileRef) return;
-    openFileRef.current = async (requested: string, opts?: { pin?: boolean }) => {
+    openFileRef.current = async (raw: string, opts?: { pin?: boolean }) => {
+      // A folder clicked in a terminal arrives here too: browse into it rather
+      // than opening it as a tab that can only say "Path is a directory".
+      const requested = raw.replace(/\/+$/, '') || '/';
+      if (await browse(requested)) return;
       // Browse to the file's parent directory, then select it
       const parentDir = requested.includes('/') ? requested.split('/').slice(0, -1).join('/') : null;
       const shown = await browse(parentDir);

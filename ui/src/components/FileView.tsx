@@ -322,12 +322,18 @@ export default function FileView({
   // <img>/<iframe> — an SVG is the exception, being a picture whose source you
   // can also read).
   useEffect(() => {
-    if (!path || mode === 'diff' || pdfFile || vidFile || audFile || (imgFile && !svgFile)) return;
-    setError(null); setSaveMsg(null); setLoading(true);
+    // Cleared for every file, pictures included: they skip the fetch below, so
+    // the last file's error would otherwise stay up over them.
+    setError(null); setSaveMsg(null);
+    if (!path || mode === 'diff' || pdfFile || vidFile || audFile || (imgFile && !svgFile)) { setLoading(false); return; }
+    setLoading(true);
+    // A slow answer for the file you just left must not land on this one.
+    let cancelled = false;
     fetch(`/api/fs/raw?path=${encodeURIComponent(path)}`)
       .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.text(); })
-      .then(text => { setContent(text); setOriginal(text); setLoading(false); setDiskChanged(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+      .then(text => { if (cancelled) return; setContent(text); setOriginal(text); setLoading(false); setDiskChanged(false); })
+      .catch(e => { if (cancelled) return; setError(e.message); setLoading(false); });
+    return () => { cancelled = true; };
   }, [path, mode]); // eslint-disable-line
 
   // Live updates: subscribe to on-disk changes for the open file and re-fetch

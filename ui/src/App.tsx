@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/core';
 import { setDropHint, useDropHintStore } from './dropHint';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import useStore, { activeTerminalSend, activePaneCycleView } from './store';
+import useStore, { activeTerminalSend, activePaneCycleView, SYSTEM_PAGES, type SystemPage } from './store';
 import { requestNotificationPermission } from './utils';
 import { ensureStackLoaded } from './googleFonts';
 import * as sharedWs from './sharedWs';
@@ -93,7 +93,10 @@ export default function App() {
 
   /** Build the hash fragment from workspace + shown pane + field + the page
    *  the shown pane's browser is showing.
-   *  Format: `#workspaceId[/p:sessionId][/f:fieldId][/b:url]`
+   *  Format: `#workspaceId[/p:sessionId][/f:fieldId][/s:systemPage][/b:url]`
+   *
+   *  `/s:` is there while System shows, naming its page, so Back and Forward
+   *  walk Agents ⇄ System and the pages inside System like any other page.
    *
    *  The pane rides here because a pen holds many sheep and shows one: a link
    *  to a pen alone lands you on whichever sheep that pen last had open, which
@@ -109,15 +112,16 @@ export default function App() {
    *  tabs standing in two different fields is the point, and one shared key
    *  would have the second tab drag the first. A refresh keeps each where it
    *  was, and a link carries the field with it. */
-  const buildHash = useCallback((wsId: string, paneId?: string | null, fieldId?: string | null, browserUrl?: string | null) => {
+  const buildHash = useCallback((wsId: string, paneId?: string | null, fieldId?: string | null, browserUrl?: string | null, systemPage?: SystemPage | null) => {
     return `#${wsId}`
       + (paneId ? `/p:${paneId}` : '')
       + (fieldId ? `/f:${encodeURIComponent(fieldId)}` : '')
+      + (systemPage ? `/s:${systemPage}` : '')
       + (browserUrl ? `/b:${encodeURIComponent(browserUrl)}` : '');
   }, []);
 
   /** Parse hash → { workspaceId, paneSessionId, fieldId, browserUrl } */
-  const parseHash = useCallback((hash: string): { workspaceId: string; paneSessionId: string | null; fieldId: string | null; browserUrl: string | null } | null => {
+  const parseHash = useCallback((hash: string): { workspaceId: string; paneSessionId: string | null; fieldId: string | null; browserUrl: string | null; systemPage: SystemPage | null } | null => {
     const raw = hash.replace(/^#/, '');
     if (!raw) return null;
     // Field ids contain ':' (`fld:default`) but never '/', so the segments are
@@ -126,6 +130,8 @@ export default function App() {
     const fieldSegment = segments.find(x => x.startsWith('f:'));
     const fieldId = fieldSegment ? decodeURIComponent(fieldSegment.slice(2)) : null;
     const paneSegment = segments.find(x => x.startsWith('p:'));
+    const systemSegment = segments.find(x => x.startsWith('s:'))?.slice(2) as SystemPage | undefined;
+    const systemPage = systemSegment && SYSTEM_PAGES.includes(systemSegment) ? systemSegment : null;
     const wsId = head;
     const panePart = paneSegment?.slice(2);
     // The page's own '/' survived the split above, so it is put back together
@@ -134,7 +140,7 @@ export default function App() {
     const browserUrl = browserAt === -1
       ? null
       : decodeURIComponent(segments.slice(browserAt).join('/').slice(2));
-    return { workspaceId: wsId!, paneSessionId: panePart ?? null, fieldId, browserUrl };
+    return { workspaceId: wsId!, paneSessionId: panePart ?? null, fieldId, browserUrl, systemPage };
   }, []);
 
   /** Resolve a hash into a workspace that actually exists right now, plus the
@@ -156,7 +162,7 @@ export default function App() {
     // A field from another browser's URL may not exist here; dropping it
     // leaves the sidebar on whatever it was showing rather than empty.
     const fieldId = parsed.fieldId && useStore.getState().fields[parsed.fieldId] ? parsed.fieldId : null;
-    return { workspaceId, paneIndex: paneIndex < 0 ? null : paneIndex, fieldId, browserUrl: parsed.browserUrl };
+    return { workspaceId, paneIndex: paneIndex < 0 ? null : paneIndex, fieldId, browserUrl: parsed.browserUrl, systemPage: parsed.systemPage };
   }, [parseHash]);
 
   /** Push the current workspace, shown pane and field into the URL hash. */
@@ -164,14 +170,14 @@ export default function App() {
     if (fromPopstateRef.current) return;
     // Don't overwrite the opened link before we've had a chance to honour it.
     if (!initialHashAppliedRef.current && initialHashRef.current) return;
-    const { currentSessionId: wsId, selectedFieldId, workspaces, browserUrls } = useStore.getState();
+    const { currentSessionId: wsId, selectedFieldId, workspaces, browserUrls, systemOpen, systemPage } = useStore.getState();
     if (!wsId) return;
     // The shown pane's page, and only that one: several panes can hold a
     // browser, and a URL that carried all of them would be a URL nobody could
     // read or share. `browserUrls` only holds panes that are showing one.
     const ws = workspaces[wsId];
     const activePane = ws?.cells[ws.activeCell] ?? wsId;
-    const next = buildHash(wsId, ws ? activePane : null, selectedFieldId, browserUrls[activePane] ?? null);
+    const next = buildHash(wsId, ws ? activePane : null, selectedFieldId, browserUrls[activePane] ?? null, systemOpen ? systemPage : null);
     if (window.location.hash !== next) {
       history.pushState(null, '', next);
     }
@@ -229,7 +235,8 @@ export default function App() {
   });
   const selectedFieldId = useStore(s => s.selectedFieldId);
   const browserUrls = useStore(s => s.browserUrls);
-  useEffect(() => { syncHash(); }, [shownPane, selectedFieldId, browserUrls, syncHash]);
+  const systemPage = useStore(s => s.systemPage);
+  useEffect(() => { syncHash(); }, [shownPane, selectedFieldId, browserUrls, systemOpen, systemPage, syncHash]);
 
   // Browser back/forward: read workspace + pane from the hash.
   useEffect(() => {
@@ -238,6 +245,9 @@ export default function App() {
       if (!target) return;
       const store = useStore.getState();
       fromPopstateRef.current = true;
+      // Agents or System, and which System page: both are history entries.
+      if (target.systemPage) store.setSystemPage(target.systemPage);
+      store.setSystemOpen(!!target.systemPage);
       store.setCurrentSessionId(target.workspaceId);
       // The field LAST. setCurrentSessionId pulls the sidebar to the field of
       // the pen it selects, which is what stops a jump landing you on a pane
@@ -303,6 +313,11 @@ export default function App() {
               const ws = store2.workspaces[hashTarget.workspaceId];
               const pane = ws?.cells[ws.activeCell] ?? hashTarget.workspaceId;
               store2.requestBrowserUrl(pane, hashTarget.browserUrl);
+            }
+            // A link (or a reload) taken while System showed opens on System.
+            if (hashTarget.systemPage) {
+              useStore.getState().setSystemPage(hashTarget.systemPage);
+              useStore.getState().setSystemOpen(true);
             }
             break;
           }

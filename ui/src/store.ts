@@ -67,6 +67,8 @@ export interface ConfirmState {
 }
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected';
+export type SystemPage = 'files' | 'terminals' | 'github' | 'reps' | 'activity' | 'disk';
+export const SYSTEM_PAGES: readonly SystemPage[] = ['files', 'terminals', 'github', 'reps', 'activity', 'disk'];
 
 /** A Workspace is a sidebar row — a pen. It holds an ordered list of panes
  *  (sessions) and shows exactly ONE of them at a time, whichever `activeCell`
@@ -188,12 +190,16 @@ export interface StoreState {
    *  System (files, terminals, GitHub, reps, activity). Panes stay mounted
    *  under System and count as off screen while it shows. */
   systemOpen: boolean;
+  /** Which System page shows. In the store (not the panel) so the URL can
+   *  carry it and Back walks the pages. */
+  systemPage: SystemPage;
   /** Sidebar workspace list filter (Slack-style). */
   confirm: ConfirmState | null;
 
   setWsStatus: (status: WsStatus) => void;
   setSheetOpen: (open: boolean) => void;
   setSystemOpen: (open: boolean) => void;
+  setSystemPage: (page: SystemPage) => void;
   /** The flock-wide search palette (⌘K). In the store rather than in App so
    *  the toolbar, the mobile sheet and the shortcut all raise the same one. */
   searchOpen: boolean;
@@ -987,6 +993,7 @@ const useStore = create<StoreState>((set, get) => ({
   wsStatus: 'connecting',
   sheetOpen: false,
   systemOpen: false,
+  systemPage: 'files',
   searchOpen: false,
   confirm: null,
 
@@ -1000,6 +1007,10 @@ const useStore = create<StoreState>((set, get) => ({
 
   setSystemOpen(open: boolean) {
     set({ systemOpen: open });
+  },
+
+  setSystemPage(page: SystemPage) {
+    set({ systemPage: page });
   },
 
   setSearchOpen(open: boolean) {

@@ -8,10 +8,7 @@ import GithubPage from './GithubPage';
 import RepsPage from './RepsPage';
 import DiskPage from './DiskPage';
 
-type Page = 'files' | 'terminals' | 'github' | 'reps' | 'activity' | 'disk';
-/** The page you were on, for the next time the panel opens in this tab. */
-let lastPage: Page = 'files';
-import useStore from '../store';
+import useStore, { type SystemPage as Page } from '../store';
 import { preferences } from '../preferences';
 
 /** Favourited directories, in the server-side profile like every other
@@ -61,8 +58,8 @@ export default function SystemDialog({ openFile }: SystemDialogProps) {
   /** Which page fills the right side. Files stays mounted under the others,
    *  so coming back finds the folder and the open file where you left them;
    *  the rest mount only while shown (Activity and reps poll). */
-  const [page, setPageState] = useState<Page>(lastPage);
-  const setPage = (p: Page) => { lastPage = p; setPageState(p); };
+  const page = useStore(s => s.systemPage);
+  const setPage = useStore(s => s.setSystemPage);
   const scratchCount = useStore(useShallow(s => s.sessions.filter(x => x.isHeadless && !x.sideOf).length));
   /** Where the notes live (`~/.config/sheepit/notes`). Asked of the server,
    *  which also makes the folder and a first sheet if there are none. */
