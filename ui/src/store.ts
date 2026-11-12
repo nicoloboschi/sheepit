@@ -3,6 +3,7 @@ import { perf } from './perf';
 import { notify } from './utils';
 import { applyTheme, readTheme, readTerminalFont, DEFAULT_TERMINAL_FONT, TERMINAL_FONT_KEY, type AppTheme } from './theme';
 import { preferences, subscribePreferences } from './preferences';
+import { DEFAULT_VOICE_SHORTCUT } from './voiceShortcut';
 
 // ── Core types ──────────────────────────────────────────────────────────────
 
@@ -173,6 +174,12 @@ export interface StoreState {
   fontSize: number;
   /** The conversation view's size — see DEFAULT_NATIVE_FONT_SIZE. */
   nativeFontSize: number;
+  /** What toggles the mic — see voiceShortcut.ts. */
+  voiceShortcut: string;
+  setVoiceShortcut: (combo: string) => void;
+  /** Words dictation should spell your way — see voice/customWords.ts. */
+  voiceWords: string[];
+  setVoiceWords: (words: string[]) => void;
   /** Global terminal font stack — applies to every pane in every workspace.
    *  A CSS font-family value, not a single family: everything but the bundled
    *  JetBrains Mono depends on the viewing device having the font installed,
@@ -846,6 +853,14 @@ function saveWorkspaceZooms(zooms: Record<string, number>): void {
 
 // Global terminal font size — one value shared by every workspace/pane.
 const NATIVE_FONT_SIZE_KEY = 'sheepit:native-font-size';
+const VOICE_SHORTCUT_KEY = 'sheepit:voice-shortcut';
+const VOICE_WORDS_KEY = 'sheepit:voice-words';
+function loadVoiceWords(): string[] {
+  try {
+    const v = JSON.parse(preferences.getItem(VOICE_WORDS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((w): w is string => typeof w === 'string') : [];
+  } catch { return []; }
+}
 function loadNativeFontSize(): number {
   try {
     const raw = preferences.getItem(NATIVE_FONT_SIZE_KEY);
@@ -987,6 +1002,8 @@ const useStore = create<StoreState>((set, get) => ({
   browserNav: null,
   fontSize: loadFontSize(),
   nativeFontSize: loadNativeFontSize(),
+  voiceWords: loadVoiceWords(),
+  voiceShortcut: (() => { try { return preferences.getItem(VOICE_SHORTCUT_KEY) || DEFAULT_VOICE_SHORTCUT; } catch { return DEFAULT_VOICE_SHORTCUT; } })(),
   terminalFontFamily: readTerminalFont(),
   theme: readTheme(),
   workspaceZooms: loadWorkspaceZooms(),
@@ -1870,6 +1887,17 @@ const useStore = create<StoreState>((set, get) => ({
     const clamped = Math.max(MIN_NATIVE_FONT_SIZE, Math.min(MAX_NATIVE_FONT_SIZE, Math.round(size)));
     try { preferences.setItem(NATIVE_FONT_SIZE_KEY, String(clamped)); } catch { /* quota */ }
     set({ nativeFontSize: clamped });
+  },
+
+  setVoiceShortcut(combo: string) {
+    try { preferences.setItem(VOICE_SHORTCUT_KEY, combo); } catch { /* quota */ }
+    set({ voiceShortcut: combo });
+  },
+
+  setVoiceWords(words: string[]) {
+    const clean = [...new Set(words.map(w => w.trim()).filter(Boolean))];
+    try { preferences.setItem(VOICE_WORDS_KEY, JSON.stringify(clean)); } catch { /* quota */ }
+    set({ voiceWords: clean });
   },
 
   setTerminalFontFamily(family: string) {

@@ -46,6 +46,7 @@ import {
   DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from './components/ui/dropdown-menu';
 import VoiceInputButton, { VOICE_TOGGLE_EVENT } from './components/VoiceInputButton';
+import { comboOf } from './voiceShortcut';
 import { readPaneMode, subscribePaneMode } from './components/NativePane';
 import {
   Settings, ScrollText, ChevronDown, SquarePlus,
@@ -444,17 +445,26 @@ export default function App() {
         }
       }
     };
+    // The mic key (Settings → Shortcuts). Capture phase and stopped, so a
+    // ⌃/⌥ combo doesn't also reach the terminal or the chat box.
+    const voiceKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.dataset?.shortcutRecorder != null) return; // being changed in Settings
+      if (comboOf(e) !== useStore.getState().voiceShortcut) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Dictate into the shown pane; again to stop and type it.
+      window.dispatchEvent(new Event(VOICE_TOGGLE_EVENT, { cancelable: true }));
+    };
+    window.addEventListener('keydown', voiceKey, true);
+    // The desktop app takes the mic key back from a focused web page (main.cjs).
+    const desktop = (window as unknown as { sheepitDesktop?: { setVoiceShortcut?: (c: string) => void } }).sheepitDesktop;
+    desktop?.setVoiceShortcut?.(useStore.getState().voiceShortcut);
+    const stopVoiceSync = useStore.subscribe((s, prev) => { if (s.voiceShortcut !== prev.voiceShortcut) desktop?.setVoiceShortcut?.(s.voiceShortcut); });
     const down = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
         goSheep(e.key === 'ArrowUp' ? 'up' : 'down');
-        return;
-      }
-      if (e.key === ' ' && e.shiftKey) {
-        // Dictate into the shown pane; again to stop and type it.
-        e.preventDefault();
-        window.dispatchEvent(new Event(VOICE_TOGGLE_EVENT, { cancelable: true }));
         return;
       }
       if (e.key === 'j') {
@@ -505,7 +515,7 @@ export default function App() {
     };
     window.addEventListener('keydown', down);
     const stopGamepad = startGamepad(goSheep);
-    return () => { window.removeEventListener('keydown', down); stopGamepad(); };
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keydown', voiceKey, true); stopVoiceSync(); stopGamepad(); };
   }, [connectSession]); // eslint-disable-line
 
   // ── Global DnD wiring ──────────────────────────────────────────────────

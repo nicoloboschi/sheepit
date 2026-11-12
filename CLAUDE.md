@@ -743,11 +743,11 @@ worktree, or its folder when it has no repo).
   app (`@capacitor-community/speech-recognition`; the WebView has no Web
   Speech), Web Speech in a phone browser, Parakeet on the server on desktop
   (`src/voice.ts`, transcribe.cpp — Handy's model and engine; reuses Handy's
-  downloaded copy, else fetches it into the config dir).
+  downloaded copy, else fetches it into the config dir). Every engine's text then goes through custom words (`voice/customWords.ts`, a port of Handy's fuzzy fix-up; list in Settings → AI Features, `sheepit:voice-words`).
 - Game controller (`src/gamepad.ts` + `native/gamepad.swift`): macOS reads
   the pad (Chromium can't see a Switch Pro), server publishes `gamepad`
   presses, `ui/src/gamepad.ts` maps them. L/R and D-pad up/down switch
-  sheep; A toggles the mic (same as ⌘⇧Space, `VOICE_TOGGLE_EVENT`); B clears and
+  sheep; A toggles the mic (same as the mic key, ⌘⇧Space by default, set in Settings → Shortcuts, `voiceShortcut.ts`; Electron takes it back from a focused page via `voice-shortcut`; `VOICE_TOGGLE_EVENT`); B clears and
   X sends the chat composer (terminal fallback: Ctrl-U / Enter); only the
   focused window acts, and only the mic button on screen answers.
 - Phone UI: header has the Agents/System toggle and Settings (in the gear

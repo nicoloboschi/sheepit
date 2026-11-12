@@ -1,4 +1,6 @@
 // Mic capture for dictation; the server transcribes (src/voice.ts, Parakeet).
+import { applyCustomWords } from './customWords';
+import useStore from '../store';
 import { apiUrl } from '../serverUrl';
 //
 // The recording is held whole and transcribed once, on stop. Streaming would
@@ -27,7 +29,7 @@ async function transcribe(audio: Float32Array): Promise<string> {
   });
   const reply = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(reply.error ?? `HTTP ${res.status}`);
-  return reply.text ?? '';
+  return applyCustomWords(reply.text ?? '', useStore.getState().voiceWords);
 }
 
 async function toMono16k(blob: Blob): Promise<Float32Array> {

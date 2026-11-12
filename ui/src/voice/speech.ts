@@ -11,6 +11,8 @@
 
 import { isNativeApp, isNarrowScreen } from '../platform';
 import { startDictation } from './dictation';
+import { applyCustomWords } from './customWords';
+import useStore from '../store';
 
 export interface SpeechHandle {
   /** Finish: resolves with the final text (may be ''). */
@@ -52,8 +54,12 @@ export function speechEngine(): 'phone' | 'browser' | 'whisper' {
 
 export async function startSpeech(opts: SpeechOptions = {}): Promise<SpeechHandle> {
   const engine = speechEngine();
-  if (engine === 'phone') return startNative(opts);
-  if (engine === 'browser') return startWeb(opts);
+  if (engine !== 'whisper') {
+    // The phone's recognizer gets the same custom words afterwards (the
+    // server engine applies them in dictation.ts).
+    const h = engine === 'phone' ? await startNative(opts) : startWeb(opts);
+    return { stop: async () => applyCustomWords(await h.stop(), useStore.getState().voiceWords), cancel: () => h.cancel() };
+  }
   const h = await startDictation({ onTranscribing: opts.onTranscribing, onProgress: opts.onProgress, onLevel: opts.onLevel });
   return { stop: () => h.stop(), cancel: () => h.cancel() };
 }

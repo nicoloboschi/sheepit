@@ -198,7 +198,7 @@ const watchedOwners = new WeakSet();
 const watchedDownloadSessions = new WeakSet();
 let nextDownloadId = 1;
 /** ⌘-chords that belong to sheepit even while a page has focus (App.tsx). */
-const APP_SHORTCUTS = new Set(['j', 'k', 'n', 'ArrowUp', 'ArrowDown', ' ']);
+const APP_SHORTCUTS = new Set(['j', 'k', 'n', 'ArrowUp', 'ArrowDown']);
 
 /** What the pane draws from: the page's state plus a pending basic-auth ask. */
 function browserState(entry) {
@@ -355,6 +355,16 @@ ipcMain.on('browser:open', (event, id, url) => {
     event.sender.send('browser:find-result', id, { matches: result.matches, active: result.activeMatchOrdinal });
   });
   view.webContents.on('before-input-event', (inputEvent, input) => {
+    // The mic key is the user's choice (Settings → Shortcuts), so it can't be
+    // in APP_SHORTCUTS; the UI tells us what it is (`voice-shortcut`).
+    if (input.type === 'keyDown' && voiceShortcut) {
+      const combo = [input.control && 'Ctrl', input.alt && 'Alt', input.shift && 'Shift', input.meta && 'Meta', input.code].filter(Boolean).join('+');
+      if (combo === voiceShortcut && !event.sender.isDestroyed()) {
+        inputEvent.preventDefault();
+        event.sender.send('browser:voice-key', { code: input.code, ctrlKey: input.control, altKey: input.alt, shiftKey: input.shift, metaKey: input.meta });
+        return;
+      }
+    }
     if (input.type !== 'keyDown' || !input.meta || input.control || input.alt) return;
     // ⌘F is the page's, not the app's: it opens the find bar of the pane
     // showing it. Chromium has find-in-page and no UI for it here, so the bar
@@ -389,6 +399,8 @@ timedIpc('browser:bounds', (_event, id, rect) => {
 });
 
 ipcMain.on('browser:close', (_event, id) => closeView(id));
+let voiceShortcut = 'Shift+Meta+Space';
+ipcMain.on('voice-shortcut', (_event, combo) => { voiceShortcut = String(combo); });
 // The pane's answer to a `login`: credentials, or null to cancel.
 ipcMain.on('browser:auth', (event, id, username, password) => {
   const entry = views.get(id);

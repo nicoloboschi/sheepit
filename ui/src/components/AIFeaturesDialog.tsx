@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Check, Loader, RotateCw, Tag, RefreshCw } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
+import useStore from '../store';
 
 /**
  * What is left to configure now that nothing calls a model.
@@ -151,6 +152,33 @@ export function AIFeaturesContent() {
           </Button>
         </>
       )}
+      <VoiceWords />
+    </div>
+  );
+}
+
+/** Custom words for dictation, one per line; saved when the box loses focus. */
+function VoiceWords() {
+  const words = useStore(s => s.voiceWords);
+  const setWords = useStore(s => s.setVoiceWords);
+  const [text, setText] = useState(() => words.join('\n'));
+  useEffect(() => setText(words.join('\n')), [words]);
+  return (
+    <div className="flex flex-col gap-2 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+      <span className="text-xs font-medium text-foreground">Dictation words</span>
+      <span className="text-xs text-muted-foreground">
+        One per line. After you speak, words that look or sound close to one of these are replaced by it
+        (&ldquo;hind sight&rdquo; &rarr; Hindsight). Short words can catch ordinary ones that sound alike.
+      </span>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={() => setWords(text.split('\n'))}
+        rows={6}
+        spellCheck={false}
+        className="text-xs rounded px-2 py-1.5 font-mono"
+        style={{ background: 'var(--muted)', border: '1px solid var(--border)', color: 'var(--foreground)', resize: 'vertical' }}
+      />
     </div>
   );
 }

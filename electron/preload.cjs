@@ -31,7 +31,14 @@ ipcRenderer.on('browser:shortcut', (_event, { key, shiftKey }) => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, metaKey: true, bubbles: true, cancelable: true }));
 });
 
+// The mic key pressed while a page had focus; App.tsx's capture listener takes it.
+ipcRenderer.on('browser:voice-key', (_event, keys) => {
+  window.dispatchEvent(new KeyboardEvent('keydown', { ...keys, bubbles: true, cancelable: true }));
+});
+
 contextBridge.exposeInMainWorld('sheepitDesktop', {
+  /** Which combo toggles the mic, so main can take it back from a focused page. */
+  setVoiceShortcut: combo => ipcRenderer.send('voice-shortcut', combo),
   /** Hand a link to the OS, so it lands in the user's own browser rather than
    *  in another window of this app. Not under `browser` — that is the native
    *  view a pane draws, and this is the opposite of it. */
