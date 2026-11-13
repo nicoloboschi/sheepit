@@ -644,6 +644,10 @@ own port is dropped.
   only panes showing a browser.
 - Last page per pane in `sheepit:pane-url:<sessionId>` (its own key).
 - Loading bar from main-frame `Page.frameStartedLoading/StoppedLoading`.
+- A page that reloads itself forever (script/meta redirect) is blanked with a
+  reason after 12 loads in 8s (`main.cjs`, desktop only): every load pulled
+  focus into the view and the app took no keys. The bar's X blanks the page
+  and forgets it (`sheepit:pane-url`).
 - HTTP basic auth: neither browser has its own prompt. Electron's `login`
   event / CDP `Fetch.authRequired` (Fetch enabled for `Document` only) become
   `auth` on the pane state; `PreviewPane` draws the form (covering the native

@@ -25,7 +25,7 @@
  *    away because it never went anywhere.
  */
 import { rawFileUrl } from '../serverUrl';
-import { useEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, memo, createContext, useContext } from 'react';
 import { Square, ArrowUp, Paperclip, Mic, AlertTriangle, SquareTerminal, ListChecks, ClipboardCheck, X, ChevronDown, Scissors, GitBranch, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -664,6 +664,12 @@ function Linkified({ text }: { text: string }): React.ReactElement {
   );
 }
 
+/** Starts a message that was dictated, so Claude reads it as speech (words
+ *  may be misheard) — a few tokens. The chat shows it as sent and draws
+ *  the text green. Only the composer's mic adds it; the pane bar's mic types into
+ *  whatever runs in the terminal, which may be a shell. */
+const VOICE_TAG = '[voice] ';
+
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {
   const cwd = useContext(PaneCwd);
   const images = useMemo(() => imagesIn(text, cwd), [text, cwd]);
@@ -790,7 +796,7 @@ const MessageBlock = memo(function MessageBlock({ m, onOpenTerminal, tookMs }: {
   switch (m.kind) {
     case 'user':
       return (
-        <div className={`nat-msg nat-user${m.id.startsWith('queued-') ? ' nat-queued' : ''}`} data-mid={m.id} data-user-text={m.text}>
+        <div className={`nat-msg nat-user${m.id.startsWith('queued-') ? ' nat-queued' : ''}${m.text.startsWith(VOICE_TAG) ? ' nat-voice' : ''}`} data-mid={m.id} data-user-text={m.text}>
           <UserBubble text={m.text} />
         </div>
       );
@@ -953,6 +959,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     micRef.current = null;
     try {
       const text = await h.stop();
+      if (text) dictated.current = true;
       setDraft(joinDraft(micBase.current, text));
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Dictation failed');
@@ -969,8 +976,9 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
       micRef.current = await startSpeech({
         // Straight to the DOM: a state write per frame would re-render the chat.
         onLevel: level => { micBtnRef.current?.style.setProperty('--voice-level', level.toFixed(2)); },
-        onPartial: t => setDraft(joinDraft(micBase.current, t)),
-        // A phone stops by itself after a pause: take what it heard.
+        onPartial: t => { dictated.current = true; setDraft(joinDraft(micBase.current, t)); },
+        // A phone stops by itself after a pause, desktop at the time limit:
+        // take what it heard.
         onEnd: () => { void stopMic(); },
         onTranscribing: () => setMic('transcribing'),
       });
@@ -1001,6 +1009,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
       micRef.current = null;
       setMic('idle');
       setDraft('');
+      dictated.current = false;
       setAttached([]);
     } else if (type === COMPOSER_SEND_EVENT) {
       if (mic !== 'idle') return true; // the words aren't in the box yet
@@ -1028,6 +1037,29 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
   }, [draft, draftKey]);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** Some of the draft came from the mic: the message is sent with VOICE_TAG. */
+  const dictated = useRef(false);
+  // Grow with the text, to a ceiling (a third of the window, at least 160px):
+  // a composer that can take the whole pane leaves nowhere to read the
+  // answer. On the draft, not on typing, so dictated, restored and cleared
+  // text size the box too.
+  // Hidden (the pane shows its terminal), a textarea measures 0 and would be
+  // pinned at 0px — no box to type in — so it is skipped then, and measured
+  // again when it comes back on screen (the observer below).
+  const fitInput = useCallback(() => {
+    const el = inputRef.current;
+    if (!el || !el.offsetParent) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, Math.max(160, innerHeight / 3))}px`;
+  }, []);
+  useLayoutEffect(fitInput, [draft, fitInput]);
+  useEffect(() => {
+    const box = inputRef.current?.parentElement;
+    if (!box) return;
+    const ro = new ResizeObserver(() => fitInput());
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [fitInput]);
   const fileRef = useRef<HTMLInputElement>(null);
   /** Whether the list is parked at the bottom. Only then does new output
    *  scroll it: yanking someone back down while they are reading a tool result
@@ -1371,7 +1403,9 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
      * pane you came back to, with no way to type the thing that unlocks it.
      */
     if (blocked) return;
-    const body = draft.trim();
+    const said = draft.trim();
+    // Dictated: tag it, unless it is a command (`/…` must stay first).
+    const body = said && dictated.current && !said.startsWith('/') ? VOICE_TAG + said : said;
     // The paths go with the message, because a path is what the agent can
     // open. An attachment with no words is a legitimate message — "look at
     // this" — so an empty draft with something attached still sends.
@@ -1389,6 +1423,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
     setAttached([]);
     setPending(p => [...p, { id: `${turnBusy ? 'queued' : 'pending'}-${Date.now()}`, kind: 'user', text, at: Date.now() }]);
     setDraft('');
+    dictated.current = false;
     atBottom.current = true;
   }, [draft, attached, sessionId, blocked, onHandoff, state?.messages.length, turnBusy]);
 
@@ -1963,7 +1998,8 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
           <span className="nat-prompt-mark" aria-hidden="true">❯</span>
           <textarea
             ref={inputRef}
-            className="nat-input"
+            // Green while the draft is (partly) dictated, like the sent message.
+            className={`nat-input${dictated.current && draft ? ' nat-input-voice' : ''}`}
             value={draft}
             disabled={blocked}
             placeholder={
@@ -1976,11 +2012,7 @@ export default function NativePane({ sessionId, onOpenTerminal, onHandoff, onOpe
             rows={1}
             onChange={(e) => {
               setDraft(e.target.value);
-              // Grow with the text, to a ceiling: a composer that can take the
-              // whole pane leaves nowhere to read the answer.
-              const el = e.target;
-              el.style.height = 'auto';
-              el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+              if (!e.target.value) dictated.current = false;
             }}
             onPaste={(e) => {
               // A screenshot arrives as a file on the clipboard, not as text, so

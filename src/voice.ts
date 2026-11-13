@@ -9,9 +9,15 @@
  *
  *   POST /api/voice/warm         → { ok } once the model is loaded
  *   POST /api/voice/transcribe   body: 16 kHz mono float32 PCM → { text }
+ *   GET  /api/voice/history      → { items: [{ text, at }] }, newest first
+ *   POST /api/voice/history      { text } — the final text (after custom
+ *                                words), from every engine, phone included
+ *
+ * History: the last HISTORY_MAX dictations in voice-history.json, so a text
+ * that went to the wrong place can be copied again.
  */
 import { Router, raw } from 'express';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, renameSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { Readable } from 'stream';
@@ -21,8 +27,9 @@ import { configDir } from './paths.js';
 
 const REPO = 'handy-computer/parakeet-unified-en-0.6b-gguf';
 const FILE = 'parakeet-unified-en-0.6b-Q8_0.gguf';
-// 60s of audio (the UI's cap) is 3.84 MB of float32.
-const MAX_BODY = '8mb';
+// 5 min of audio (the UI's cap) is 19.2 MB of float32. Parakeet took 4 min
+// of speech in one go in ~5s (measured).
+const MAX_BODY = '24mb';
 
 async function modelPath(log: (msg: string) => void): Promise<string> {
   const snapshots = join(homedir(), '.cache', 'huggingface', 'hub', `models--${REPO.replace('/', '--')}`, 'snapshots');
@@ -46,6 +53,23 @@ async function modelPath(log: (msg: string) => void): Promise<string> {
   return p;
 }
 
+const HISTORY_MAX = 50;
+type Dictation = { text: string; at: number };
+const historyFile = () => join(configDir(), 'voice-history.json');
+function readHistory(): Dictation[] {
+  try {
+    const v = JSON.parse(readFileSync(historyFile(), 'utf8'));
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+function remember(text: string) {
+  const items = [{ text, at: Date.now() }, ...readHistory()].slice(0, HISTORY_MAX);
+  const tmp = `${historyFile()}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(items, null, 2) + '\n');
+  renameSync(tmp, historyFile());
+}
+
+let queue: Promise<unknown> = Promise.resolve();
 let loading: Promise<TranscribeModel> | null = null;
 function model(log: (msg: string) => void): Promise<TranscribeModel> {
   loading ??= (async () => {
@@ -71,11 +95,21 @@ export function createVoiceRouter(log: (msg: string) => void): Router {
     try {
       // Copied out: a Float32Array needs 4-byte alignment, which a pooled Buffer may not have.
       const pcm = new Float32Array(body.buffer.slice(body.byteOffset, body.byteOffset + body.length));
-      const result = await (await model(log)).transcribe(pcm);
+      // One run at a time: the live preview and the final run overlap.
+      const run = queue.then(async () => (await model(log)).transcribe(pcm));
+      queue = run.catch(() => {});
+      const result = await run;
       res.json({ text: result.text.trim() });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
+  });
+  router.get('/voice/history', (_req, res) => { res.json({ items: readHistory() }); });
+  router.post('/voice/history', (req, res) => {
+    const text = (req.body as { text?: unknown } | undefined)?.text;
+    if (typeof text !== 'string' || !text.trim() || text.length > 20_000) return res.status(400).json({ error: 'expected { text }' });
+    try { remember(text.trim()); res.json({ ok: true }); }
+    catch (err) { res.status(500).json({ error: String(err) }); }
   });
   return router;
 }

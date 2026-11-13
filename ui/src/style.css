@@ -3461,6 +3461,8 @@
   top: 5px;
   color: var(--primary);
 }
+/* Dictated (VOICE_TAG): the words are green, the way the mic is. */
+.nat-voice .nat-bubble-body { color: var(--primary); }
 /* **Three lines, then it opens on click.** A prompt can be a paragraph or a
    pasted essay, and a long one pushes the answer you are looking for off the
    screen — while the first line is almost always enough to recognise which
@@ -4213,9 +4215,10 @@
   font-size: var(--nat-size);
   line-height: 1.5;
   outline: none;
-  max-height: 180px;
+  max-height: max(160px, 33vh); /* the JS ceiling in NativePane, same numbers */
 }
 .nat-input::placeholder { color: var(--muted-foreground); }
+.nat-input-voice { color: var(--primary); }
 /* While the agent holds a dialog the composer takes nothing: a message typed
    into a permission selector does not merely fail, its Enter picks whatever
    row is highlighted. See the note on `blocked` in NativePane. */
@@ -4607,4 +4610,65 @@ html :disabled { cursor: not-allowed; }
   .nat-prompt-mark { display: none; }
   .nat-bar { display: none; }
   .nat-to-bottom { left: 50%; right: auto; transform: translateX(-50%); bottom: 88px; width: 36px; height: 36px; }
+}
+
+/* The mic is open: the whole window glows green at its edges (dictation.ts
+   sets .voice-on and --voice-level on <html>). One fixed layer, opacity only,
+   so a frame's change is a composite, not a repaint. The base fades in; the
+   inner ring breathes with the voice. */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+body::before {
+  box-shadow:
+    inset 0 0 0 1.5px rgba(176, 206, 147, 0.7),
+    inset 0 0 24px 2px rgba(156, 188, 127, 0.35),
+    inset 0 0 80px 8px rgba(111, 169, 140, 0.16);
+}
+body::after {
+  box-shadow:
+    inset 0 0 14px 3px rgba(190, 222, 160, 0.75),
+    inset 0 0 60px 12px rgba(156, 188, 127, 0.4);
+}
+.voice-on body::before { opacity: 1; }
+.voice-edge-wave {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+.voice-on body::after {
+  opacity: calc(var(--voice-level, 0) * 0.9);
+  transition: opacity 0.09s linear;
+}
+/* Transcribing: the glow breathes and a light runs around the edges. Only
+   for the second or two the text takes, so the per-frame repaint is fine. */
+@property --voice-spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes voice-spin { to { --voice-spin: 360deg; } }
+@keyframes voice-breathe { 50% { opacity: 0.55; } }
+.voice-busy body::before { opacity: 1; animation: voice-breathe 1.2s ease-in-out infinite; }
+.voice-busy body::after {
+  opacity: 1;
+  box-shadow: none;
+  background: conic-gradient(from var(--voice-spin), transparent 0 50%, rgba(156, 188, 127, 0.6) 72%, rgba(225, 245, 205, 1) 88%, transparent 100%);
+  /* A 4px ring: two bands added (left+right, top+bottom). The content-box
+     exclude trick drew nothing on a fixed pseudo-element in Chrome. */
+  mask:
+    linear-gradient(to right, #000 4px, transparent 4px calc(100% - 4px), #000 calc(100% - 4px)),
+    linear-gradient(to bottom, #000 4px, transparent 4px calc(100% - 4px), #000 calc(100% - 4px));
+  animation: voice-spin 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-on body::after { opacity: 0; }
+  .voice-busy body::before { animation: none; }
+  .voice-busy body::after { animation: none; }
 }

@@ -10,7 +10,7 @@
 //   local model is what the pane bar already uses, so the two mics agree.
 
 import { isNativeApp, isNarrowScreen } from '../platform';
-import { startDictation } from './dictation';
+import { startDictation, rememberDictation } from './dictation';
 import { applyCustomWords } from './customWords';
 import useStore from '../store';
 
@@ -24,7 +24,8 @@ export interface SpeechHandle {
 export interface SpeechOptions {
   /** Live text so far, when the engine gives it (phone engines do). */
   onPartial?: (text: string) => void;
-  /** The engine stopped by itself (silence on a phone). `stop()` still works. */
+  /** The engine stopped by itself (silence on a phone, the time limit on
+   *  desktop). `stop()` still works. */
   onEnd?: () => void;
   /** Server engine only: the recording is being transcribed. */
   onTranscribing?: () => void;
@@ -58,9 +59,9 @@ export async function startSpeech(opts: SpeechOptions = {}): Promise<SpeechHandl
     // The phone's recognizer gets the same custom words afterwards (the
     // server engine applies them in dictation.ts).
     const h = engine === 'phone' ? await startNative(opts) : startWeb(opts);
-    return { stop: async () => applyCustomWords(await h.stop(), useStore.getState().voiceWords), cancel: () => h.cancel() };
+    return { stop: async () => rememberDictation(applyCustomWords(await h.stop(), useStore.getState().voiceWords)), cancel: () => h.cancel() };
   }
-  const h = await startDictation({ onTranscribing: opts.onTranscribing, onProgress: opts.onProgress, onLevel: opts.onLevel });
+  const h = await startDictation({ onTranscribing: opts.onTranscribing, onProgress: opts.onProgress, onLevel: opts.onLevel, onEnd: opts.onEnd, onPartial: opts.onPartial });
   return { stop: () => h.stop(), cancel: () => h.cancel() };
 }
 

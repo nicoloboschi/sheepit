@@ -305,6 +305,29 @@ ipcMain.on('browser:open', (event, id, url) => {
       push();
     });
   }
+  // **A page that redirects forever is stopped.** Chromium caps HTTP
+  // redirects (ERR_TOO_MANY_REDIRECTS) but not a page that sends itself on
+  // with script or a meta refresh — and each of those loads pulls macOS focus
+  // into the view, so the whole app stopped taking keys while that pane was
+  // shown. Past LOOP_LOADS page loads in LOOP_MS it goes blank with a reason.
+  // An OAuth bounce is ~5 loads; nothing real is 12 in 8s.
+  const LOOP_LOADS = 12, LOOP_MS = 8000;
+  let loads = [];
+  view.webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument || details.url === 'about:blank') return;
+    const now = Date.now();
+    loads = loads.filter(t => now - t < LOOP_MS);
+    loads.push(now);
+    if (loads.length <= LOOP_LOADS) return;
+    loads = [];
+    const wc = view.webContents;
+    wc.stop();
+    wc.loadURL('about:blank').catch(() => {}).finally(() => {
+      const entry = views.get(id);
+      if (entry) entry.error = `Stopped: the page kept reloading itself (more than ${LOOP_LOADS} loads in ${LOOP_MS / 1000}s). Last: ${details.url}`;
+      push();
+    });
+  });
   // A load that failed. Electron leaves the view blank for most of these — no
   // Chromium error page — so the pane has to say what happened itself.
   view.webContents.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {

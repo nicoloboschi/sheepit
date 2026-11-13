@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RowReader, answerKeys } from '../claude-native.js'
+import { RowReader, answerKeys, unwrapPasted } from '../claude-native.js'
 
 describe('RowReader: a message with an attached image', () => {
   it('is one user message: marker dropped, image path joined, meta row hidden', () => {
@@ -53,3 +53,12 @@ describe('answerKeys: the keys that answer AskUserQuestion', () => {
       .toEqual(['2', '1', '3', D, D, D, D, '\r', '1'])
   })
 })
+
+describe('unwrapPasted', () => {
+  it('keeps the words of a recorded paste, drops the wrapper', () => {
+    expect(unwrapPasted('\n\n<pasted_content id="7af1">\n[voice] hello\nthere\n</pasted_content id="7af1">\n').trim())
+      .toBe('[voice] hello\nthere');
+    expect(unwrapPasted('look <pasted_content id="a">x</pasted_content> now')).toBe('look x now');
+    expect(unwrapPasted('plain')).toBe('plain');
+  });
+});

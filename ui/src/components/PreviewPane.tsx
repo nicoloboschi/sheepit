@@ -339,6 +339,18 @@ export default function PreviewPane({ sessionId, initialUrl, navSeq = 0 }: {
         >
           <ExternalLink size={12} />
         </a>
+        {/* Kill the page: blank it and forget it, so a page stuck in a loop
+            (or just heavy) stops, and isn't reopened next time. */}
+        <button className="preview-btn" title="Stop and close this page"
+          disabled={!live?.url || live.url === 'about:blank'}
+          onClick={() => {
+            liveCommands.current?.navigate('about:blank');
+            setDraft('');
+            setBrowserUrl(sessionId, null);
+            try { preferences.removeItem(urlKey(sessionId)); } catch { /* quota */ }
+          }}>
+          <X size={12} />
+        </button>
       </div>
 
       {find && (

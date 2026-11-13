@@ -43,6 +43,8 @@ export default function VoiceInputButton({ sessionId }: { sessionId: string }) {
     try {
       handleRef.current = await startDictation({
         onTranscribing: () => setPhase('transcribing'),
+        // The time limit: type what was heard rather than dropping it.
+        onEnd: () => { void stop(); },
         // Straight to the DOM: a state write per frame would re-render the bar.
         onLevel: level => { buttonRef.current?.style.setProperty('--voice-level', level.toFixed(2)); },
       });

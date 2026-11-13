@@ -181,13 +181,21 @@ function clipInput(input: unknown): unknown {
 }
 
 function textOf(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((b: Record<string, unknown>) => b?.type === 'text')
-    .map((b: Record<string, unknown>) => String(b.text ?? ''))
-    .join('')
-    .trim();
+  const raw = typeof content === 'string' ? content
+    : !Array.isArray(content) ? ''
+    : content
+      .filter((b: Record<string, unknown>) => b?.type === 'text')
+      .map((b: Record<string, unknown>) => String(b.text ?? ''))
+      .join('');
+  return unwrapPasted(raw).trim();
+}
+
+/** Claude Code records a paste — which every message the native view sends
+ *  is (see `send`) — wrapped as `<pasted_content id="7af1">\n…\n</pasted_content id="7af1">`.
+ *  The words are the message; the wrapper would draw as text and stop the
+ *  echo from matching (so it showed twice). */
+export function unwrapPasted(text: string): string {
+  return text.replace(/<pasted_content\b[^>]*>\n?([\s\S]*?)\n?<\/pasted_content\b[^>]*>/g, '$1');
 }
 
 function resultText(content: unknown): string {

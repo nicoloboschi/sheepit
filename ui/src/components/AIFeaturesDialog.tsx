@@ -3,6 +3,7 @@ import { Check, Loader, RotateCw, Tag, RefreshCw } from 'lucide-react';
 import ConfigDialog from './ConfigDialog';
 import { Button } from './ui/button';
 import useStore from '../store';
+import { apiUrl } from '../serverUrl';
 
 /**
  * What is left to configure now that nothing calls a model.
@@ -153,6 +154,7 @@ export function AIFeaturesContent() {
         </>
       )}
       <VoiceWords />
+      <VoiceHistory />
     </div>
   );
 }
@@ -188,5 +190,44 @@ export default function AIFeaturesDialog({ onClose }: AIFeaturesDialogProps) {
     <ConfigDialog open onClose={onClose}>
       <AIFeaturesContent />
     </ConfigDialog>
+  );
+}
+
+/** The last 50 dictations (src/voice.ts), newest first; click one to copy it. */
+function VoiceHistory() {
+  const [items, setItems] = useState<{ text: string; at: number }[] | null>(null);
+  const [copied, setCopied] = useState<number | null>(null);
+  useEffect(() => {
+    fetch(apiUrl('/api/voice/history')).then(r => r.json()).then(d => setItems(d.items ?? [])).catch(() => setItems([]));
+  }, []);
+  const copy = (text: string, at: number) => {
+    void navigator.clipboard.writeText(text).then(() => { setCopied(at); setTimeout(() => setCopied(c => (c === at ? null : c)), 1500); });
+  };
+  return (
+    <div className="flex flex-col gap-2 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+      <span className="text-xs font-medium text-foreground">Recent dictations</span>
+      <span className="text-xs text-muted-foreground">The last 50 things you said, newest first. Click one to copy it.</span>
+      {items === null ? null : items.length === 0 ? (
+        <span className="text-xs text-muted-foreground">Nothing yet.</span>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {items.map(it => (
+            <button
+              key={it.at}
+              type="button"
+              onClick={() => copy(it.text, it.at)}
+              title="Copy"
+              className="text-left text-xs rounded px-2 py-1.5 flex gap-3 items-start hover:bg-[var(--muted)]"
+              style={{ border: '1px solid var(--border)', color: 'var(--foreground)' }}
+            >
+              <span className="flex-1 min-w-0 whitespace-pre-wrap break-words">{it.text}</span>
+              <span className="shrink-0 text-muted-foreground tabular-nums" style={{ fontSize: 10 }}>
+                {copied === it.at ? 'Copied' : new Date(it.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
