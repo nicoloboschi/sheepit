@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import os from 'os';
 import { readlink, readdir, readFile, rm, stat, lstat, statfs, writeFile } from 'fs/promises';
 import { createInterface } from 'readline';
-import { readFileSync } from 'fs';
+import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { configDir } from './paths.js';
 import nodePath from 'path';
 
@@ -137,6 +137,10 @@ function cpuPercent(): number {
 const MIN_KB = 1024;
 const REFRESH_MS = 24 * 3600_000;
 const SCAN_FILE = () => nodePath.join(configDir(), 'disk-scan.json');
+// A scan under way, so one cut short by a server restart (a dev reload, an
+// update) starts again when the server is back instead of silently never
+// finishing — the page would show the old result as if it were current.
+const PENDING_FILE = () => nodePath.join(configDir(), 'disk-scan.pending');
 
 interface DiskScan {
   root: string; started: number; finished?: number; count: number; at: string;
@@ -200,6 +204,7 @@ function startScan(root: string): DiskScan {
     s.proc = undefined;
     if (running !== s) return;          // replaced by a newer scan
     running = null;
+    if (code !== null) rmSync(PENDING_FILE(), { force: true }); // killed: resume next start
     // du exits 1 when some folders were unreadable; the rest is still good.
     // Killed (code null) means abandoned: keep the previous result.
     if (code === null || !s.sizes.has(root)) return;
@@ -208,11 +213,20 @@ function startScan(root: string): DiskScan {
     saveScan(s);
   });
   running = s;
+  try { writeFileSync(PENDING_FILE(), root); } catch { /* resume is best effort */ }
   return s;
 }
 
 // A scan never outlives the server (a restart would orphan `du`).
 process.once('exit', () => running?.proc?.kill());
+
+// Resume a scan the last server didn't finish, once this one has settled.
+setTimeout(() => {
+  let root = '';
+  try { root = readFileSync(PENDING_FILE(), 'utf8').trim(); } catch { return; }
+  loadScan();
+  if (root && nodePath.isAbsolute(root) && !running) startScan(root);
+}, 10_000).unref();
 
 /** Once an hour: rescan the root you last picked if its scan is a day old. */
 setInterval(() => {

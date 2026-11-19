@@ -815,7 +815,9 @@ as it does. It ignores SIGHUP/SIGTERM/SIGINT.
 - Restored sessions whose daemon died get a fresh shell + replayed ring, then
   the agent resume command (`AGENT_RESUME_COMMANDS`, `aiResumeAgents`). The
   write waits for quiet output (`RESUME_SETTLE_MS`, `RESUME_DEADLINE_MS`);
-  pane exit or any typing cancels it.
+  pane exit or any typing cancels it. A Claude pane whose last reported
+  state was busy/waiting also gets a prompt on that line
+  (`CONTINUE_AFTER_RESTART`) so it carries on; idle panes are not woken.
 
 ## Preferences
 

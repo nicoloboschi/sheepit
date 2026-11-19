@@ -111,6 +111,9 @@ const AGENT_RESUME_COMMANDS: Record<string, string> = {
   // the only reason either is safe to type into a restored pane.
   pi: 'pi -c',
 };
+/** Typed after `claude -c` for a pane that was mid-turn (see the restore).
+ *  Single-quoted into a shell line, so it must hold no single quote. */
+const CONTINUE_AFTER_RESTART = 'The computer restarted and this session was resumed. Continue where you left off: finish the task or goal you were working on, without waiting for me.';
 // Deliberately NOT here: `codex resume --last` and `hermes --continue` both
 // mean the most recent session on the machine, not the most recent one in this
 // directory. A pane that comes back holding somebody else's work is worse than
@@ -2386,7 +2389,14 @@ export class DirectBridge {
           // and its conversation is still on disk — start it again on the pane's
           // own directory. A headless pane is sheepit's own singleton PTY, not
           // somebody's work, so it is left alone.
-          const resume = info.sessionType ? AGENT_RESUME_COMMANDS[info.sessionType] : undefined;
+          let resume = info.sessionType ? AGENT_RESUME_COMMANDS[info.sessionType] : undefined;
+          // Claude was mid-turn when the machine went (its last reported state
+          // was busy or a prompt): `-c` brings the conversation back idle, so
+          // also hand it a prompt to carry on. Only those — an idle one woken
+          // too would cost a turn over its whole context for nothing.
+          if (resume && info.sessionType === 'claude' && (info.agent?.state === 'busy' || info.agent?.state === 'waiting')) {
+            resume += ` '${CONTINUE_AFTER_RESTART}'`;
+          }
           if (resume && !info.isHeadless && resumeAgents) this.scheduleAgentResume(id, resume);
         } catch (e) {
           logger.debug(`Failed to restore session ${id}: ${e}`);
