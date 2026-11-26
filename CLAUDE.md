@@ -614,7 +614,8 @@ Not a floating panel: it used to be, and it kept vanishing on outside clicks.
 - **Disk** (`DiskPage`, `src/system.ts`): one `du -k -x` per scan under
   `taskpolicy -b` (macOS background QoS) / `nice`+`ionice -c3`. Keeps folders
   ≥ 1 MB only; a folder's files are read live. The finished scan is saved to
-  `disk-scan.json` and refreshed daily; the old one is shown until the new one
+  `disk-scan.json` and redone once a day (a scan cut by a server
+  restart resumes, `disk-scan.pending`); the old one is shown until the new one
   completes. Whole disk on macOS = `/System/Volumes/Data` (`du -x /` never
   leaves the sealed system volume). Trash goes through Finder (undoable).
   Treemap and kind colours follow disktree (github.com/tobi/disktree).

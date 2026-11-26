@@ -3,6 +3,7 @@ import { Search, SquarePlus, Settings, ListPlus } from 'lucide-react';
 import useStore from '../store';
 import { useFlockCounts, sheepCount } from '../flock';
 import SettingsDialog from './SettingsDialog';
+import StickyNote from './StickyNote';
 
 // Pen-level toolbar: the pen's name (click to rename) and its actions on the
 // left; add-a-sheep and zoom on the right. The terminal/git/files switch lives
@@ -179,6 +180,7 @@ export default function SessionStatsBar({ sessionId, onAddSheep, onCreateSession
       <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
       {searchButton}
       {newSessionButtons}
+      <StickyNote />
       <div style={{ flex: 1 }} />
       {addSheepButton && <div>{addSheepButton}</div>}
       {zoomButtons && <div>{zoomButtons}</div>}

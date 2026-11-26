@@ -3853,7 +3853,6 @@
      forced to. At 92ch a wide pane stops showing a column of text with a
      third of the pane empty beside it, and a narrow one is unaffected because
      it was never that wide. */
-  max-width: 120ch;
   font-size: var(--nat-size);
   line-height: 1.45;
   /* **Markdown brings its own line breaks, so the source's must go.**
@@ -3922,7 +3921,15 @@
 /* A table is the one block here that is read by eye rather than by line, so
    it gets the most help: a brand-tinted header, hairline rules, and zebra
    rows that stop a wide row being traced with a finger. */
+/* The 120ch reading cap is for prose. A table is scanned, not read in lines,
+   so it takes the pane's full width — capped, it stopped two-thirds across. */
+.nat-text.md-preview > :not(table) { max-width: 120ch; }
 .nat-text.md-preview table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+/* `.nat-text` breaks anywhere, which lets an auto-layout table squeeze a
+   column down to one letter (`#4697` stacked vertically). Cells break a word
+   only when it does not fit. */
+.nat-text.md-preview th,
+.nat-text.md-preview td { overflow-wrap: break-word; }
 .nat-text.md-preview th {
   background: color-mix(in srgb, var(--primary) 14%, var(--accent));
   color: #f2f5ee;
